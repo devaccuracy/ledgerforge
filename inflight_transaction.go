@@ -26,6 +26,7 @@ import (
 	"time"
 
 	redlock "github.com/blnkfinance/blnk/internal/lock"
+	"github.com/blnkfinance/blnk/internal/metrics"
 	"github.com/blnkfinance/blnk/model"
 	"github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel/attribute"
@@ -199,6 +200,7 @@ func (l *Blnk) CommitInflightTransaction(ctx context.Context, transactionID stri
 	}
 
 	span.AddEvent("Inflight transaction committed", trace.WithAttributes(attribute.String("transaction.id", transaction.TransactionID)))
+	metrics.InflightCommitTotal.Add(ctx, 1)
 
 	committedTxn, err := l.finalizeCommitment(ctx, transaction, false)
 	if err != nil {
@@ -449,6 +451,7 @@ func (l *Blnk) VoidInflightTransaction(ctx context.Context, transactionID string
 		return transaction, err
 	}
 	span.AddEvent("Inflight transaction voided", trace.WithAttributes(attribute.String("transaction.id", transaction.TransactionID)))
+	metrics.InflightVoidTotal.Add(ctx, 1)
 
 	voidedTxn, err := l.finalizeVoidTransaction(ctx, transaction, amountLeft)
 	if err != nil {

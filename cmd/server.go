@@ -28,6 +28,7 @@ import (
 
 	"github.com/blnkfinance/blnk"
 	"github.com/blnkfinance/blnk/api"
+	"github.com/blnkfinance/blnk/api/middleware"
 	"github.com/blnkfinance/blnk/config"
 	"github.com/blnkfinance/blnk/database"
 	"github.com/blnkfinance/blnk/internal/search"
@@ -180,7 +181,17 @@ func healthCheckHandler(c *gin.Context) {
 
 func initializeRouter(b *blnkInstance) *gin.Engine {
 	router := api.NewAPI(b.blnk).Router()
-	router.GET("/health", healthCheckHandler) // Add health check route
+	router.GET("/health", healthCheckHandler)
+	if h := trace.MetricsHandler(); h != nil {
+		cfg, _ := config.Fetch()
+		var secure bool
+		var token string
+		if cfg != nil {
+			secure = cfg.Server.Secure
+			token = cfg.Server.MetricsBearerToken
+		}
+		router.GET("/metrics", middleware.MetricsAuth(secure, token), gin.WrapH(h))
+	}
 	return router
 }
 
@@ -300,16 +311,14 @@ func serverCommands(b *blnkInstance) *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			ctx := context.Background()
 
-			// Initialize router
-			router := initializeRouter(b)
-
 			// Load configuration
 			cfg, err := config.Fetch()
 			if err != nil {
 				logrus.Error(err)
 			}
 
-			// Initialize telemetry and observability
+			// Initialize telemetry and observability before the router,
+			// so MetricsHandler() is available when routes are registered.
 			phClient, shutdown, err := initializeTelemetryAndObservability(ctx, cfg)
 			if err != nil {
 				logrus.Fatal(err)
@@ -324,6 +333,9 @@ func serverCommands(b *blnkInstance) *cobra.Command {
 			if phClient != nil {
 				defer phClient.Close()
 			}
+
+			// Initialize router (after OTel so /metrics handler is available)
+			router := initializeRouter(b)
 
 			// Initialize TypeSense
 			tsClient, err := initializeTypeSense(ctx, cfg)
