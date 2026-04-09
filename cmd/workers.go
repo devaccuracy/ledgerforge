@@ -20,7 +20,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os/signal"
 	"strings"
@@ -32,12 +31,17 @@ import (
 	"go.opentelemetry.io/otel"
 
 	"github.com/blnkfinance/blnk"
+	"github.com/blnkfinance/blnk/api/middleware"
 	"github.com/blnkfinance/blnk/config"
 	"github.com/blnkfinance/blnk/internal/hotpairs"
+	"github.com/blnkfinance/blnk/internal/metrics"
 	"github.com/blnkfinance/blnk/internal/notification"
 	redis_db "github.com/blnkfinance/blnk/internal/redis-db"
 	"github.com/blnkfinance/blnk/internal/search"
+	trace "github.com/blnkfinance/blnk/internal/traces"
 	"github.com/blnkfinance/blnk/model"
+	"go.opentelemetry.io/otel/attribute"
+	otelmetric "go.opentelemetry.io/otel/metric"
 
 	"github.com/hibiken/asynq"
 	"github.com/hibiken/asynqmon"
@@ -56,6 +60,8 @@ type indexData struct {
 func (b *blnkInstance) processTransaction(ctx context.Context, t *asynq.Task) error {
 	ctx, span := otel.Tracer("blnk.transactions.worker").Start(ctx, "Process Transaction From Redis Queue")
 	defer span.End()
+
+	startTime := time.Now()
 
 	var txn model.Transaction
 	if err := json.Unmarshal(t.Payload(), &txn); err != nil {
@@ -78,10 +84,12 @@ func (b *blnkInstance) processTransaction(ctx context.Context, t *asynq.Task) er
 		logrus.WithError(err).Warnf("coalesced processing attempt failed for transaction %s", txn.TransactionID)
 	}
 	if handled {
+		metrics.QueueProcessingDuration.Record(ctx, time.Since(startTime).Seconds(),
+			otelmetric.WithAttributes(attribute.String("result", "success")),
+		)
 		return nil
 	}
-
-	_, err = b.blnk.RecordTransaction(ctx, &txn)
+	_, err = b.blnk.ProcessQueuedTransaction(ctx, &txn, b.cnf.Queue.EnableHotLane && t.Type() == b.cnf.Queue.HotQueueName)
 	if err != nil {
 		// Handle reference already used error
 		if strings.Contains(strings.ToLower(err.Error()), "reference") && strings.Contains(strings.ToLower(err.Error()), "already been used") {
@@ -106,6 +114,9 @@ func (b *blnkInstance) processTransaction(ctx context.Context, t *asynq.Task) er
 
 			logrus.Infof("Insufficient funds for transaction %s, retry attempt %d/%d",
 				txn.TransactionID, retryCount, b.cnf.Queue.MaxRetryAttempts)
+			metrics.WorkerRetriesTotal.Add(ctx, 1,
+				otelmetric.WithAttributes(attribute.String("reason", "insufficient_funds")),
+			)
 			return err // This will trigger a retry
 		}
 
@@ -133,10 +144,16 @@ func (b *blnkInstance) processTransaction(ctx context.Context, t *asynq.Task) er
 		}
 
 		logrus.Infof("Transaction %s pushed back for retry due to error: %v", txn.TransactionID, err)
+		metrics.WorkerRetriesTotal.Add(ctx, 1,
+			otelmetric.WithAttributes(attribute.String("reason", "other")),
+		)
 		return err
 	}
 
 	logrus.Infof("Transaction %s processed successfully", txn.TransactionID)
+	metrics.QueueProcessingDuration.Record(ctx, time.Since(startTime).Seconds(),
+		otelmetric.WithAttributes(attribute.String("result", "success")),
+	)
 	return nil
 }
 
@@ -190,18 +207,18 @@ func (b *blnkInstance) indexData(ctx context.Context, t *asynq.Task) error {
 	newSearch := search.NewTypesenseClient(b.cnf.TypeSenseKey, []string{b.cnf.TypeSense.Dns})
 	err := newSearch.EnsureCollectionsExist(ctx)
 	if err != nil {
-		log.Printf("Failed to ensure collections exist: %v", err)
+		logrus.Errorf("Failed to ensure collections exist: %v", err)
 		return err
 	}
 
 	// Handle the notification and send the payload to the collection for indexing.
 	err = newSearch.HandleNotification(ctx, collection, payload)
 	if err != nil {
-		log.Println("Error indexing data", err)
+		logrus.Error("Error indexing data", err)
 		return err
 	}
 
-	log.Println(" [*] Data indexed", collection)
+	logrus.Error(" [*] Data indexed", collection)
 	return nil
 }
 
@@ -225,18 +242,18 @@ func (b *blnkInstance) indexBatchData(ctx context.Context, t *asynq.Task) error 
 	newSearch := search.NewTypesenseClient(b.cnf.TypeSenseKey, []string{b.cnf.TypeSense.Dns})
 	err := newSearch.EnsureCollectionsExist(ctx)
 	if err != nil {
-		log.Printf("Failed to ensure collections exist: %v", err)
+		logrus.Errorf("Failed to ensure collections exist: %v", err)
 		return err
 	}
 
 	// Handle the batch notification - indexes dependencies first, then primary.
 	err = newSearch.HandleBatchNotification(ctx, &batch)
 	if err != nil {
-		log.Printf("Error indexing batch %s: %v", batch.ID, err)
+		logrus.Errorf("Error indexing batch %s: %v", batch.ID, err)
 		return err
 	}
 
-	log.Printf(" [*] Batch indexed: %s (deps: %d)", batch.ID, len(batch.Dependencies))
+	logrus.Errorf(" [*] Batch indexed: %s (deps: %d)", batch.ID, len(batch.Dependencies))
 	return nil
 }
 
@@ -263,7 +280,7 @@ func (b *blnkInstance) processInflightExpiry(cxt context.Context, t *asynq.Task)
 func initializeQueues() map[string]int {
 	cfg, err := config.Fetch()
 	if err != nil {
-		log.Printf("Error fetching config, using defaults: %v", err)
+		logrus.Errorf("Error fetching config, using defaults: %v", err)
 		return nil
 	}
 
@@ -280,7 +297,7 @@ func initializeQueues() map[string]int {
 func initializeHotQueues() map[string]int {
 	cfg, err := config.Fetch()
 	if err != nil {
-		log.Printf("Error fetching config, using defaults: %v", err)
+		logrus.Errorf("Error fetching config, using defaults: %v", err)
 		return nil
 	}
 	if !cfg.Queue.EnableHotLane {
@@ -295,7 +312,7 @@ func initializeHotQueues() map[string]int {
 func initializeWebhookQueues() map[string]int {
 	cfg, err := config.Fetch()
 	if err != nil {
-		log.Printf("Error fetching config, using defaults: %v", err)
+		logrus.Errorf("Error fetching config, using defaults: %v", err)
 		return nil
 	}
 
@@ -375,7 +392,7 @@ func initializeHotWorkerServer(conf *config.Configuration, queues map[string]int
 func initializeTaskHandlers(b *blnkInstance, mux *asynq.ServeMux) {
 	cfg, err := config.Fetch()
 	if err != nil {
-		log.Printf("Error fetching config, using defaults: %v", err)
+		logrus.Errorf("Error fetching config, using defaults: %v", err)
 		return
 	}
 
@@ -392,7 +409,7 @@ func initializeTaskHandlers(b *blnkInstance, mux *asynq.ServeMux) {
 func initializeWebhookTaskHandlers(b *blnkInstance, mux *asynq.ServeMux) {
 	cfg, err := config.Fetch()
 	if err != nil {
-		log.Printf("Error fetching config, using defaults: %v", err)
+		logrus.Errorf("Error fetching config, using defaults: %v", err)
 		return
 	}
 
@@ -414,19 +431,19 @@ func workerCommands(b *blnkInstance) *cobra.Command {
 
 			conf, err := config.Fetch()
 			if err != nil {
-				log.Fatal("Error fetching config:", err)
+				logrus.Fatal("Error fetching config:", err)
 			}
 
 			phClient, shutdown, err := initializeTelemetryAndObservability(context.Background(), conf)
 			if err != nil {
-				log.Fatal(err)
+				logrus.Fatal(err)
 			}
 			if shutdown != nil {
 				defer func() {
 					tctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 					defer cancel()
 					if err := shutdown(tctx); err != nil {
-						log.Printf("Error during shutdown: %v", err)
+						logrus.Errorf("Error during shutdown: %v", err)
 					}
 				}()
 			}
@@ -436,21 +453,21 @@ func workerCommands(b *blnkInstance) *cobra.Command {
 
 			srv, hotSrv, webhookSrv, mux, webhookMux, err := setupWorkerServers(b, conf)
 			if err != nil {
-				log.Fatal(err)
+				logrus.Fatal(err)
 			}
 
 			monitoringSrv := startMonitoringServer(conf)
 
 			if err := srv.Start(mux); err != nil {
-				log.Fatalf("could not start transaction worker server: %v", err)
+				logrus.Fatalf("could not start transaction worker server: %v", err)
 			}
 			if hotSrv != nil {
 				if err := hotSrv.Start(mux); err != nil {
-					log.Fatalf("could not start hot transaction worker server: %v", err)
+					logrus.Fatalf("could not start hot transaction worker server: %v", err)
 				}
 			}
 			if err := webhookSrv.Start(webhookMux); err != nil {
-				log.Fatalf("could not start webhook worker server: %v", err)
+				logrus.Fatalf("could not start webhook worker server: %v", err)
 			}
 
 			recoveryProcessor := blnk.NewQueuedTransactionRecoveryProcessor(b.blnk)
@@ -461,7 +478,7 @@ func workerCommands(b *blnkInstance) *cobra.Command {
 			// Wait for SIGINT/SIGTERM.
 			<-ctx.Done()
 
-			log.Printf("Shutdown signal received. Shutting down...")
+			logrus.Errorf("Shutdown signal received. Shutting down...")
 
 			recoveryProcessor.Stop()
 
@@ -469,7 +486,7 @@ func workerCommands(b *blnkInstance) *cobra.Command {
 				sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 				if err := monitoringSrv.Shutdown(sctx); err != nil {
-					log.Printf("monitoring shutdown error: %v", err)
+					logrus.Errorf("monitoring shutdown error: %v", err)
 				}
 			}
 
@@ -479,7 +496,7 @@ func workerCommands(b *blnkInstance) *cobra.Command {
 			}
 			srv.Shutdown()
 
-			log.Printf("Shutdown complete.")
+			logrus.Errorf("Shutdown complete.")
 		},
 	}
 
@@ -540,6 +557,9 @@ func startMonitoringServer(conf *config.Configuration) *http.Server {
 	})
 
 	monitoringMux.Handle("/monitoring/", asynqmonHandler)
+	if h := trace.MetricsHandler(); h != nil {
+		monitoringMux.Handle("/metrics", middleware.MetricsAuthHandler(conf.Server.Secure, conf.Server.MetricsBearerToken, h))
+	}
 
 	monitoringAddr := fmt.Sprintf(":%s", conf.Queue.MonitoringPort)
 	srv := &http.Server{
@@ -548,9 +568,9 @@ func startMonitoringServer(conf *config.Configuration) *http.Server {
 	}
 
 	go func() {
-		log.Printf("Worker monitoring server listening on %s (health: /health, dashboard: /monitoring)", monitoringAddr)
+		logrus.Errorf("Worker monitoring server listening on %s (health: /health, dashboard: /monitoring)", monitoringAddr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("could not start monitoring server: %v", err)
+			logrus.Fatalf("could not start monitoring server: %v", err)
 		}
 	}()
 
