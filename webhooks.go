@@ -11,7 +11,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-package blnk
+package ledgerforge
 
 import (
 	"bytes"
@@ -25,7 +25,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/blnkfinance/blnk/config"
+	"github.com/devaccuracy/ledgerforge/config"
 	"github.com/sirupsen/logrus"
 
 	"github.com/hibiken/asynq"
@@ -102,8 +102,8 @@ func processHTTP(data NewWebhook, client *http.Client) error {
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Blnk-Signature", signature)
-	req.Header.Set("X-Blnk-Timestamp", timestamp)
+	req.Header.Set("X-LedgerForge-Signature", signature)
+	req.Header.Set("X-LedgerForge-Timestamp", timestamp)
 
 	for key, value := range conf.Notification.Webhook.Headers {
 		req.Header.Set(key, value)
@@ -123,14 +123,14 @@ func processHTTP(data NewWebhook, client *http.Client) error {
 	return nil
 }
 
-// SendWebhook enqueues a webhook notification task using the Blnk instance's asynq client.
+// SendWebhook enqueues a webhook notification task using the LedgerForge instance's asynq client.
 //
 // Parameters:
 // - newWebhook NewWebhook: The webhook notification data to enqueue.
 //
 // Returns:
 // - error: An error if the task could not be enqueued.
-func (b *Blnk) SendWebhook(newWebhook NewWebhook) error {
+func (b *LedgerForge) SendWebhook(newWebhook NewWebhook) error {
 	conf := b.Config()
 
 	if conf.Notification.Webhook.Url == "" {
@@ -159,7 +159,7 @@ func (b *Blnk) SendWebhook(newWebhook NewWebhook) error {
 //
 // Returns:
 // - error: An error if the webhook processing fails.
-func (b *Blnk) ProcessWebhook(_ context.Context, task *asynq.Task) error {
+func (b *LedgerForge) ProcessWebhook(_ context.Context, task *asynq.Task) error {
 	conf, err := config.Fetch()
 	if err != nil {
 		return err

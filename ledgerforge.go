@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package blnk
+package ledgerforge
 
 import (
 	"embed"
@@ -23,22 +23,22 @@ import (
 
 	"github.com/hibiken/asynq"
 
-	"github.com/blnkfinance/blnk/config"
-	"github.com/blnkfinance/blnk/database"
-	"github.com/blnkfinance/blnk/internal/cache"
-	"github.com/blnkfinance/blnk/internal/hooks"
-	"github.com/blnkfinance/blnk/internal/hotpairs"
-	"github.com/blnkfinance/blnk/internal/notification"
-	redis_db "github.com/blnkfinance/blnk/internal/redis-db"
-	"github.com/blnkfinance/blnk/internal/search"
-	"github.com/blnkfinance/blnk/internal/tokenization"
+	"github.com/devaccuracy/ledgerforge/config"
+	"github.com/devaccuracy/ledgerforge/database"
+	"github.com/devaccuracy/ledgerforge/internal/cache"
+	"github.com/devaccuracy/ledgerforge/internal/hooks"
+	"github.com/devaccuracy/ledgerforge/internal/hotpairs"
+	"github.com/devaccuracy/ledgerforge/internal/notification"
+	redis_db "github.com/devaccuracy/ledgerforge/internal/redis-db"
+	"github.com/devaccuracy/ledgerforge/internal/search"
+	"github.com/devaccuracy/ledgerforge/internal/tokenization"
 
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/redis/go-redis/v9"
 )
 
-// Blnk represents the main struct for the Blnk application.
-type Blnk struct {
+// LedgerForge represents the main struct for the LedgerForge application.
+type LedgerForge struct {
 	queue       *Queue
 	search      *search.TypesenseClient
 	redis       redis.UniversalClient
@@ -108,16 +108,16 @@ func initializeHTTPClient() *http.Client {
 	}
 }
 
-// NewBlnk initializes a new instance of Blnk with the provided database datasource.
+// NewLedgerForge initializes a new instance of LedgerForge with the provided database datasource.
 // It fetches the configuration, initializes Redis client, balance tracker, queue, and search client.
 //
 // Parameters:
 // - db database.IDataSource: The datasource for database operations.
 //
 // Returns:
-// - *Blnk: A pointer to the newly created Blnk instance.
+// - *LedgerForge: A pointer to the newly created LedgerForge instance.
 // - error: An error if any of the initialization steps fail.
-func NewBlnk(db database.IDataSource) (*Blnk, error) {
+func NewLedgerForge(db database.IDataSource) (*LedgerForge, error) {
 	configuration, err := config.Fetch()
 	if err != nil {
 		return nil, err
@@ -143,7 +143,7 @@ func NewBlnk(db database.IDataSource) (*Blnk, error) {
 
 	newCache := cache.NewCacheWithClient(redisClient)
 
-	b := &Blnk{
+	b := &LedgerForge{
 		datasource:  db,
 		bt:          bt,
 		queue:       newQueue,
@@ -168,17 +168,17 @@ func NewBlnk(db database.IDataSource) (*Blnk, error) {
 	return b, nil
 }
 
-// Close properly closes all connections and resources used by the Blnk instance.
-func (b *Blnk) Close() error {
+// Close properly closes all connections and resources used by the LedgerForge instance.
+func (b *LedgerForge) Close() error {
 	if b.asynqClient != nil {
 		return b.asynqClient.Close()
 	}
 	return nil
 }
 
-// Config returns the cached configuration for the Blnk instance.
+// Config returns the cached configuration for the LedgerForge instance.
 // Falls back to config.Fetch() if not initialized (for backward compatibility with tests).
-func (b *Blnk) Config() *config.Configuration {
+func (b *LedgerForge) Config() *config.Configuration {
 	if b.config != nil {
 		return b.config
 	}
@@ -189,10 +189,10 @@ func (b *Blnk) Config() *config.Configuration {
 	return cfg
 }
 
-func (b *Blnk) GetSearchClient() *search.TypesenseClient {
+func (b *LedgerForge) GetSearchClient() *search.TypesenseClient {
 	return b.search
 }
 
-func (b *Blnk) GetDataSource() database.IDataSource {
+func (b *LedgerForge) GetDataSource() database.IDataSource {
 	return b.datasource
 }

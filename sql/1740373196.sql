@@ -13,11 +13,11 @@
 -- limitations under the License.
 
 -- +migrate Up
-CREATE TABLE IF NOT EXISTS blnk.balance_snapshots
+CREATE TABLE IF NOT EXISTS ledgerforge.balance_snapshots
 (
     id                      SERIAL PRIMARY KEY,
-    balance_id              TEXT      NOT NULL REFERENCES blnk.balances (balance_id),
-    ledger_id              TEXT      NOT NULL REFERENCES blnk.ledgers (ledger_id),
+    balance_id              TEXT      NOT NULL REFERENCES ledgerforge.balances (balance_id),
+    ledger_id              TEXT      NOT NULL REFERENCES ledgerforge.ledgers (ledger_id),
     balance                 BIGINT    NOT NULL,
     credit_balance         BIGINT    NOT NULL,
     debit_balance          BIGINT    NOT NULL,
@@ -32,12 +32,12 @@ CREATE TABLE IF NOT EXISTS blnk.balance_snapshots
 );
 
 -- +migrate Up
-CREATE INDEX idx_balance_snapshots_balance_id ON blnk.balance_snapshots(balance_id);
-CREATE INDEX idx_balance_snapshots_snapshot_time ON blnk.balance_snapshots(snapshot_time);
-CREATE INDEX idx_balance_snapshots_ledger_time ON blnk.balance_snapshots(ledger_id, snapshot_time);
+CREATE INDEX idx_balance_snapshots_balance_id ON ledgerforge.balance_snapshots(balance_id);
+CREATE INDEX idx_balance_snapshots_snapshot_time ON ledgerforge.balance_snapshots(snapshot_time);
+CREATE INDEX idx_balance_snapshots_ledger_time ON ledgerforge.balance_snapshots(ledger_id, snapshot_time);
 
 -- +migrate Down
-DROP INDEX IF EXISTS blnk.idx_balance_snapshots_ledger_time;
-DROP INDEX IF EXISTS blnk.idx_balance_snapshots_snapshot_time;
-DROP INDEX IF EXISTS blnk.idx_balance_snapshots_balance_id;
-DROP TABLE IF EXISTS blnk.balance_snapshots;
+DROP INDEX IF EXISTS ledgerforge.idx_balance_snapshots_ledger_time;
+DROP INDEX IF EXISTS ledgerforge.idx_balance_snapshots_snapshot_time;
+DROP INDEX IF EXISTS ledgerforge.idx_balance_snapshots_balance_id;
+DROP TABLE IF EXISTS ledgerforge.balance_snapshots;

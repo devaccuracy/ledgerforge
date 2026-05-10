@@ -49,7 +49,7 @@ If you are not loading the full app config, pass Redis directly:
 
 ```bash
 go run ./tests/loadtest/tools/queue_benchmark.go \
-  -redis-dsn "$BLNK_REDIS_DNS" \
+  -redis-dsn "$LEDGERFORGE_REDIS_DNS" \
   -queue-prefix new:transaction_ \
   -wait \
   -out tests/loadtest/queue-summary.json
@@ -57,7 +57,7 @@ go run ./tests/loadtest/tools/queue_benchmark.go \
 
 Useful flags:
 
-- `-config <path>`: load Blnk config from a specific file before reading env vars
+- `-config <path>`: load LedgerForge config from a specific file before reading env vars
 - `-interval 1s`: polling cadence
 - `-timeout 15m`: maximum drain benchmark duration
 - `-wait`: wait for backlog to appear before starting measurement

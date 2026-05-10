@@ -22,17 +22,17 @@ import (
 	"github.com/typesense/typesense-go/typesense/api"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
-	"github.com/blnkfinance/blnk"
-	"github.com/blnkfinance/blnk/api/middleware"
-	"github.com/blnkfinance/blnk/config"
+	"github.com/devaccuracy/ledgerforge"
+	"github.com/devaccuracy/ledgerforge/api/middleware"
+	"github.com/devaccuracy/ledgerforge/config"
 	"github.com/gin-gonic/gin"
 )
 
 // Api represents the API structure for handling requests.
 type Api struct {
-	blnk   *blnk.Blnk
-	router *gin.Engine
-	auth   *middleware.AuthMiddleware
+	ledgerforge *ledgerforge.LedgerForge
+	router      *gin.Engine
+	auth        *middleware.AuthMiddleware
 }
 
 // Router sets up the routes for the API and returns the router instance.
@@ -143,14 +143,14 @@ func (a Api) Router() *gin.Engine {
 	return a.router
 }
 
-// NewAPI creates a new Api instance with the provided Blnk service and sets up the router.
+// NewAPI creates a new Api instance with the provided LedgerForge service and sets up the router.
 //
 // Parameters:
-// - b: The Blnk service used to interact with business logic.
+// - b: The LedgerForge service used to interact with business logic.
 //
 // Returns:
 // - *Api: A new instance of the Api with the configured router.
-func NewAPI(b *blnk.Blnk) *Api {
+func NewAPI(b *ledgerforge.LedgerForge) *Api {
 	gin.SetMode(gin.ReleaseMode)
 	conf, err := config.Fetch()
 	if err != nil {
@@ -160,7 +160,7 @@ func NewAPI(b *blnk.Blnk) *Api {
 	auth := middleware.NewAuthMiddleware(b)
 	r.Use(middleware.RateLimitMiddleware(conf))
 	r.Use(middleware.SecurityHeaders())
-	r.Use(otelgin.Middleware("BLNK",
+	r.Use(otelgin.Middleware("LEDGERFORGE",
 		otelgin.WithFilter(func(r *http.Request) bool {
 			// Exclude high-frequency operational endpoints from tracing
 			// to avoid polluting the trace feed with noise.
@@ -172,7 +172,7 @@ func NewAPI(b *blnk.Blnk) *Api {
 		c.JSON(200, "server running...")
 	})
 
-	return &Api{blnk: b, router: r, auth: auth}
+	return &Api{ledgerforge: b, router: r, auth: auth}
 }
 
 // Search performs a search query on a specified collection.
@@ -199,7 +199,7 @@ func (a Api) Search(c *gin.Context) {
 		return
 	}
 
-	resp, err := a.blnk.Search(collection, &query)
+	resp, err := a.ledgerforge.Search(collection, &query)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -225,7 +225,7 @@ func (a Api) MultiSearch(c *gin.Context) {
 		return
 	}
 
-	resp, err := a.blnk.MultiSearch(&searchRequests)
+	resp, err := a.ledgerforge.MultiSearch(&searchRequests)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

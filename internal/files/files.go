@@ -34,7 +34,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/sirupsen/logrus"
 )
 
@@ -139,7 +139,7 @@ func parseAndStoreData(ctx context.Context, uploadID, source string, reader io.R
 }
 
 func createTempFile(originalFilename string) (*os.File, error) {
-	tempDir := filepath.Join(os.TempDir(), "blnk_uploads")
+	tempDir := filepath.Join(os.TempDir(), "ledgerforge_uploads")
 	if err := os.MkdirAll(tempDir, 0o755); err != nil {
 		return nil, fmt.Errorf("error creating temporary directory: %w", err)
 	}

@@ -32,7 +32,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-var tracer = otel.Tracer("blnk.model.transaction")
+var tracer = otel.Tracer("ledgerforge.model.transaction")
 
 type Distribution struct {
 	Identifier          string `json:"identifier"`

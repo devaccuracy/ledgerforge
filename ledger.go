@@ -14,14 +14,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package blnk
+package ledgerforge
 
 import (
 	"context"
 
-	"github.com/blnkfinance/blnk/internal/filter"
-	"github.com/blnkfinance/blnk/internal/notification"
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/internal/filter"
+	"github.com/devaccuracy/ledgerforge/internal/notification"
+	"github.com/devaccuracy/ledgerforge/model"
 )
 
 // postLedgerActions performs some actions after a ledger has been created.
@@ -31,7 +31,7 @@ import (
 // Parameters:
 // - _ context.Context: The context for the operation (not used in this function).
 // - ledger *model.Ledger: A pointer to the newly created Ledger model.
-func (l *Blnk) postLedgerActions(_ context.Context, ledger *model.Ledger) {
+func (l *LedgerForge) postLedgerActions(_ context.Context, ledger *model.Ledger) {
 	go func() {
 		err := l.queue.queueIndexData(ledger.LedgerID, "ledgers", ledger)
 		if err != nil {
@@ -56,7 +56,7 @@ func (l *Blnk) postLedgerActions(_ context.Context, ledger *model.Ledger) {
 // Returns:
 // - model.Ledger: The created Ledger model.
 // - error: An error if the ledger could not be created.
-func (l *Blnk) CreateLedger(ledger model.Ledger) (model.Ledger, error) {
+func (l *LedgerForge) CreateLedger(ledger model.Ledger) (model.Ledger, error) {
 	ledger, err := l.datasource.CreateLedger(ledger)
 	if err != nil {
 		return model.Ledger{}, err
@@ -71,7 +71,7 @@ func (l *Blnk) CreateLedger(ledger model.Ledger) (model.Ledger, error) {
 // Returns:
 // - []model.Ledger: A slice of Ledger models.
 // - error: An error if the ledgers could not be retrieved.
-func (l *Blnk) GetAllLedgers(limit, offset int) ([]model.Ledger, error) {
+func (l *LedgerForge) GetAllLedgers(limit, offset int) ([]model.Ledger, error) {
 	return l.datasource.GetAllLedgers(limit, offset)
 }
 
@@ -87,7 +87,7 @@ func (l *Blnk) GetAllLedgers(limit, offset int) ([]model.Ledger, error) {
 // Returns:
 // - []model.Ledger: A slice of Ledger models matching the filter criteria.
 // - error: An error if the ledgers could not be retrieved.
-func (l *Blnk) GetAllLedgersWithFilter(ctx context.Context, filters *filter.QueryFilterSet, limit, offset int) ([]model.Ledger, error) {
+func (l *LedgerForge) GetAllLedgersWithFilter(ctx context.Context, filters *filter.QueryFilterSet, limit, offset int) ([]model.Ledger, error) {
 	return l.datasource.GetAllLedgersWithFilter(ctx, filters, limit, offset)
 }
 
@@ -104,7 +104,7 @@ func (l *Blnk) GetAllLedgersWithFilter(ctx context.Context, filters *filter.Quer
 // - []model.Ledger: A slice of Ledger models matching the filter criteria.
 // - *int64: Optional total count of matching records (if opts.IncludeCount is true).
 // - error: An error if the ledgers could not be retrieved.
-func (l *Blnk) GetAllLedgersWithFilterAndOptions(ctx context.Context, filters *filter.QueryFilterSet, opts *filter.QueryOptions, limit, offset int) ([]model.Ledger, *int64, error) {
+func (l *LedgerForge) GetAllLedgersWithFilterAndOptions(ctx context.Context, filters *filter.QueryFilterSet, opts *filter.QueryOptions, limit, offset int) ([]model.Ledger, *int64, error) {
 	return l.datasource.GetAllLedgersWithFilterAndOptions(ctx, filters, opts, limit, offset)
 }
 
@@ -117,7 +117,7 @@ func (l *Blnk) GetAllLedgersWithFilterAndOptions(ctx context.Context, filters *f
 // Returns:
 // - *model.Ledger: A pointer to the Ledger model if found.
 // - error: An error if the ledger could not be retrieved.
-func (l *Blnk) GetLedgerByID(id string) (*model.Ledger, error) {
+func (l *LedgerForge) GetLedgerByID(id string) (*model.Ledger, error) {
 	return l.datasource.GetLedgerByID(id)
 }
 
@@ -131,7 +131,7 @@ func (l *Blnk) GetLedgerByID(id string) (*model.Ledger, error) {
 // Returns:
 // - *model.Ledger: A pointer to the updated Ledger model.
 // - error: An error if the ledger could not be updated.
-func (l *Blnk) UpdateLedger(id, name string) (*model.Ledger, error) {
+func (l *LedgerForge) UpdateLedger(id, name string) (*model.Ledger, error) {
 	ledger, err := l.datasource.UpdateLedger(id, name)
 	if err != nil {
 		return nil, err

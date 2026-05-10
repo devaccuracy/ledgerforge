@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package blnk
+package ledgerforge
 
 import (
 	"context"
@@ -22,13 +22,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/blnkfinance/blnk/internal/hotpairs"
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/internal/hotpairs"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/sirupsen/logrus"
 )
 
 type QueuedTransactionRecoveryProcessor struct {
-	blnk                     *Blnk
+	ledgerforge              *LedgerForge
 	batchSize                int
 	maxWorkers               int
 	pollInterval             time.Duration
@@ -43,16 +43,16 @@ type QueuedTransactionRecoveryProcessor struct {
 
 // NewQueuedTransactionRecoveryProcessor creates the stuck queued-transaction recovery loop
 // with conservative single-worker defaults to avoid recovery-induced lock storms.
-func NewQueuedTransactionRecoveryProcessor(blnk *Blnk) *QueuedTransactionRecoveryProcessor {
+func NewQueuedTransactionRecoveryProcessor(ledgerforge *LedgerForge) *QueuedTransactionRecoveryProcessor {
 	return &QueuedTransactionRecoveryProcessor{
-		blnk:                     blnk,
+		ledgerforge:              ledgerforge,
 		batchSize:                100,
 		maxWorkers:               1,
 		pollInterval:             30 * time.Second,
 		stuckThreshold:           2 * time.Hour,
 		maxRecoveryAttempts:      3,
 		stopCh:                   make(chan struct{}),
-		processQueuedTransaction: blnk.processQueuedTransaction,
+		processQueuedTransaction: ledgerforge.processQueuedTransaction,
 	}
 }
 
@@ -124,7 +124,7 @@ func (p *QueuedTransactionRecoveryProcessor) processBatch(ctx context.Context) {
 
 // RecoverQueuedTransactions triggers an immediate recovery of stuck queued transactions
 // using the provided threshold. This is exposed for the manual trigger API endpoint.
-func (b *Blnk) RecoverQueuedTransactions(ctx context.Context, threshold time.Duration) (int, error) {
+func (b *LedgerForge) RecoverQueuedTransactions(ctx context.Context, threshold time.Duration) (int, error) {
 	if threshold < 2*time.Minute {
 		threshold = 2 * time.Minute
 	}
@@ -135,7 +135,7 @@ func (b *Blnk) RecoverQueuedTransactions(ctx context.Context, threshold time.Dur
 
 // recoverWithThreshold loads currently stuck queued transactions and reprocesses them serially.
 func (p *QueuedTransactionRecoveryProcessor) recoverWithThreshold(ctx context.Context, threshold time.Duration) int {
-	stuckTxns, err := p.blnk.datasource.GetStuckQueuedTransactions(ctx, threshold, p.batchSize)
+	stuckTxns, err := p.ledgerforge.datasource.GetStuckQueuedTransactions(ctx, threshold, p.batchSize)
 	if err != nil {
 		logrus.Errorf("failed to get stuck queued transactions: %v", err)
 		return 0
@@ -177,7 +177,7 @@ func (p *QueuedTransactionRecoveryProcessor) processStuckTransaction(ctx context
 	if attempts > p.maxRecoveryAttempts {
 		logrus.Warnf("Stuck transaction %s exceeded max recovery attempts (%d), rejecting", stuckTxn.TransactionID, p.maxRecoveryAttempts)
 		rejectionCopy := createQueueCopy(stuckTxn, stuckTxn.Reference)
-		_, err := p.blnk.RejectTransaction(ctx, rejectionCopy, "exceeded max queued recovery attempts")
+		_, err := p.ledgerforge.RejectTransaction(ctx, rejectionCopy, "exceeded max queued recovery attempts")
 		if err != nil {
 			if isReferenceAlreadyUsedError(err) {
 				return nil
@@ -189,7 +189,7 @@ func (p *QueuedTransactionRecoveryProcessor) processStuckTransaction(ctx context
 
 	if stuckTxn.Atomic {
 		if parentID, ok := stuckTxn.MetaData["QUEUED_PARENT_TRANSACTION"].(string); ok && parentID != "" {
-			siblings, err := p.blnk.datasource.GetTransactionsByParent(ctx, parentID, 100, 0)
+			siblings, err := p.ledgerforge.datasource.GetTransactionsByParent(ctx, parentID, 100, 0)
 			if err != nil {
 				return err
 			}
@@ -241,7 +241,7 @@ func (p *QueuedTransactionRecoveryProcessor) updateRecoveryMetadata(ctx context.
 	txn.MetaData["recovery_status"] = status
 	txn.MetaData["recovery_last_attempt"] = time.Now().UTC().Format(time.RFC3339)
 
-	if err := p.blnk.datasource.UpdateTransactionMetadata(ctx, txn.TransactionID, txn.MetaData); err != nil {
+	if err := p.ledgerforge.datasource.UpdateTransactionMetadata(ctx, txn.TransactionID, txn.MetaData); err != nil {
 		logrus.Errorf("failed to update recovery metadata for transaction %s: %v", txn.TransactionID, err)
 	}
 }

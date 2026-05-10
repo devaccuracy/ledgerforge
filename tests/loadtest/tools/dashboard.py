@@ -22,7 +22,7 @@ DASHBOARD_DIR = TOOLS_DIR / "dashboard"
 
 def build_handler(scan_root: Path):
     class DashboardHandler(BaseHTTPRequestHandler):
-        server_version = "BlnkBenchmarkDashboard/1.0"
+        server_version = "LedgerForgeBenchmarkDashboard/1.0"
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)

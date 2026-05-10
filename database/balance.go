@@ -28,9 +28,9 @@ import (
 	"github.com/lib/pq"
 	"github.com/sirupsen/logrus"
 
-	"github.com/blnkfinance/blnk/internal/apierror"
-	"github.com/blnkfinance/blnk/internal/filter"
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/internal/apierror"
+	"github.com/devaccuracy/ledgerforge/internal/filter"
+	"github.com/devaccuracy/ledgerforge/model"
 )
 
 const maxBalancesPerUpdateChunk = 1000
@@ -86,19 +86,19 @@ func prepareQueries(queryBuilder strings.Builder, include []string) string {
 	queryBuilder.WriteString(strings.Join(selectFields, ", "))
 	queryBuilder.WriteString(`
         FROM (
-            SELECT * FROM blnk.balances WHERE balance_id = $1
+            SELECT * FROM ledgerforge.balances WHERE balance_id = $1
         ) AS b
     `)
 
 	// Add optional joins for identity and ledger
 	if contains(include, "identity") {
 		queryBuilder.WriteString(`
-            LEFT JOIN blnk.identity i ON b.identity_id = i.identity_id
+            LEFT JOIN ledgerforge.identity i ON b.identity_id = i.identity_id
         `)
 	}
 	if contains(include, "ledger") {
 		queryBuilder.WriteString(`
-            LEFT JOIN blnk.ledgers l ON b.ledger_id = l.ledger_id
+            LEFT JOIN ledgerforge.ledgers l ON b.ledger_id = l.ledger_id
         `)
 	}
 
@@ -204,7 +204,7 @@ func scanRow(row *sql.Row, tx *sql.Tx, include []string) (*model.Balance, error)
 	return balance, nil
 }
 
-// CreateBalance inserts a new balance record into the `blnk.balances` table in the database.
+// CreateBalance inserts a new balance record into the `ledgerforge.balances` table in the database.
 // It handles the generation of a unique balance ID, default values for fields, and any necessary error handling.
 //
 // Parameters:
@@ -263,7 +263,7 @@ func (d Datasource) CreateBalance(balance model.Balance) (model.Balance, error) 
 
 	// Insert the balance into the database
 	_, err = d.Conn.ExecContext(context.Background(), `
-		INSERT INTO blnk.balances (balance_id, balance, credit_balance, debit_balance, currency, currency_multiplier, ledger_id, identity_id, indicator, created_at, meta_data, track_fund_lineage, allocation_strategy)
+		INSERT INTO ledgerforge.balances (balance_id, balance, credit_balance, debit_balance, currency, currency_multiplier, ledger_id, identity_id, indicator, created_at, meta_data, track_fund_lineage, allocation_strategy)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 	`, balance.BalanceID, balance.Balance.String(), balance.CreditBalance.String(), balance.DebitBalance.String(), balance.Currency, balance.CurrencyMultiplier, balance.LedgerID, identityID, indicator, balance.CreatedAt, &metaDataJSON, balance.TrackFundLineage, allocationStrategy)
 	if err != nil {
@@ -375,7 +375,7 @@ func (d Datasource) GetBalanceByIDLite(id string) (*model.Balance, error) {
 	// Execute the query
 	row := d.Conn.QueryRowContext(context.Background(), `
        SELECT balance_id, indicator, currency, currency_multiplier, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE(allocation_strategy, 'FIFO') as allocation_strategy, COALESCE(identity_id, '') as identity_id
-       FROM blnk.balances
+       FROM ledgerforge.balances
        WHERE balance_id = $1
     `, id)
 
@@ -469,7 +469,7 @@ func (d Datasource) GetBalancesByIDsLite(ctx context.Context, ids []string) (map
 
 	rows, err := d.Conn.QueryContext(ctx, `
 		SELECT balance_id, indicator, currency, currency_multiplier, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE(allocation_strategy, 'FIFO') as allocation_strategy, COALESCE(identity_id, '') as identity_id
-		FROM blnk.balances
+		FROM ledgerforge.balances
 		WHERE balance_id = ANY($1)
 	`, pq.Array(ids))
 	if err != nil {
@@ -576,7 +576,7 @@ func (d Datasource) GetBalanceByIndicator(indicator, currency string) (*model.Ba
 	// Execute query to find the balance with the given indicator and currency
 	row := d.Conn.QueryRowContext(context.Background(), `
        SELECT balance_id, indicator, currency, currency_multiplier, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE(allocation_strategy, 'FIFO') as allocation_strategy, COALESCE(identity_id, '') as identity_id
-       FROM blnk.balances
+       FROM ledgerforge.balances
        WHERE indicator = $1 AND currency = $2
     `, indicator, currency)
 
@@ -668,7 +668,7 @@ func (d Datasource) GetAllBalances(limit, offset int) ([]model.Balance, error) {
 	var indicator sql.NullString
 	rows, err := d.Conn.QueryContext(context.Background(), `
         SELECT balance_id, indicator, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, currency, currency_multiplier, ledger_id, COALESCE(identity_id, '') as identity_id, created_at, meta_data
-        FROM blnk.balances
+        FROM ledgerforge.balances
         ORDER BY created_at DESC
         LIMIT $1 OFFSET $2
     `, limit, offset)
@@ -753,7 +753,7 @@ func (d Datasource) GetAllBalances(limit, offset int) ([]model.Balance, error) {
 }
 
 // GetSourceDestination retrieves balances for both the source and destination by their IDs.
-// It queries the database using a stored procedure `blnk.get_balances_by_id`, which takes the sourceId and destinationId as inputs.
+// It queries the database using a stored procedure `ledgerforge.get_balances_by_id`, which takes the sourceId and destinationId as inputs.
 // The function processes each balance, converting balance fields to big.Int and parsing the metadata from JSON format.
 // It returns a slice of pointers to Balance objects or an error if any issues occur during the query or data processing.
 //
@@ -767,7 +767,7 @@ func (d Datasource) GetAllBalances(limit, offset int) ([]model.Balance, error) {
 func (d Datasource) GetSourceDestination(sourceId, destinationId string) ([]*model.Balance, error) {
 	// Execute SQL query to select balances for source and destination using a stored procedure
 	rows, err := d.Conn.QueryContext(context.Background(), `
-		SELECT blnk.get_balances_by_id($1,$2)
+		SELECT ledgerforge.get_balances_by_id($1,$2)
 	`, sourceId, destinationId)
 	if err != nil {
 		// Return an error if the query execution fails
@@ -881,7 +881,7 @@ func (d Datasource) UpdateBalances(ctx context.Context, sourceBalance, destinati
 func updateBalance(ctx context.Context, tx *sql.Tx, balance *model.Balance) error {
 	// SQL query to update the balance
 	query := `
-        UPDATE blnk.balances
+        UPDATE ledgerforge.balances
         SET balance = $2, credit_balance = $3, debit_balance = $4, inflight_balance = $5, inflight_credit_balance = $6, inflight_debit_balance = $7, currency = $8, currency_multiplier = $9, ledger_id = $10, created_at = $11, version = version + 1
         WHERE balance_id = $1 AND version = $12
     `
@@ -955,7 +955,7 @@ func updateBalanceChunk(ctx context.Context, tx *sql.Tx, balances []*model.Balan
 
 	var query strings.Builder
 	query.WriteString(`
-		UPDATE blnk.balances AS b
+		UPDATE ledgerforge.balances AS b
 		SET balance = v.balance,
 		    credit_balance = v.credit_balance,
 		    debit_balance = v.debit_balance,
@@ -1090,7 +1090,7 @@ func (d Datasource) UpdateBalance(balance *model.Balance) error {
 
 	// Execute the SQL query to update the balance in the database
 	result, err := d.Conn.ExecContext(context.Background(), `
-		UPDATE blnk.balances
+		UPDATE ledgerforge.balances
 		SET balance = $2, credit_balance = $3, debit_balance = $4, currency = $5, currency_multiplier = $6, ledger_id = $7, created_at = $8, meta_data = $9
 		WHERE balance_id = $1
 	`, balance.BalanceID, balance.Balance.String(), balance.CreditBalance.String(), balance.DebitBalance.String(), balance.Currency, balance.CurrencyMultiplier, balance.LedgerID, balance.CreatedAt, metaDataJSON)
@@ -1116,7 +1116,7 @@ func (d Datasource) UpdateBalance(balance *model.Balance) error {
 
 // CreateMonitor creates a new BalanceMonitor record in the database.
 // This function generates a unique MonitorID for the monitor, sets the creation timestamp,
-// and inserts the monitor's data into the `blnk.balance_monitors` table.
+// and inserts the monitor's data into the `ledgerforge.balance_monitors` table.
 //
 // Parameters:
 //   - monitor: A model.BalanceMonitor object containing details of the monitor to be created.
@@ -1137,7 +1137,7 @@ func (d Datasource) CreateMonitor(monitor model.BalanceMonitor) (model.BalanceMo
 
 	// Insert the monitor data into the balance_monitors table
 	_, err := d.Conn.ExecContext(context.Background(), `
-		INSERT INTO blnk.balance_monitors (monitor_id, balance_id, field, operator, value, precision, precise_value, description, call_back_url, created_at)
+		INSERT INTO ledgerforge.balance_monitors (monitor_id, balance_id, field, operator, value, precision, precise_value, description, call_back_url, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`, monitor.MonitorID, monitor.BalanceID, monitor.Condition.Field, monitor.Condition.Operator, monitor.Condition.Value, monitor.Condition.Precision, monitor.Condition.PreciseValue.String(), monitor.Description, monitor.CallBackURL, monitor.CreatedAt)
 	// Handle database errors
@@ -1165,7 +1165,7 @@ func (d Datasource) CreateMonitor(monitor model.BalanceMonitor) (model.BalanceMo
 }
 
 // GetMonitorByID retrieves a BalanceMonitor by its unique MonitorID from the database.
-// It queries the `blnk.balance_monitors` table and maps the result into a model.BalanceMonitor object.
+// It queries the `ledgerforge.balance_monitors` table and maps the result into a model.BalanceMonitor object.
 //
 // Parameters:
 // - id: The MonitorID of the monitor to retrieve.
@@ -1179,7 +1179,7 @@ func (d Datasource) GetMonitorByID(id string) (*model.BalanceMonitor, error) {
 	// Query the database to get the monitor details by MonitorID
 	row := d.Conn.QueryRowContext(context.Background(), `
 		SELECT monitor_id, balance_id, field, operator, value, precision, precise_value, description, call_back_url, created_at
-		FROM blnk.balance_monitors WHERE monitor_id = $1
+		FROM ledgerforge.balance_monitors WHERE monitor_id = $1
 	`, id)
 
 	// Initialize an empty BalanceMonitor object
@@ -1207,7 +1207,7 @@ func (d Datasource) GetMonitorByID(id string) (*model.BalanceMonitor, error) {
 }
 
 // GetAllMonitors retrieves all balance monitors from the database.
-// It queries the `blnk.balance_monitors` table and returns a list of all monitors.
+// It queries the `ledgerforge.balance_monitors` table and returns a list of all monitors.
 //
 // Returns:
 // - []model.BalanceMonitor: A slice of BalanceMonitor objects if the query is successful.
@@ -1216,7 +1216,7 @@ func (d Datasource) GetAllMonitors() ([]model.BalanceMonitor, error) {
 	// Query the database for all balance monitors
 	rows, err := d.Conn.QueryContext(context.Background(), `
 		SELECT monitor_id, balance_id, field, operator, value, description, call_back_url, created_at
-		FROM blnk.balance_monitors
+		FROM ledgerforge.balance_monitors
 	`)
 	if err != nil {
 		// Return an internal server error if the query fails
@@ -1257,7 +1257,7 @@ func (d Datasource) GetAllMonitors() ([]model.BalanceMonitor, error) {
 }
 
 // GetBalanceMonitors retrieves all balance monitors associated with a specific balance ID from the database.
-// It queries the `blnk.balance_monitors` table to find all monitors linked to the provided `balanceID`.
+// It queries the `ledgerforge.balance_monitors` table to find all monitors linked to the provided `balanceID`.
 //
 // Parameters:
 // - balanceID: The ID of the balance for which monitors are being retrieved.
@@ -1269,7 +1269,7 @@ func (d Datasource) GetBalanceMonitors(balanceID string) ([]model.BalanceMonitor
 	// Query the database for monitors associated with the given balance ID
 	rows, err := d.Conn.QueryContext(context.Background(), `
 		SELECT monitor_id, balance_id, field, operator, value, description, call_back_url, created_at, precision, precise_value
-		FROM blnk.balance_monitors WHERE balance_id = $1
+		FROM ledgerforge.balance_monitors WHERE balance_id = $1
 	`, balanceID)
 	if err != nil {
 		// Return an internal server error if the query fails
@@ -1323,7 +1323,7 @@ func (d Datasource) GetBalanceMonitors(balanceID string) ([]model.BalanceMonitor
 func (d Datasource) UpdateMonitor(monitor *model.BalanceMonitor) error {
 	// Execute the SQL update statement, replacing the placeholder values with the monitor's data
 	result, err := d.Conn.ExecContext(context.Background(), `
-		UPDATE blnk.balance_monitors
+		UPDATE ledgerforge.balance_monitors
 		SET balance_id = $2, field = $3, operator = $4, value = $5, description = $6, call_back_url = $7
 		WHERE monitor_id = $1
 	`, monitor.MonitorID, monitor.BalanceID, monitor.Condition.Field, monitor.Condition.Operator, monitor.Condition.Value, monitor.Description, monitor.CallBackURL)
@@ -1349,7 +1349,7 @@ func (d Datasource) UpdateMonitor(monitor *model.BalanceMonitor) error {
 }
 
 // DeleteMonitor deletes a balance monitor from the database by its monitor ID.
-// It removes the monitor from the `blnk.balance_monitors` table.
+// It removes the monitor from the `ledgerforge.balance_monitors` table.
 //
 // Parameters:
 // - id: The ID of the monitor to be deleted.
@@ -1359,7 +1359,7 @@ func (d Datasource) UpdateMonitor(monitor *model.BalanceMonitor) error {
 func (d Datasource) DeleteMonitor(id string) error {
 	// Execute the SQL DELETE statement, removing the monitor by its ID
 	result, err := d.Conn.ExecContext(context.Background(), `
-		DELETE FROM blnk.balance_monitors WHERE monitor_id = $1
+		DELETE FROM ledgerforge.balance_monitors WHERE monitor_id = $1
 	`, id)
 	// If an error occurred during execution, return an internal server error
 	if err != nil {
@@ -1398,7 +1398,7 @@ func (d Datasource) TakeBalanceSnapshots(ctx context.Context, batchSize int) (in
 
 	// Call the PostgreSQL function to take snapshots in batches
 	err := d.Conn.QueryRowContext(ctx, `
-        SELECT blnk.take_daily_balance_snapshots_batched($1)
+        SELECT ledgerforge.take_daily_balance_snapshots_batched($1)
     `, batchSize).Scan(&totalProcessed)
 	if err != nil {
 		return 0, apierror.NewAPIError(
@@ -1427,7 +1427,7 @@ func validateBalanceTimeParams(balanceID string, targetTime time.Time) error {
 // getBalanceInfo retrieves basic information about a balance
 func (d Datasource) getBalanceInfo(ctx context.Context, tx *sql.Tx, balanceID string) (currency string, createdAt time.Time, err error) {
 	err = tx.QueryRowContext(ctx, `
-		SELECT currency, created_at FROM blnk.balances WHERE balance_id = $1
+		SELECT currency, created_at FROM ledgerforge.balances WHERE balance_id = $1
 	`, balanceID).Scan(&currency, &createdAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -1451,7 +1451,7 @@ func (d Datasource) getMostRecentSnapshot(ctx context.Context, tx *sql.Tx, balan
 			credit_balance,
 			debit_balance,
 			snapshot_time
-		FROM blnk.balance_snapshots
+		FROM ledgerforge.balance_snapshots
 		WHERE balance_id = $1
 		AND snapshot_time <= $2
 		ORDER BY snapshot_time DESC
@@ -1500,7 +1500,7 @@ func fetchTransactions(ctx context.Context, tx *sql.Tx, balanceID string, startT
 	rows, err := tx.QueryContext(ctx, `
         SELECT precise_amount, source, destination, created_at, 
                COALESCE(effective_date, created_at) as effective_date
-        FROM blnk.transactions
+        FROM ledgerforge.transactions
         WHERE (source = $1 OR destination = $1)
         AND COALESCE(effective_date, created_at) > $2
         AND COALESCE(effective_date, created_at) <= $3
@@ -1699,7 +1699,7 @@ func (d Datasource) GetBalanceAtTime(ctx context.Context, balanceID string, targ
 func (d Datasource) UpdateBalanceIdentity(balanceID string, identityID string) error {
 	// Execute the SQL update statement to change the identity_id for the specified balance.
 	result, err := d.Conn.ExecContext(context.Background(), `
-		UPDATE blnk.balances
+		UPDATE ledgerforge.balances
 		SET identity_id = $2
 		WHERE balance_id = $1
 	`, balanceID, identityID)
@@ -1780,7 +1780,7 @@ func (d Datasource) GetAllBalancesWithFilterAndOptions(ctx context.Context, filt
 	// Build base query
 	baseQuery := fmt.Sprintf(`
 		SELECT %s
-		FROM blnk.balances
+		FROM ledgerforge.balances
 	`, selectFields)
 
 	var args []interface{}

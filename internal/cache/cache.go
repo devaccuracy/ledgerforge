@@ -20,8 +20,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/blnkfinance/blnk/config"
-	redis_db "github.com/blnkfinance/blnk/internal/redis-db"
+	"github.com/devaccuracy/ledgerforge/config"
+	redis_db "github.com/devaccuracy/ledgerforge/internal/redis-db"
 	"github.com/go-redis/cache/v9"
 	redis "github.com/redis/go-redis/v9"
 )

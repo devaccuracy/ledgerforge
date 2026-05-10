@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package blnk
+package ledgerforge
 
 import (
 	"context"
@@ -23,15 +23,15 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/blnkfinance/blnk/internal/filter"
-	"github.com/blnkfinance/blnk/internal/notification"
-	"github.com/blnkfinance/blnk/internal/tokenization"
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/internal/filter"
+	"github.com/devaccuracy/ledgerforge/internal/notification"
+	"github.com/devaccuracy/ledgerforge/internal/tokenization"
+	"github.com/devaccuracy/ledgerforge/model"
 )
 
 // postIdentityActions performs actions after an identity has been created.
 // It sends the newly created identity to the search index queue and sends a webhook notification.
-func (l *Blnk) postIdentityActions(_ context.Context, identity *model.Identity) {
+func (l *LedgerForge) postIdentityActions(_ context.Context, identity *model.Identity) {
 	go func() {
 		err := l.queue.queueIndexData(identity.IdentityID, "identities", identity)
 		if err != nil {
@@ -55,7 +55,7 @@ func (l *Blnk) postIdentityActions(_ context.Context, identity *model.Identity) 
 // Returns:
 // - model.Identity: The created Identity model.
 // - error: An error if the identity could not be created.
-func (l *Blnk) CreateIdentity(identity model.Identity) (model.Identity, error) {
+func (l *LedgerForge) CreateIdentity(identity model.Identity) (model.Identity, error) {
 	identity, err := l.datasource.CreateIdentity(identity)
 	if err != nil {
 		return model.Identity{}, err
@@ -72,7 +72,7 @@ func (l *Blnk) CreateIdentity(identity model.Identity) (model.Identity, error) {
 // Returns:
 // - *model.Identity: A pointer to the Identity model if found.
 // - error: An error if the identity could not be retrieved.
-func (l *Blnk) GetIdentity(id string) (*model.Identity, error) {
+func (l *LedgerForge) GetIdentity(id string) (*model.Identity, error) {
 	return l.datasource.GetIdentityByID(id)
 }
 
@@ -81,7 +81,7 @@ func (l *Blnk) GetIdentity(id string) (*model.Identity, error) {
 // Returns:
 // - []model.Identity: A slice of Identity models.
 // - error: An error if the identities could not be retrieved.
-func (l *Blnk) GetAllIdentities() ([]model.Identity, error) {
+func (l *LedgerForge) GetAllIdentities() ([]model.Identity, error) {
 	return l.datasource.GetAllIdentities()
 }
 
@@ -96,7 +96,7 @@ func (l *Blnk) GetAllIdentities() ([]model.Identity, error) {
 // Returns:
 // - []model.Identity: A slice of Identity models matching the filter criteria.
 // - error: An error if the identities could not be retrieved.
-func (l *Blnk) GetAllIdentitiesWithFilter(ctx context.Context, filters *filter.QueryFilterSet, limit, offset int) ([]model.Identity, error) {
+func (l *LedgerForge) GetAllIdentitiesWithFilter(ctx context.Context, filters *filter.QueryFilterSet, limit, offset int) ([]model.Identity, error) {
 	return l.datasource.GetAllIdentitiesWithFilter(ctx, filters, limit, offset)
 }
 
@@ -113,7 +113,7 @@ func (l *Blnk) GetAllIdentitiesWithFilter(ctx context.Context, filters *filter.Q
 // - []model.Identity: A slice of Identity models matching the filter criteria.
 // - *int64: Optional total count of matching records (if opts.IncludeCount is true).
 // - error: An error if the identities could not be retrieved.
-func (l *Blnk) GetAllIdentitiesWithFilterAndOptions(ctx context.Context, filters *filter.QueryFilterSet, opts *filter.QueryOptions, limit, offset int) ([]model.Identity, *int64, error) {
+func (l *LedgerForge) GetAllIdentitiesWithFilterAndOptions(ctx context.Context, filters *filter.QueryFilterSet, opts *filter.QueryOptions, limit, offset int) ([]model.Identity, *int64, error) {
 	return l.datasource.GetAllIdentitiesWithFilterAndOptions(ctx, filters, opts, limit, offset)
 }
 
@@ -124,7 +124,7 @@ func (l *Blnk) GetAllIdentitiesWithFilterAndOptions(ctx context.Context, filters
 //
 // Returns:
 // - error: An error if the identity could not be updated.
-func (l *Blnk) UpdateIdentity(identity *model.Identity) error {
+func (l *LedgerForge) UpdateIdentity(identity *model.Identity) error {
 	return l.datasource.UpdateIdentity(identity)
 }
 
@@ -135,7 +135,7 @@ func (l *Blnk) UpdateIdentity(identity *model.Identity) error {
 //
 // Returns:
 // - error: An error if the identity could not be deleted.
-func (l *Blnk) DeleteIdentity(id string) error {
+func (l *LedgerForge) DeleteIdentity(id string) error {
 	return l.datasource.DeleteIdentity(id)
 }
 
@@ -147,7 +147,7 @@ func (l *Blnk) DeleteIdentity(id string) error {
 //
 // Returns:
 // - error: An error if the field could not be tokenized.
-func (l *Blnk) TokenizeIdentityField(identityID, fieldName string) error {
+func (l *LedgerForge) TokenizeIdentityField(identityID, fieldName string) error {
 	// Convert field name to struct field format for reflection
 	structFieldName := convertToStructFieldName(fieldName)
 
@@ -213,7 +213,7 @@ func (l *Blnk) TokenizeIdentityField(identityID, fieldName string) error {
 // Returns:
 // - string: The detokenized field value.
 // - error: An error if the field could not be detokenized.
-func (l *Blnk) DetokenizeIdentityField(identityID, fieldName string) (string, error) {
+func (l *LedgerForge) DetokenizeIdentityField(identityID, fieldName string) (string, error) {
 	// Get the identity
 	identity, err := l.GetIdentity(identityID)
 	if err != nil {
@@ -264,7 +264,7 @@ func (l *Blnk) DetokenizeIdentityField(identityID, fieldName string) (string, er
 //
 // Returns:
 // - error: An error if any field could not be tokenized.
-func (l *Blnk) TokenizeIdentity(identityID string, fields []string) error {
+func (l *LedgerForge) TokenizeIdentity(identityID string, fields []string) error {
 	for _, field := range fields {
 		err := l.TokenizeIdentityField(identityID, field)
 		if err != nil {
@@ -282,7 +282,7 @@ func (l *Blnk) TokenizeIdentity(identityID string, fields []string) error {
 // Returns:
 // - map[string]string: A map of field names to their detokenized values.
 // - error: An error if any field could not be detokenized.
-func (l *Blnk) DetokenizeIdentity(identityID string) (map[string]string, error) {
+func (l *LedgerForge) DetokenizeIdentity(identityID string) (map[string]string, error) {
 	// Get the identity
 	identity, err := l.GetIdentity(identityID)
 	if err != nil {
@@ -317,7 +317,7 @@ func (l *Blnk) DetokenizeIdentity(identityID string) (map[string]string, error) 
 //
 // Returns:
 // - error: An error if any field could not be tokenized.
-func (l *Blnk) TokenizeAllPII(identityID string) error {
+func (l *LedgerForge) TokenizeAllPII(identityID string) error {
 	for _, field := range tokenization.TokenizableFields {
 		// Ignore errors for fields that might already be tokenized
 		_ = l.TokenizeIdentityField(identityID, field)
@@ -334,7 +334,7 @@ func (l *Blnk) TokenizeAllPII(identityID string) error {
 // Returns:
 // - *model.Identity: A pointer to the detokenized Identity model.
 // - error: An error if the identity could not be detokenized.
-func (l *Blnk) GetDetokenizedIdentity(identityID string) (*model.Identity, error) {
+func (l *LedgerForge) GetDetokenizedIdentity(identityID string) (*model.Identity, error) {
 	// Get the identity
 	identity, err := l.GetIdentity(identityID)
 	if err != nil {

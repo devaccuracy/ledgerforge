@@ -22,9 +22,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/blnkfinance/blnk/internal/request"
+	"github.com/devaccuracy/ledgerforge/internal/request"
 
-	"github.com/blnkfinance/blnk/config"
+	"github.com/devaccuracy/ledgerforge/config"
 	"github.com/sirupsen/logrus"
 )
 
@@ -44,7 +44,7 @@ func SlackNotification(err error) {
 				"type": "header",
 				"text": {
 					"type": "plain_text",
-					"text": "Error From Blnk 🐞",
+					"text": "Error From LedgerForge 🐞",
 					"emoji": true
 				}
 			},

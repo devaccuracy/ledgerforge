@@ -8,7 +8,7 @@ metadata:
   labels:
     io.kompose.service: postgres
   name: postgres
-  namespace: blnk
+  namespace: ledgerforge
 spec:
   replicas: 1
   selector:
@@ -31,7 +31,7 @@ spec:
             - name: POSTGRES_PASSWORD
               value: password
             - name: POSTGRES_DB
-              value: blnk
+              value: ledgerforge
             - name: TZ
               value: Etc/UTC
           image: postgres:16

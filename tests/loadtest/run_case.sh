@@ -17,7 +17,7 @@ DURATION="${DURATION:-30s}"
 RATE="${RATE:-300}"
 VUS="${VUS:-200}"
 MAX_VUS="${MAX_VUS:-800}"
-REDIS_DSN="${BLNK_REDIS_DNS:-${REDIS_DSN:-}}"
+REDIS_DSN="${LEDGERFORGE_REDIS_DNS:-${REDIS_DSN:-}}"
 
 OUT_DIR="tests/loadtest"
 SUMMARY_OUT="${OUT_DIR}/summary-${CASE_NAME}.json"
@@ -55,7 +55,7 @@ if [[ "${QUEUE_MODE}" == "hot" ]]; then
 fi
 
 if [[ -z "${REDIS_DSN}" ]]; then
-  echo "BLNK_REDIS_DNS or REDIS_DSN is required for queue benchmarking"
+  echo "LEDGERFORGE_REDIS_DNS or REDIS_DSN is required for queue benchmarking"
   exit 1
 fi
 

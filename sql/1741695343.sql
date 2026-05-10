@@ -13,7 +13,7 @@
 -- limitations under the License.
 
 -- +migrate Up
-CREATE TABLE IF NOT EXISTS blnk.api_keys (
+CREATE TABLE IF NOT EXISTS ledgerforge.api_keys (
    id         SERIAL PRIMARY KEY,
    api_key_id TEXT NOT NULL UNIQUE,
    key        TEXT NOT NULL UNIQUE,
@@ -28,10 +28,10 @@ CREATE TABLE IF NOT EXISTS blnk.api_keys (
 );
 
 -- +migrate Up
-CREATE INDEX IF NOT EXISTS idx_api_keys_owner_id ON blnk.api_keys(owner_id);
-CREATE INDEX IF NOT EXISTS idx_api_keys_key ON blnk.api_keys(key);
+CREATE INDEX IF NOT EXISTS idx_api_keys_owner_id ON ledgerforge.api_keys(owner_id);
+CREATE INDEX IF NOT EXISTS idx_api_keys_key ON ledgerforge.api_keys(key);
 
 -- +migrate Down
-DROP TABLE IF EXISTS blnk.api_keys;
+DROP TABLE IF EXISTS ledgerforge.api_keys;
 DROP INDEX IF EXISTS idx_api_keys_owner_id;
 DROP INDEX IF EXISTS idx_api_keys_key;

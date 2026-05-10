@@ -11,16 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-version: "3.8"
-
 services:
   server:
-    image: ${BLNK_IMAGE:-jerryenebeli/blnk:0.14.0}
+    image: ${LEDGERFORGE_IMAGE:-ghcr.io/devaccuracy/ledgerforge:main}
     container_name: server
     restart: on-failure
     entrypoint: [ "/bin/sh", "-c" ]
     command:
-      - "blnk migrate up && blnk start"
+      - "ledgerforge migrate up && ledgerforge start"
     environment:
       TZ: ${TZ:-Etc/UTC}
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://jaeger:4318/v1/traces
@@ -33,13 +31,13 @@ services:
       - postgres
       - jaeger
     volumes:
-      - ./blnk.json:/blnk.json
+      - ./ledgerforge.json:/ledgerforge.json
 
   worker:
-    image: ${BLNK_IMAGE:-jerryenebeli/blnk:0.14.0}
+    image: ${LEDGERFORGE_IMAGE:-ghcr.io/devaccuracy/ledgerforge:main}
     container_name: worker
     restart: on-failure
-    entrypoint: [ "blnk", "workers" ]
+    entrypoint: [ "ledgerforge", "workers" ]
     environment:
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://jaeger:4318/v1/traces
     ports:
@@ -49,7 +47,7 @@ services:
       - postgres
       - jaeger
     volumes:
-      - ./blnk.json:/blnk.json
+      - ./ledgerforge.json:/ledgerforge.json
 
   redis:
     image: redis:7.2.4
@@ -66,7 +64,7 @@ services:
       TZ: ${TZ:-Etc/UTC}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
-      POSTGRES_DB: ${POSTGRES_DB:-blnk}
+      POSTGRES_DB: ${POSTGRES_DB:-ledgerforge}
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
@@ -78,7 +76,7 @@ services:
   typesense:
     image: typesense/typesense:29.0
     container_name: typesense
-    command: [ "--data-dir", "/data", "--api-key=blnk-api-key", "--listen-port", "8108" ]
+    command: [ "--data-dir", "/data", "--api-key=ledgerforge-api-key", "--listen-port", "8108" ]
     volumes:
       - typesense_data:/data
     logging:

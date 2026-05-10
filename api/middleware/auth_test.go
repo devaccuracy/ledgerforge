@@ -8,17 +8,23 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blnkfinance/blnk"
-	"github.com/blnkfinance/blnk/config"
-	"github.com/blnkfinance/blnk/database"
+	"github.com/devaccuracy/ledgerforge"
+	"github.com/devaccuracy/ledgerforge/config"
+	"github.com/devaccuracy/ledgerforge/database"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 )
 
-func setupBlnk() (*blnk.Blnk, error) {
+func setupLedgerForge(t *testing.T) (*ledgerforge.LedgerForge, error) {
+	t.Helper()
+
+	if testing.Short() {
+		t.Skip("skipping middleware integration tests in short mode")
+	}
+
 	config.MockConfig(&config.Configuration{
 		Redis:      config.RedisConfig{Dns: "localhost:6379"},
-		DataSource: config.DataSourceConfig{Dns: "postgres://postgres:@localhost:5432/blnk?sslmode=disable"},
+		DataSource: config.DataSourceConfig{Dns: "postgres://postgres:@localhost:5432/ledgerforge?sslmode=disable"},
 	})
 	cnf, err := config.Fetch()
 	if err != nil {
@@ -29,30 +35,30 @@ func setupBlnk() (*blnk.Blnk, error) {
 		return nil, err
 	}
 
-	return blnk.NewBlnk(db)
+	return ledgerforge.NewLedgerForge(db)
 }
 
 func TestAuthMiddleware_Authenticate(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	// Setup blnk service
-	blnkService, err := setupBlnk()
+	// Setup ledgerforge service
+	ledgerforgeService, err := setupLedgerForge(t)
 	assert.NoError(t, err)
 
 	// Create test API keys
-	validKey, err := blnkService.CreateAPIKey(context.Background(), "valid-key", "test-owner", []string{"ledgers:read"}, time.Now().Add(24*time.Hour))
+	validKey, err := ledgerforgeService.CreateAPIKey(context.Background(), "valid-key", "test-owner", []string{"ledgers:read"}, time.Now().Add(24*time.Hour))
 	assert.NoError(t, err)
 
-	insufficientKey, err := blnkService.CreateAPIKey(context.Background(), "insufficient-key", "test-owner", []string{"ledgers:read"}, time.Now().Add(24*time.Hour))
+	insufficientKey, err := ledgerforgeService.CreateAPIKey(context.Background(), "insufficient-key", "test-owner", []string{"ledgers:read"}, time.Now().Add(24*time.Hour))
 	assert.NoError(t, err)
 
-	expiredKey, err := blnkService.CreateAPIKey(context.Background(), "expired-key", "test-owner", []string{"ledgers:read"}, time.Now().Add(-24*time.Hour))
+	expiredKey, err := ledgerforgeService.CreateAPIKey(context.Background(), "expired-key", "test-owner", []string{"ledgers:read"}, time.Now().Add(-24*time.Hour))
 	assert.NoError(t, err)
 
-	revokedKey, err := blnkService.CreateAPIKey(context.Background(), "revoked-key", "test-owner", []string{"read"}, time.Now().Add(24*time.Hour))
+	revokedKey, err := ledgerforgeService.CreateAPIKey(context.Background(), "revoked-key", "test-owner", []string{"read"}, time.Now().Add(24*time.Hour))
 	assert.NoError(t, err)
 
-	err = blnkService.RevokeAPIKey(context.Background(), revokedKey.APIKeyID, revokedKey.OwnerID)
+	err = ledgerforgeService.RevokeAPIKey(context.Background(), revokedKey.APIKeyID, revokedKey.OwnerID)
 	assert.NoError(t, err)
 
 	allPermissionsScopes := []string{
@@ -70,7 +76,7 @@ func TestAuthMiddleware_Authenticate(t *testing.T) {
 		"backup:read", "backup:write", "backup:delete",
 	}
 
-	comprehensiveKey, err := blnkService.CreateAPIKey(context.Background(), "comprehensive-key", "test-owner", allPermissionsScopes, time.Now().Add(24*time.Hour))
+	comprehensiveKey, err := ledgerforgeService.CreateAPIKey(context.Background(), "comprehensive-key", "test-owner", allPermissionsScopes, time.Now().Add(24*time.Hour))
 	assert.NoError(t, err)
 
 	tests := []struct {
@@ -237,7 +243,7 @@ func TestAuthMiddleware_Authenticate(t *testing.T) {
 				}
 			},
 			expectedCode:  http.StatusUnauthorized,
-			expectedError: "Authentication required. Use X-Blnk-Key header",
+			expectedError: "Authentication required. Use X-LedgerForge-Key header",
 		},
 		{
 			name:   "Comprehensive key for GET /ledgers",
@@ -523,14 +529,14 @@ func TestAuthMiddleware_Authenticate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			blnk, err := setupBlnk()
+			ledgerforge, err := setupLedgerForge(t)
 			if err != nil {
-				t.Fatalf("Failed to setup blnk: %v", err)
+				t.Fatalf("Failed to setup ledgerforge: %v", err)
 			}
 
 			// Create a new router and middleware
 			router := gin.New()
-			authMiddleware := NewAuthMiddleware(blnk)
+			authMiddleware := NewAuthMiddleware(ledgerforge)
 
 			// Store test configuration
 			if tt.setupConfig != nil {

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/lib/pq"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/crypto/bcrypt"
@@ -83,7 +83,7 @@ func (s *Datasource) CreateAPIKey(ctx context.Context, name, ownerID string, sco
 	apiKey.Key = hashedKey
 
 	query := `
-		INSERT INTO blnk.api_keys (api_key_id, key, key_prefix, name, owner_id, scopes, expires_at, created_at, last_used_at, is_revoked)
+		INSERT INTO ledgerforge.api_keys (api_key_id, key, key_prefix, name, owner_id, scopes, expires_at, created_at, last_used_at, is_revoked)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`
 
@@ -141,7 +141,7 @@ func (s *Datasource) GetAPIKey(ctx context.Context, key string) (*model.APIKey, 
 	// Cache miss - query the database using key_prefix for efficient lookup
 	query := `
 		SELECT api_key_id, key, name, owner_id, scopes, expires_at, created_at, last_used_at, is_revoked, revoked_at
-		FROM blnk.api_keys
+		FROM ledgerforge.api_keys
 		WHERE key_prefix = $1
 	`
 
@@ -205,7 +205,7 @@ func (s *Datasource) RevokeAPIKey(ctx context.Context, id, ownerID string) error
 	// First, get the API key to retrieve its hashed key for cache invalidation
 	getQuery := `
 		SELECT key
-		FROM blnk.api_keys
+		FROM ledgerforge.api_keys
 		WHERE api_key_id = $1 AND owner_id = $2
 	`
 
@@ -220,7 +220,7 @@ func (s *Datasource) RevokeAPIKey(ctx context.Context, id, ownerID string) error
 
 	// Update the API key to mark it as revoked
 	updateQuery := `
-		UPDATE blnk.api_keys
+		UPDATE ledgerforge.api_keys
 		SET is_revoked = true, revoked_at = $1
 		WHERE api_key_id = $2 AND owner_id = $3
 	`
@@ -241,7 +241,7 @@ func (s *Datasource) RevokeAPIKey(ctx context.Context, id, ownerID string) error
 
 	// Invalidate the cache entry for this API key
 	// Note: We need to get the key_prefix to invalidate the correct cache entry
-	getPrefixQuery := `SELECT key_prefix FROM blnk.api_keys WHERE api_key_id = $1`
+	getPrefixQuery := `SELECT key_prefix FROM ledgerforge.api_keys WHERE api_key_id = $1`
 	var keyPrefix sql.NullString
 	_ = s.Conn.QueryRowContext(ctx, getPrefixQuery, id).Scan(&keyPrefix)
 
@@ -271,7 +271,7 @@ func (s *Datasource) RevokeAPIKey(ctx context.Context, id, ownerID string) error
 // - error: An error if the database update operation fails.
 func (s *Datasource) UpdateLastUsed(ctx context.Context, id string) error {
 	query := `
-		UPDATE blnk.api_keys
+		UPDATE ledgerforge.api_keys
 		SET last_used_at = $1
 		WHERE api_key_id = $2
 	`
@@ -295,7 +295,7 @@ func (s *Datasource) UpdateLastUsed(ctx context.Context, id string) error {
 func (s *Datasource) ListAPIKeys(ctx context.Context, ownerID string) ([]*model.APIKey, error) {
 	query := `
 		SELECT api_key_id, key, name, owner_id, scopes, expires_at, created_at, last_used_at, is_revoked, revoked_at
-		FROM blnk.api_keys
+		FROM ledgerforge.api_keys
 		WHERE owner_id = $1
 		ORDER BY created_at DESC
 	`

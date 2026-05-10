@@ -5,7 +5,7 @@ metadata:
   labels:
     io.kompose.service: worker-claim0
   name: worker-claim0
-  namespace: blnk
+  namespace: ledgerforge
 spec:
   accessModes:
     - ReadWriteOnce

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/blnkfinance/blnk/config"
+	"github.com/devaccuracy/ledgerforge/config"
 )
 
 func TestHasReachedMaxRetryAttempt(t *testing.T) {

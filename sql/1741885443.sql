@@ -13,25 +13,25 @@
 -- limitations under the License.
 
 -- +migrate Up
-ALTER TABLE blnk.transactions ALTER COLUMN amount TYPE NUMERIC USING amount::NUMERIC;
-ALTER TABLE blnk.transactions ALTER COLUMN precise_amount TYPE NUMERIC USING precise_amount::NUMERIC;
+ALTER TABLE ledgerforge.transactions ALTER COLUMN amount TYPE NUMERIC USING amount::NUMERIC;
+ALTER TABLE ledgerforge.transactions ALTER COLUMN precise_amount TYPE NUMERIC USING precise_amount::NUMERIC;
 
-ALTER TABLE blnk.balances ALTER COLUMN balance TYPE NUMERIC;
-ALTER TABLE blnk.balances ALTER COLUMN credit_balance TYPE NUMERIC;
-ALTER TABLE blnk.balances ALTER COLUMN debit_balance TYPE NUMERIC;
+ALTER TABLE ledgerforge.balances ALTER COLUMN balance TYPE NUMERIC;
+ALTER TABLE ledgerforge.balances ALTER COLUMN credit_balance TYPE NUMERIC;
+ALTER TABLE ledgerforge.balances ALTER COLUMN debit_balance TYPE NUMERIC;
 
-ALTER TABLE blnk.balances ALTER COLUMN inflight_balance TYPE NUMERIC;
-ALTER TABLE blnk.balances ALTER COLUMN inflight_credit_balance TYPE NUMERIC;
-ALTER TABLE blnk.balances ALTER COLUMN inflight_debit_balance TYPE NUMERIC;
+ALTER TABLE ledgerforge.balances ALTER COLUMN inflight_balance TYPE NUMERIC;
+ALTER TABLE ledgerforge.balances ALTER COLUMN inflight_credit_balance TYPE NUMERIC;
+ALTER TABLE ledgerforge.balances ALTER COLUMN inflight_debit_balance TYPE NUMERIC;
 
 -- +migrate Down
-ALTER TABLE blnk.transactions ALTER COLUMN amount TYPE FLOAT USING amount::FLOAT;
-ALTER TABLE blnk.transactions ALTER COLUMN precise_amount TYPE BIGINT USING precise_amount::BIGINT;
+ALTER TABLE ledgerforge.transactions ALTER COLUMN amount TYPE FLOAT USING amount::FLOAT;
+ALTER TABLE ledgerforge.transactions ALTER COLUMN precise_amount TYPE BIGINT USING precise_amount::BIGINT;
 
-ALTER TABLE blnk.balances ALTER COLUMN balance TYPE BIGINT USING balance::BIGINT;
-ALTER TABLE blnk.balances ALTER COLUMN credit_balance TYPE BIGINT USING credit_balance::BIGINT;
-ALTER TABLE blnk.balances ALTER COLUMN debit_balance TYPE BIGINT USING debit_balance::BIGINT;
+ALTER TABLE ledgerforge.balances ALTER COLUMN balance TYPE BIGINT USING balance::BIGINT;
+ALTER TABLE ledgerforge.balances ALTER COLUMN credit_balance TYPE BIGINT USING credit_balance::BIGINT;
+ALTER TABLE ledgerforge.balances ALTER COLUMN debit_balance TYPE BIGINT USING debit_balance::BIGINT;
 
-ALTER TABLE blnk.balances ALTER COLUMN inflight_balance TYPE BIGINT USING inflight_balance::BIGINT;
-ALTER TABLE blnk.balances ALTER COLUMN inflight_credit_balance TYPE BIGINT USING inflight_credit_balance::BIGINT;
-ALTER TABLE blnk.balances ALTER COLUMN inflight_debit_balance TYPE BIGINT USING inflight_debit_balance::BIGINT;
+ALTER TABLE ledgerforge.balances ALTER COLUMN inflight_balance TYPE BIGINT USING inflight_balance::BIGINT;
+ALTER TABLE ledgerforge.balances ALTER COLUMN inflight_credit_balance TYPE BIGINT USING inflight_credit_balance::BIGINT;
+ALTER TABLE ledgerforge.balances ALTER COLUMN inflight_debit_balance TYPE BIGINT USING inflight_debit_balance::BIGINT;

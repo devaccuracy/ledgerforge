@@ -1,0 +1,12 @@
+{
+  "project_name": "LedgerForge",
+  "data_source": {
+    "dns": "postgres://postgres:password@postgres:5432/ledgerforge?sslmode=disable"
+  },
+  "redis": {
+    "dns": "redis:6379"
+  },
+  "server": {
+    "port": "5001"
+  }
+}

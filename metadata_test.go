@@ -1,11 +1,11 @@
-package blnk
+package ledgerforge
 
 import (
 	"context"
 	"testing"
 
-	"github.com/blnkfinance/blnk/database/mocks"
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/database/mocks"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -45,7 +45,7 @@ func TestUpdateMetadata(t *testing.T) {
 
 	t.Run("Update Ledger Metadata", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		blnk := &Blnk{datasource: mockDS}
+		ledgerforge := &LedgerForge{datasource: mockDS}
 
 		existingMetadata := map[string]interface{}{"existing": "value"}
 		ledger := &model.Ledger{MetaData: existingMetadata}
@@ -53,7 +53,7 @@ func TestUpdateMetadata(t *testing.T) {
 		mockDS.On("UpdateLedgerMetadata", "ldg_123", mock.Anything).Return(nil)
 
 		newMetadata := map[string]interface{}{"new": "value"}
-		result, err := blnk.UpdateMetadata(ctx, "ldg_123", newMetadata)
+		result, err := ledgerforge.UpdateMetadata(ctx, "ldg_123", newMetadata)
 
 		assert.NoError(t, err)
 		assert.Contains(t, result, "existing")
@@ -63,7 +63,7 @@ func TestUpdateMetadata(t *testing.T) {
 
 	t.Run("Update Transaction Metadata", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		blnk := &Blnk{datasource: mockDS}
+		ledgerforge := &LedgerForge{datasource: mockDS}
 
 		// Set up expectations for transaction exists check
 		mockDS.On("TransactionExistsByIDOrParentID", ctx, "txn_123").Return(true, nil)
@@ -72,7 +72,7 @@ func TestUpdateMetadata(t *testing.T) {
 		newMetadata := map[string]interface{}{"new": "value"}
 		mockDS.On("UpdateTransactionMetadata", ctx, "txn_123", newMetadata).Return(nil)
 
-		result, err := blnk.UpdateMetadata(ctx, "txn_123", newMetadata)
+		result, err := ledgerforge.UpdateMetadata(ctx, "txn_123", newMetadata)
 
 		assert.NoError(t, err)
 		assert.Equal(t, newMetadata, result) // Should return just the new metadata
@@ -81,7 +81,7 @@ func TestUpdateMetadata(t *testing.T) {
 
 	t.Run("Update Balance Metadata", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		blnk := &Blnk{datasource: mockDS}
+		ledgerforge := &LedgerForge{datasource: mockDS}
 
 		existingMetadata := map[string]interface{}{"existing": "value"}
 		balance := &model.Balance{MetaData: existingMetadata}
@@ -90,7 +90,7 @@ func TestUpdateMetadata(t *testing.T) {
 		mockDS.On("UpdateBalanceMetadata", mock.Anything, "bln_123", mock.Anything).Return(nil)
 
 		newMetadata := map[string]interface{}{"new": "value"}
-		result, err := blnk.UpdateMetadata(ctx, "bln_123", newMetadata)
+		result, err := ledgerforge.UpdateMetadata(ctx, "bln_123", newMetadata)
 
 		assert.NoError(t, err)
 		assert.Contains(t, result, "existing")
@@ -100,7 +100,7 @@ func TestUpdateMetadata(t *testing.T) {
 
 	t.Run("Update Identity Metadata", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		blnk := &Blnk{datasource: mockDS}
+		ledgerforge := &LedgerForge{datasource: mockDS}
 
 		existingMetadata := map[string]interface{}{"existing": "value"}
 		identity := &model.Identity{MetaData: existingMetadata}
@@ -109,7 +109,7 @@ func TestUpdateMetadata(t *testing.T) {
 		mockDS.On("UpdateIdentityMetadata", "idt_123", mock.Anything).Return(nil)
 
 		newMetadata := map[string]interface{}{"new": "value"}
-		result, err := blnk.UpdateMetadata(ctx, "idt_123", newMetadata)
+		result, err := ledgerforge.UpdateMetadata(ctx, "idt_123", newMetadata)
 
 		assert.NoError(t, err)
 		assert.Contains(t, result, "existing")
@@ -119,9 +119,9 @@ func TestUpdateMetadata(t *testing.T) {
 
 	t.Run("Invalid Entity ID", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		blnk := &Blnk{datasource: mockDS}
+		ledgerforge := &LedgerForge{datasource: mockDS}
 
-		_, err := blnk.UpdateMetadata(ctx, "invalid_123", map[string]interface{}{})
+		_, err := ledgerforge.UpdateMetadata(ctx, "invalid_123", map[string]interface{}{})
 		assert.Error(t, err)
 	})
 }

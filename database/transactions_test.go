@@ -28,10 +28,10 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/blnkfinance/blnk/config"
-	"github.com/blnkfinance/blnk/internal/apierror"
-	"github.com/blnkfinance/blnk/internal/filter"
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/config"
+	"github.com/devaccuracy/ledgerforge/internal/apierror"
+	"github.com/devaccuracy/ledgerforge/internal/filter"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/otel"
@@ -102,7 +102,7 @@ func TestRecordTransaction_Success(t *testing.T) {
 	metaDataJSON, err := json.Marshal(transaction.MetaData)
 	assert.NoError(t, err)
 
-	mock.ExpectExec("INSERT INTO blnk.transactions").
+	mock.ExpectExec("INSERT INTO ledgerforge.transactions").
 		WithArgs(transaction.TransactionID, transaction.ParentTransaction, transaction.Source, transaction.Reference, transaction.AmountString, transaction.PreciseAmount.String(), transaction.Precision, transaction.Rate, transaction.Currency, transaction.Destination, transaction.Description, transaction.Status, transaction.CreatedAt, metaDataJSON, transaction.ScheduledFor, transaction.Hash, transaction.EffectiveDate).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -145,7 +145,7 @@ func TestRecordTransaction_Failure(t *testing.T) {
 	metaDataJSON, err := json.Marshal(transaction.MetaData)
 	assert.NoError(t, err)
 
-	mock.ExpectExec("INSERT INTO blnk.transactions").
+	mock.ExpectExec("INSERT INTO ledgerforge.transactions").
 		WithArgs(transaction.TransactionID, transaction.ParentTransaction, transaction.Source, transaction.Reference, transaction.Amount, transaction.PreciseAmount.String(), transaction.Precision, transaction.Rate, transaction.Currency, transaction.Destination, transaction.Description, transaction.Status, transaction.CreatedAt, metaDataJSON, transaction.ScheduledFor, transaction.Hash, transaction.EffectiveDate).
 		WillReturnError(errors.New("db error"))
 
@@ -172,7 +172,7 @@ func TestGetTransaction_Success(t *testing.T) {
 	rows := sqlmock.NewRows([]string{"transaction_id", "source", "reference", "amount", "precise_amount", "precision", "currency", "destination", "description", "status", "created_at", "meta_data", "parent_transaction", "hash"}).
 		AddRow("txn123", "src1", "ref123", 1000, 1000, 2, "USD", "dest1", "Test Transaction", "PENDING", time.Now(), metaDataJSON, "parent123", "hash123")
 
-	mock.ExpectQuery("SELECT transaction_id, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, parent_transaction, hash FROM blnk.transactions WHERE transaction_id = ?").
+	mock.ExpectQuery("SELECT transaction_id, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, parent_transaction, hash FROM ledgerforge.transactions WHERE transaction_id = ?").
 		WithArgs("txn123").
 		WillReturnRows(rows)
 
@@ -196,7 +196,7 @@ func TestGetTransaction_NotFound(t *testing.T) {
 
 	ds := Datasource{Conn: db}
 
-	mock.ExpectQuery("SELECT transaction_id, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, parent_transaction, hash FROM blnk.transactions WHERE transaction_id = ?").
+	mock.ExpectQuery("SELECT transaction_id, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, parent_transaction, hash FROM ledgerforge.transactions WHERE transaction_id = ?").
 		WithArgs("txn123").
 		WillReturnError(sql.ErrNoRows)
 
@@ -219,7 +219,7 @@ func TestTransactionExistsByRef_Success(t *testing.T) {
 	ds := Datasource{Conn: db}
 
 	// Modify the expected query to match the actual SQL query placeholder
-	mock.ExpectQuery("SELECT EXISTS\\(SELECT 1 FROM blnk.transactions WHERE reference = \\$1\\)").
+	mock.ExpectQuery("SELECT EXISTS\\(SELECT 1 FROM ledgerforge.transactions WHERE reference = \\$1\\)").
 		WithArgs("ref123").
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 
@@ -239,7 +239,7 @@ func TestTransactionExistsByRef_Failure(t *testing.T) {
 
 	ds := Datasource{Conn: db}
 
-	mock.ExpectQuery("SELECT EXISTS\\(SELECT 1 FROM blnk.transactions WHERE reference = ?\\)").
+	mock.ExpectQuery("SELECT EXISTS\\(SELECT 1 FROM ledgerforge.transactions WHERE reference = ?\\)").
 		WithArgs("ref123").
 		WillReturnError(errors.New("db error"))
 
@@ -259,7 +259,7 @@ func TestGetExistingTransactionReferences_Success(t *testing.T) {
 
 	ds := Datasource{Conn: db}
 
-	mock.ExpectQuery("SELECT reference FROM blnk.transactions WHERE reference = ANY\\(\\$1\\)").
+	mock.ExpectQuery("SELECT reference FROM ledgerforge.transactions WHERE reference = ANY\\(\\$1\\)").
 		WithArgs(sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"reference"}).
 			AddRow("ref123_q").
@@ -307,36 +307,36 @@ func TestGetInflightTransactionsByParentID_Success(t *testing.T) {
 		WITH inflight_transactions AS (
 			SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision,
 				   rate, currency, destination, description, status, created_at, meta_data, scheduled_for, hash
-			FROM blnk.transactions
+			FROM ledgerforge.transactions
 			WHERE (transaction_id = $1 OR parent_transaction = $1 OR meta_data->>'QUEUED_PARENT_TRANSACTION' = $1)
 			AND status = 'INFLIGHT'
-		), 
+		),
 		queued_inflight_transactions AS (
-			SELECT t.transaction_id, t.parent_transaction, t.source, t.reference, t.amount, t.precise_amount, t.precision, 
+			SELECT t.transaction_id, t.parent_transaction, t.source, t.reference, t.amount, t.precise_amount, t.precision,
 				   t.rate, t.currency, t.destination, t.description, t.status, t.created_at, t.meta_data, t.scheduled_for, t.hash
-			FROM blnk.transactions t
-			WHERE (t.transaction_id = $1 OR t.parent_transaction = $1) 
+			FROM ledgerforge.transactions t
+			WHERE (t.transaction_id = $1 OR t.parent_transaction = $1)
 			AND t.status = 'QUEUED' AND t.meta_data->>'inflight' = 'true'
 			-- Don't include transactions that have been rejected (check by reference with _q suffix)
 			AND NOT EXISTS (
-				SELECT 1 
-				FROM blnk.transactions rejected
+				SELECT 1
+				FROM ledgerforge.transactions rejected
 				WHERE rejected.reference = t.reference || '_q' AND rejected.status = 'REJECTED'
 			)
 			-- Also don't include if there are child transactions with INFLIGHT status
 			AND NOT EXISTS (
-				SELECT 1 
-				FROM blnk.transactions child
+				SELECT 1
+				FROM ledgerforge.transactions child
 				WHERE child.parent_transaction = t.transaction_id AND child.status = 'INFLIGHT'
 			)
 		)
-		
+
 		SELECT * FROM inflight_transactions
 		UNION ALL
 		-- Only include queued_inflight if there are no inflight transactions
-		SELECT * FROM queued_inflight_transactions 
+		SELECT * FROM queued_inflight_transactions
 		WHERE NOT EXISTS (SELECT 1 FROM inflight_transactions)
-		
+
 		ORDER BY created_at DESC
 		LIMIT $2 OFFSET $3
 	`
@@ -369,36 +369,36 @@ func TestGetInflightTransactionsByParentID_NoRows(t *testing.T) {
 		WITH inflight_transactions AS (
 			SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision,
 				   rate, currency, destination, description, status, created_at, meta_data, scheduled_for, hash
-			FROM blnk.transactions
+			FROM ledgerforge.transactions
 			WHERE (transaction_id = $1 OR parent_transaction = $1 OR meta_data->>'QUEUED_PARENT_TRANSACTION' = $1)
 			AND status = 'INFLIGHT'
-		), 
+		),
 		queued_inflight_transactions AS (
-			SELECT t.transaction_id, t.parent_transaction, t.source, t.reference, t.amount, t.precise_amount, t.precision, 
+			SELECT t.transaction_id, t.parent_transaction, t.source, t.reference, t.amount, t.precise_amount, t.precision,
 				   t.rate, t.currency, t.destination, t.description, t.status, t.created_at, t.meta_data, t.scheduled_for, t.hash
-			FROM blnk.transactions t
-			WHERE (t.transaction_id = $1 OR t.parent_transaction = $1) 
+			FROM ledgerforge.transactions t
+			WHERE (t.transaction_id = $1 OR t.parent_transaction = $1)
 			AND t.status = 'QUEUED' AND t.meta_data->>'inflight' = 'true'
 			-- Don't include transactions that have been rejected (check by reference with _q suffix)
 			AND NOT EXISTS (
-				SELECT 1 
-				FROM blnk.transactions rejected
+				SELECT 1
+				FROM ledgerforge.transactions rejected
 				WHERE rejected.reference = t.reference || '_q' AND rejected.status = 'REJECTED'
 			)
 			-- Also don't include if there are child transactions with INFLIGHT status
 			AND NOT EXISTS (
-				SELECT 1 
-				FROM blnk.transactions child
+				SELECT 1
+				FROM ledgerforge.transactions child
 				WHERE child.parent_transaction = t.transaction_id AND child.status = 'INFLIGHT'
 			)
 		)
-		
+
 		SELECT * FROM inflight_transactions
 		UNION ALL
 		-- Only include queued_inflight if there are no inflight transactions
-		SELECT * FROM queued_inflight_transactions 
+		SELECT * FROM queued_inflight_transactions
 		WHERE NOT EXISTS (SELECT 1 FROM inflight_transactions)
-		
+
 		ORDER BY created_at DESC
 		LIMIT $2 OFFSET $3
 	`
@@ -429,36 +429,36 @@ func TestGetInflightTransactionsByParentID_Error(t *testing.T) {
 		WITH inflight_transactions AS (
 			SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision,
 				   rate, currency, destination, description, status, created_at, meta_data, scheduled_for, hash
-			FROM blnk.transactions
+			FROM ledgerforge.transactions
 			WHERE (transaction_id = $1 OR parent_transaction = $1 OR meta_data->>'QUEUED_PARENT_TRANSACTION' = $1)
 			AND status = 'INFLIGHT'
-		), 
+		),
 		queued_inflight_transactions AS (
-			SELECT t.transaction_id, t.parent_transaction, t.source, t.reference, t.amount, t.precise_amount, t.precision, 
+			SELECT t.transaction_id, t.parent_transaction, t.source, t.reference, t.amount, t.precise_amount, t.precision,
 				   t.rate, t.currency, t.destination, t.description, t.status, t.created_at, t.meta_data, t.scheduled_for, t.hash
-			FROM blnk.transactions t
-			WHERE (t.transaction_id = $1 OR t.parent_transaction = $1) 
+			FROM ledgerforge.transactions t
+			WHERE (t.transaction_id = $1 OR t.parent_transaction = $1)
 			AND t.status = 'QUEUED' AND t.meta_data->>'inflight' = 'true'
 			-- Don't include transactions that have been rejected (check by reference with _q suffix)
 			AND NOT EXISTS (
-				SELECT 1 
-				FROM blnk.transactions rejected
+				SELECT 1
+				FROM ledgerforge.transactions rejected
 				WHERE rejected.reference = t.reference || '_q' AND rejected.status = 'REJECTED'
 			)
 			-- Also don't include if there are child transactions with INFLIGHT status
 			AND NOT EXISTS (
-				SELECT 1 
-				FROM blnk.transactions child
+				SELECT 1
+				FROM ledgerforge.transactions child
 				WHERE child.parent_transaction = t.transaction_id AND child.status = 'INFLIGHT'
 			)
 		)
-		
+
 		SELECT * FROM inflight_transactions
 		UNION ALL
 		-- Only include queued_inflight if there are no inflight transactions
-		SELECT * FROM queued_inflight_transactions 
+		SELECT * FROM queued_inflight_transactions
 		WHERE NOT EXISTS (SELECT 1 FROM inflight_transactions)
-		
+
 		ORDER BY created_at DESC
 		LIMIT $2 OFFSET $3
 	`
@@ -489,7 +489,7 @@ func TestGetTotalCommittedTransactions_Success(t *testing.T) {
 	parentID := "parent123"
 	expectedTotal := big.NewInt(2000)
 
-	mock.ExpectQuery("SELECT SUM\\(precise_amount\\) AS total_amount FROM blnk.transactions WHERE parent_transaction = \\$1 AND status = 'APPLIED' GROUP BY parent_transaction").
+	mock.ExpectQuery("SELECT SUM\\(precise_amount\\) AS total_amount FROM ledgerforge.transactions WHERE parent_transaction = \\$1 AND status = 'APPLIED' GROUP BY parent_transaction").
 		WithArgs(parentID).
 		WillReturnRows(sqlmock.NewRows([]string{"total_amount"}).AddRow(expectedTotal.String()))
 
@@ -511,7 +511,7 @@ func TestGetTotalCommittedTransactions_NoRows(t *testing.T) {
 
 	parentID := "parent123"
 
-	mock.ExpectQuery("SELECT SUM\\(precise_amount\\) AS total_amount FROM blnk.transactions WHERE parent_transaction = \\$1 AND status = 'APPLIED' GROUP BY parent_transaction").
+	mock.ExpectQuery("SELECT SUM\\(precise_amount\\) AS total_amount FROM ledgerforge.transactions WHERE parent_transaction = \\$1 AND status = 'APPLIED' GROUP BY parent_transaction").
 		WithArgs(parentID).
 		WillReturnError(sql.ErrNoRows)
 
@@ -534,7 +534,7 @@ func TestGetTotalCommittedTransactions_Error(t *testing.T) {
 	parentID := "parent123"
 
 	// Updated the regex to match the actual query which includes the status filter
-	mock.ExpectQuery("SELECT SUM\\(precise_amount\\) AS total_amount FROM blnk.transactions WHERE parent_transaction = \\$1 AND status = 'APPLIED' GROUP BY parent_transaction").
+	mock.ExpectQuery("SELECT SUM\\(precise_amount\\) AS total_amount FROM ledgerforge.transactions WHERE parent_transaction = \\$1 AND status = 'APPLIED' GROUP BY parent_transaction").
 		WithArgs(parentID).
 		WillReturnError(errors.New("database error"))
 
@@ -563,7 +563,7 @@ func TestRecordTransactionWithBalances_AtomicSuccess_Integration(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -678,7 +678,7 @@ func TestRecordTransactionWithBalances_DuplicateTxnID_Rollback_Integration(t *te
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -833,7 +833,7 @@ func TestGetTransactionByRef_Success(t *testing.T) {
 
 	query := `
 		SELECT transaction_id, source, reference, amount, precise_amount, currency, destination, description, status, created_at, meta_data, parent_transaction
-		FROM blnk.transactions
+		FROM ledgerforge.transactions
 		WHERE reference = $1
 	`
 
@@ -870,7 +870,7 @@ func TestGetTransactionByRef_NotFound(t *testing.T) {
 
 	query := `
 		SELECT transaction_id, source, reference, amount, precise_amount, currency, destination, description, status, created_at, meta_data, parent_transaction
-		FROM blnk.transactions
+		FROM ledgerforge.transactions
 		WHERE reference = $1
 	`
 
@@ -899,7 +899,7 @@ func TestGetTransactionByRef_QueryError(t *testing.T) {
 
 	query := `
 		SELECT transaction_id, source, reference, amount, precise_amount, currency, destination, description, status, created_at, meta_data, parent_transaction
-		FROM blnk.transactions
+		FROM ledgerforge.transactions
 		WHERE reference = $1
 	`
 
@@ -927,7 +927,7 @@ func TestUpdateTransactionStatus_Success(t *testing.T) {
 	ctx := context.Background()
 
 	query := `
-		UPDATE blnk.transactions
+		UPDATE ledgerforge.transactions
 		SET status = $2
 		WHERE transaction_id = $1
 	`
@@ -952,7 +952,7 @@ func TestUpdateTransactionStatus_NotFound(t *testing.T) {
 	ctx := context.Background()
 
 	query := `
-		UPDATE blnk.transactions
+		UPDATE ledgerforge.transactions
 		SET status = $2
 		WHERE transaction_id = $1
 	`
@@ -980,7 +980,7 @@ func TestUpdateTransactionStatus_Error(t *testing.T) {
 	ctx := context.Background()
 
 	query := `
-		UPDATE blnk.transactions
+		UPDATE ledgerforge.transactions
 		SET status = $2
 		WHERE transaction_id = $1
 	`
@@ -1012,7 +1012,7 @@ func TestGetAllTransactions_Success(t *testing.T) {
 
 	query := `
 		SELECT transaction_id, source, reference, amount, currency, destination, description, status, hash, created_at, meta_data
-		FROM blnk.transactions
+		FROM ledgerforge.transactions
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2
 	`
@@ -1046,7 +1046,7 @@ func TestGetAllTransactions_Empty(t *testing.T) {
 
 	query := `
 		SELECT transaction_id, source, reference, amount, currency, destination, description, status, hash, created_at, meta_data
-		FROM blnk.transactions
+		FROM ledgerforge.transactions
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2
 	`
@@ -1076,7 +1076,7 @@ func TestGetAllTransactions_QueryError(t *testing.T) {
 
 	query := `
 		SELECT transaction_id, source, reference, amount, currency, destination, description, status, hash, created_at, meta_data
-		FROM blnk.transactions
+		FROM ledgerforge.transactions
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2
 	`
@@ -1107,7 +1107,7 @@ func TestIsParentTransactionVoid_True(t *testing.T) {
 	query := `
 		SELECT EXISTS (
 			SELECT 1
-			FROM blnk.transactions
+			FROM ledgerforge.transactions
 			WHERE parent_transaction = $1
 			AND status = 'VOID'
 		)
@@ -1136,7 +1136,7 @@ func TestIsParentTransactionVoid_False(t *testing.T) {
 	query := `
 		SELECT EXISTS (
 			SELECT 1
-			FROM blnk.transactions
+			FROM ledgerforge.transactions
 			WHERE parent_transaction = $1
 			AND status = 'VOID'
 		)
@@ -1165,7 +1165,7 @@ func TestIsParentTransactionVoid_QueryError(t *testing.T) {
 	query := `
 		SELECT EXISTS (
 			SELECT 1
-			FROM blnk.transactions
+			FROM ledgerforge.transactions
 			WHERE parent_transaction = $1
 			AND status = 'VOID'
 		)
@@ -1198,23 +1198,23 @@ func TestGetRefundableTransactionsByParentID_Success(t *testing.T) {
 	metaDataJSON, _ := json.Marshal(metaData)
 
 	query := `
-		SELECT 
-			t.transaction_id, t.parent_transaction, t.source, t.reference, t.amount, t.precise_amount, 
-			t.precision, t.rate, t.currency, t.destination, t.description, t.status, t.created_at, 
+		SELECT
+			t.transaction_id, t.parent_transaction, t.source, t.reference, t.amount, t.precise_amount,
+			t.precision, t.rate, t.currency, t.destination, t.description, t.status, t.created_at,
 			t.meta_data, t.scheduled_for, t.hash
-		FROM 
-			blnk.transactions t
-		WHERE 
+		FROM
+			ledgerforge.transactions t
+		WHERE
 			-- Case 1: The transaction is the parent itself and is APPLIED
 			(t.transaction_id = $1 AND t.status = 'APPLIED')
-			
+
 			-- Case 2: The transaction is a child and is APPLIED or VOID
 			OR (t.parent_transaction = $1 AND t.status IN ('APPLIED', 'VOID'))
 
 			-- Case 3: Transaction is APPLIED and linked via metadata QUEUED_PARENT_TRANSACTION
 			OR (t.status = 'APPLIED' AND t.meta_data->>'QUEUED_PARENT_TRANSACTION' = $1)
 
-		ORDER BY 
+		ORDER BY
 			t.created_at DESC
 		LIMIT $2 OFFSET $3
 	`
@@ -1250,23 +1250,23 @@ func TestGetRefundableTransactionsByParentID_Empty(t *testing.T) {
 	ctx := context.Background()
 
 	query := `
-		SELECT 
-			t.transaction_id, t.parent_transaction, t.source, t.reference, t.amount, t.precise_amount, 
-			t.precision, t.rate, t.currency, t.destination, t.description, t.status, t.created_at, 
+		SELECT
+			t.transaction_id, t.parent_transaction, t.source, t.reference, t.amount, t.precise_amount,
+			t.precision, t.rate, t.currency, t.destination, t.description, t.status, t.created_at,
 			t.meta_data, t.scheduled_for, t.hash
-		FROM 
-			blnk.transactions t
-		WHERE 
+		FROM
+			ledgerforge.transactions t
+		WHERE
 			-- Case 1: The transaction is the parent itself and is APPLIED
 			(t.transaction_id = $1 AND t.status = 'APPLIED')
-			
+
 			-- Case 2: The transaction is a child and is APPLIED or VOID
 			OR (t.parent_transaction = $1 AND t.status IN ('APPLIED', 'VOID'))
 
 			-- Case 3: Transaction is APPLIED and linked via metadata QUEUED_PARENT_TRANSACTION
 			OR (t.status = 'APPLIED' AND t.meta_data->>'QUEUED_PARENT_TRANSACTION' = $1)
 
-		ORDER BY 
+		ORDER BY
 			t.created_at DESC
 		LIMIT $2 OFFSET $3
 	`
@@ -1296,23 +1296,23 @@ func TestGetRefundableTransactionsByParentID_QueryError(t *testing.T) {
 	ctx := context.Background()
 
 	query := `
-		SELECT 
-			t.transaction_id, t.parent_transaction, t.source, t.reference, t.amount, t.precise_amount, 
-			t.precision, t.rate, t.currency, t.destination, t.description, t.status, t.created_at, 
+		SELECT
+			t.transaction_id, t.parent_transaction, t.source, t.reference, t.amount, t.precise_amount,
+			t.precision, t.rate, t.currency, t.destination, t.description, t.status, t.created_at,
 			t.meta_data, t.scheduled_for, t.hash
-		FROM 
-			blnk.transactions t
-		WHERE 
+		FROM
+			ledgerforge.transactions t
+		WHERE
 			-- Case 1: The transaction is the parent itself and is APPLIED
 			(t.transaction_id = $1 AND t.status = 'APPLIED')
-			
+
 			-- Case 2: The transaction is a child and is APPLIED or VOID
 			OR (t.parent_transaction = $1 AND t.status IN ('APPLIED', 'VOID'))
 
 			-- Case 3: Transaction is APPLIED and linked via metadata QUEUED_PARENT_TRANSACTION
 			OR (t.status = 'APPLIED' AND t.meta_data->>'QUEUED_PARENT_TRANSACTION' = $1)
 
-		ORDER BY 
+		ORDER BY
 			t.created_at DESC
 		LIMIT $2 OFFSET $3
 	`
@@ -1542,7 +1542,7 @@ func TestGetTransactionsByCriteria_Success(t *testing.T) {
 	maxAmount := 5000.0
 	currency := "USD"
 
-	mock.ExpectQuery("SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, rate, currency, destination, description, status, created_at, meta_data, scheduled_for, hash FROM blnk.transactions").
+	mock.ExpectQuery("SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, rate, currency, destination, description, status, created_at, meta_data, scheduled_for, hash FROM ledgerforge.transactions").
 		WithArgs(minAmount, maxAmount, currency, 10, int64(0)).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"transaction_id", "parent_transaction", "source", "reference", "amount", "precise_amount",
@@ -1587,7 +1587,7 @@ func TestGetAllTransactionsWithFilterAndOptions_ReturnsPrecision(t *testing.T) {
 	metaDataJSON, err := json.Marshal(map[string]interface{}{"key": "value"})
 	assert.NoError(t, err)
 
-	mock.ExpectQuery(`(?s)SELECT transaction_id, source, reference, amount, precise_amount, precision, currency, destination, description, status, hash, created_at, effective_date, meta_data\s+FROM blnk\.transactions\s+ORDER BY created_at DESC\s+LIMIT \$1 OFFSET \$2`).
+	mock.ExpectQuery(`(?s)SELECT transaction_id, source, reference, amount, precise_amount, precision, currency, destination, description, status, hash, created_at, effective_date, meta_data\s+FROM ledgerforge\.transactions\s+ORDER BY created_at DESC\s+LIMIT \$1 OFFSET \$2`).
 		WithArgs(10, 0).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"transaction_id", "source", "reference", "amount", "precise_amount", "precision",
@@ -1620,7 +1620,7 @@ func TestGetAllTransactionsWithFilterAndOptions_IncludeCountReturnsPrecision(t *
 	metaDataJSON, err := json.Marshal(map[string]interface{}{"key": "value"})
 	assert.NoError(t, err)
 
-	mock.ExpectQuery(`(?s)SELECT transaction_id, source, reference, amount, precise_amount, precision, currency, destination, description, status, hash, created_at, effective_date, meta_data, COUNT\(\*\) OVER\(\) AS total_count\s+FROM blnk\.transactions\s+ORDER BY created_at DESC\s+LIMIT \$1 OFFSET \$2`).
+	mock.ExpectQuery(`(?s)SELECT transaction_id, source, reference, amount, precise_amount, precision, currency, destination, description, status, hash, created_at, effective_date, meta_data, COUNT\(\*\) OVER\(\) AS total_count\s+FROM ledgerforge\.transactions\s+ORDER BY created_at DESC\s+LIMIT \$1 OFFSET \$2`).
 		WithArgs(10, 0).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"transaction_id", "source", "reference", "amount", "precise_amount", "precision",
@@ -1650,14 +1650,14 @@ func TestGetQueuedAmounts_Success(t *testing.T) {
 	ctx := context.Background()
 	balanceID := "bln_test123"
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT t.precise_amount, t.source, t.destination 
-        FROM blnk.transactions t
-        WHERE (t.source = $1 OR t.destination = $1) 
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT t.precise_amount, t.source, t.destination
+        FROM ledgerforge.transactions t
+        WHERE (t.source = $1 OR t.destination = $1)
         AND t.status = 'QUEUED'
         AND NOT EXISTS (
-            SELECT 1 
-            FROM blnk.transactions child 
-            WHERE child.parent_transaction = t.transaction_id 
+            SELECT 1
+            FROM ledgerforge.transactions child
+            WHERE child.parent_transaction = t.transaction_id
             AND (child.status = 'APPLIED' OR child.status = 'REJECTED' OR child.status = 'VOID' or child.status = 'INFLIGHT')
         )`)).
 		WithArgs(balanceID).
@@ -1682,14 +1682,14 @@ func TestGetQueuedAmounts_NoTransactions(t *testing.T) {
 	ctx := context.Background()
 	balanceID := "bln_test123"
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT t.precise_amount, t.source, t.destination 
-        FROM blnk.transactions t
-        WHERE (t.source = $1 OR t.destination = $1) 
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT t.precise_amount, t.source, t.destination
+        FROM ledgerforge.transactions t
+        WHERE (t.source = $1 OR t.destination = $1)
         AND t.status = 'QUEUED'
         AND NOT EXISTS (
-            SELECT 1 
-            FROM blnk.transactions child 
-            WHERE child.parent_transaction = t.transaction_id 
+            SELECT 1
+            FROM ledgerforge.transactions child
+            WHERE child.parent_transaction = t.transaction_id
             AND (child.status = 'APPLIED' OR child.status = 'REJECTED' OR child.status = 'VOID' or child.status = 'INFLIGHT')
         )`)).
 		WithArgs(balanceID).
@@ -1712,14 +1712,14 @@ func TestGetQueuedAmounts_QueryError(t *testing.T) {
 	ctx := context.Background()
 	balanceID := "bln_test123"
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT t.precise_amount, t.source, t.destination 
-        FROM blnk.transactions t
-        WHERE (t.source = $1 OR t.destination = $1) 
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT t.precise_amount, t.source, t.destination
+        FROM ledgerforge.transactions t
+        WHERE (t.source = $1 OR t.destination = $1)
         AND t.status = 'QUEUED'
         AND NOT EXISTS (
-            SELECT 1 
-            FROM blnk.transactions child 
-            WHERE child.parent_transaction = t.transaction_id 
+            SELECT 1
+            FROM ledgerforge.transactions child
+            WHERE child.parent_transaction = t.transaction_id
             AND (child.status = 'APPLIED' OR child.status = 'REJECTED' OR child.status = 'VOID' or child.status = 'INFLIGHT')
         )`)).
 		WithArgs(balanceID).
@@ -1740,14 +1740,14 @@ func TestGetQueuedAmounts_InvalidAmount(t *testing.T) {
 	ctx := context.Background()
 	balanceID := "bln_test123"
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT t.precise_amount, t.source, t.destination 
-        FROM blnk.transactions t
-        WHERE (t.source = $1 OR t.destination = $1) 
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT t.precise_amount, t.source, t.destination
+        FROM ledgerforge.transactions t
+        WHERE (t.source = $1 OR t.destination = $1)
         AND t.status = 'QUEUED'
         AND NOT EXISTS (
-            SELECT 1 
-            FROM blnk.transactions child 
-            WHERE child.parent_transaction = t.transaction_id 
+            SELECT 1
+            FROM ledgerforge.transactions child
+            WHERE child.parent_transaction = t.transaction_id
             AND (child.status = 'APPLIED' OR child.status = 'REJECTED' OR child.status = 'VOID' or child.status = 'INFLIGHT')
         )`)).
 		WithArgs(balanceID).
@@ -1775,7 +1775,7 @@ func TestGetTransactionsPaginated_Success(t *testing.T) {
 	metaDataJSON, _ := json.Marshal(metaData)
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, rate, currency, destination, description, status, created_at, meta_data, scheduled_for, hash
-        FROM blnk.transactions
+        FROM ledgerforge.transactions
         ORDER BY created_at ASC
         LIMIT $1 OFFSET $2`)).
 		WithArgs(10, int64(0)).
@@ -1798,7 +1798,7 @@ func TestGetTransactionsPaginated_QueryError(t *testing.T) {
 	ctx := context.Background()
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, rate, currency, destination, description, status, created_at, meta_data, scheduled_for, hash
-        FROM blnk.transactions
+        FROM ledgerforge.transactions
         ORDER BY created_at ASC
         LIMIT $1 OFFSET $2`)).
 		WithArgs(10, int64(0)).
@@ -1827,9 +1827,9 @@ func TestGetTransactionsByParent_DatabaseSuccess(t *testing.T) {
 	metaDataJSON, _ := json.Marshal(metaData)
 	parentID := "txn_parent_123"
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, 
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision,
 			   rate, currency, destination, description, status, created_at, meta_data, scheduled_for, hash
-		FROM blnk.transactions
+		FROM ledgerforge.transactions
 		WHERE parent_transaction = $1
 		ORDER BY created_at DESC
 		LIMIT $2 OFFSET $3`)).
@@ -1854,9 +1854,9 @@ func TestGetTransactionsByParent_DatabaseError(t *testing.T) {
 	ctx := context.Background()
 	parentID := "txn_parent_123"
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, 
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision,
 			   rate, currency, destination, description, status, created_at, meta_data, scheduled_for, hash
-		FROM blnk.transactions
+		FROM ledgerforge.transactions
 		WHERE parent_transaction = $1
 		ORDER BY created_at DESC
 		LIMIT $2 OFFSET $3`)).
@@ -1881,9 +1881,9 @@ func TestGetTransactionsByParent_EmptyResults(t *testing.T) {
 	ctx := context.Background()
 	parentID := "txn_parent_123"
 
-	mock.ExpectQuery(regexp.QuoteMeta(`SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, 
+	mock.ExpectQuery(regexp.QuoteMeta(`SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision,
 			   rate, currency, destination, description, status, created_at, meta_data, scheduled_for, hash
-		FROM blnk.transactions
+		FROM ledgerforge.transactions
 		WHERE parent_transaction = $1
 		ORDER BY created_at DESC
 		LIMIT $2 OFFSET $3`)).
@@ -1948,11 +1948,11 @@ func TestRecordTransactionWithBalances_Success(t *testing.T) {
 	}
 
 	mock.ExpectBegin()
-	mock.ExpectExec("UPDATE blnk.balances SET").
+	mock.ExpectExec("UPDATE ledgerforge.balances SET").
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("UPDATE blnk.balances SET").
+	mock.ExpectExec("UPDATE ledgerforge.balances SET").
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("INSERT INTO blnk.transactions").
+	mock.ExpectExec("INSERT INTO ledgerforge.transactions").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
@@ -2015,7 +2015,7 @@ func TestRecordTransactionWithBalances_SourceUpdateError(t *testing.T) {
 	destBalance := &model.Balance{BalanceID: "bln_dest"}
 
 	mock.ExpectBegin()
-	mock.ExpectExec("UPDATE blnk.balances SET").
+	mock.ExpectExec("UPDATE ledgerforge.balances SET").
 		WillReturnError(sql.ErrConnDone)
 	mock.ExpectRollback()
 
@@ -2073,11 +2073,11 @@ func TestRecordTransactionWithBalances_CommitError(t *testing.T) {
 	}
 
 	mock.ExpectBegin()
-	mock.ExpectExec("UPDATE blnk.balances SET").
+	mock.ExpectExec("UPDATE ledgerforge.balances SET").
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("UPDATE blnk.balances SET").
+	mock.ExpectExec("UPDATE ledgerforge.balances SET").
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("INSERT INTO blnk.transactions").
+	mock.ExpectExec("INSERT INTO ledgerforge.transactions").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit().WillReturnError(sql.ErrConnDone)
 	mock.ExpectRollback()
@@ -2164,7 +2164,7 @@ func TestRecordTransactionsWithBalancesAndOutboxes_UsesCopyIn(t *testing.T) {
 	}
 
 	copySQL := pq.CopyInSchema(
-		"blnk",
+		"ledgerforge",
 		"transactions",
 		"transaction_id",
 		"parent_transaction",
@@ -2186,7 +2186,7 @@ func TestRecordTransactionsWithBalancesAndOutboxes_UsesCopyIn(t *testing.T) {
 	)
 
 	mock.ExpectBegin()
-	mock.ExpectQuery("UPDATE blnk.balances AS b").
+	mock.ExpectQuery("UPDATE ledgerforge.balances AS b").
 		WillReturnRows(sqlmock.NewRows([]string{"balance_id"}).AddRow("bln_source").AddRow("bln_dest"))
 	copyPrepare := mock.ExpectPrepare(regexp.QuoteMeta(copySQL))
 	copyPrepare.ExpectExec().
@@ -2277,7 +2277,7 @@ func TestRecordTransactionsWithBalancesAndOutboxes_BatchesLineageOutboxes(t *tes
 	}
 
 	copySQL := pq.CopyInSchema(
-		"blnk",
+		"ledgerforge",
 		"transactions",
 		"transaction_id",
 		"parent_transaction",
@@ -2299,7 +2299,7 @@ func TestRecordTransactionsWithBalancesAndOutboxes_BatchesLineageOutboxes(t *tes
 	)
 
 	mock.ExpectBegin()
-	mock.ExpectQuery("UPDATE blnk.balances AS b").
+	mock.ExpectQuery("UPDATE ledgerforge.balances AS b").
 		WillReturnRows(sqlmock.NewRows([]string{"balance_id"}).AddRow("bln_source").AddRow("bln_dest"))
 	copyPrepare := mock.ExpectPrepare(regexp.QuoteMeta(copySQL))
 	copyPrepare.ExpectExec().
@@ -2311,7 +2311,7 @@ func TestRecordTransactionsWithBalancesAndOutboxes_BatchesLineageOutboxes(t *tes
 		WithArgs().
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	copyPrepare.WillBeClosed()
-	mock.ExpectQuery("INSERT INTO blnk.lineage_outbox").
+	mock.ExpectQuery("INSERT INTO ledgerforge.lineage_outbox").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "transaction_id"}).AddRow(int64(1), "txn_1"))
 	mock.ExpectCommit()
 
@@ -2361,9 +2361,9 @@ func TestUpdateBalanceSet_ChunksLargeBalanceSets(t *testing.T) {
 		}
 	}
 
-	mock.ExpectQuery("UPDATE blnk.balances AS b").
+	mock.ExpectQuery("UPDATE ledgerforge.balances AS b").
 		WillReturnRows(firstChunkRows)
-	mock.ExpectQuery("UPDATE blnk.balances AS b").
+	mock.ExpectQuery("UPDATE ledgerforge.balances AS b").
 		WillReturnRows(secondChunkRows)
 	mock.ExpectCommit()
 
@@ -2413,9 +2413,9 @@ func TestUpdateBalanceSet_ReturnsConflictWhenAChunkMissesABalance(t *testing.T) 
 		}
 	}
 
-	mock.ExpectQuery("UPDATE blnk.balances AS b").
+	mock.ExpectQuery("UPDATE ledgerforge.balances AS b").
 		WillReturnRows(firstChunkRows)
-	mock.ExpectQuery("UPDATE blnk.balances AS b").
+	mock.ExpectQuery("UPDATE ledgerforge.balances AS b").
 		WillReturnRows(secondChunkRows)
 	mock.ExpectRollback()
 

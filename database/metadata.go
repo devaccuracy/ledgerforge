@@ -21,7 +21,7 @@ func (d *Datasource) UpdateLedgerMetadata(id string, metadata map[string]interfa
 	}
 
 	_, err = d.Conn.ExecContext(context.Background(), `
-		UPDATE blnk.ledgers 
+		UPDATE ledgerforge.ledgers
 		SET meta_data = $1
 		WHERE ledger_id = $2
 	`, metadataJSON, id)
@@ -48,7 +48,7 @@ func (d *Datasource) UpdateTransactionMetadata(ctx context.Context, id string, m
 
 	// Use jsonb_set or similar postgres function to merge the metadata rather than replacing it
 	_, err = d.Conn.ExecContext(ctx, `
-		UPDATE blnk.transactions 
+		UPDATE ledgerforge.transactions
 		SET meta_data = meta_data || $1::jsonb
 		WHERE transaction_id = $2 OR parent_transaction = $2
 	`, metadataJSON, id)
@@ -72,7 +72,7 @@ func (d *Datasource) UpdateBalanceMetadata(ctx context.Context, id string, metad
 	}
 
 	_, err = d.Conn.ExecContext(ctx, `
-		UPDATE blnk.balances 
+		UPDATE ledgerforge.balances
 		SET meta_data = $1
 		WHERE balance_id = $2
 	`, metadataJSON, id)
@@ -95,7 +95,7 @@ func (d *Datasource) UpdateIdentityMetadata(id string, metadata map[string]inter
 	}
 
 	_, err = d.Conn.ExecContext(context.Background(), `
-		UPDATE blnk.identity 
+		UPDATE ledgerforge.identity
 		SET meta_data = $1
 		WHERE identity_id = $2
 	`, metadataJSON, id)

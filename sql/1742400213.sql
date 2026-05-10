@@ -15,7 +15,7 @@
 -- +migrate Up
 
 -- +migrate StatementBegin
-CREATE OR REPLACE FUNCTION blnk.prevent_transaction_update()
+CREATE OR REPLACE FUNCTION ledgerforge.prevent_transaction_update()
     RETURNS TRIGGER
     LANGUAGE plpgsql
 AS $$
@@ -45,17 +45,17 @@ $$;
 
 -- +migrate StatementBegin
 -- Drop the trigger if it exists and recreate it
-DROP TRIGGER IF EXISTS prevent_transaction_update_trigger ON blnk.transactions;
+DROP TRIGGER IF EXISTS prevent_transaction_update_trigger ON ledgerforge.transactions;
 
 CREATE TRIGGER prevent_transaction_update_trigger
-    BEFORE UPDATE ON blnk.transactions
+    BEFORE UPDATE ON ledgerforge.transactions
     FOR EACH ROW
-    EXECUTE FUNCTION blnk.prevent_transaction_update();
+    EXECUTE FUNCTION ledgerforge.prevent_transaction_update();
 -- +migrate StatementEnd
 
 -- +migrate Down
 
 -- +migrate StatementBegin
-DROP TRIGGER IF EXISTS prevent_transaction_update_trigger ON blnk.transactions;
-DROP FUNCTION IF EXISTS blnk.prevent_transaction_update();
+DROP TRIGGER IF EXISTS prevent_transaction_update_trigger ON ledgerforge.transactions;
+DROP FUNCTION IF EXISTS ledgerforge.prevent_transaction_update();
 -- +migrate StatementEnd

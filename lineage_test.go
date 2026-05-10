@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package blnk
+package ledgerforge
 
 import (
 	"context"
@@ -22,8 +22,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blnkfinance/blnk/database/mocks"
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/database/mocks"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -34,9 +34,9 @@ func TestGetLineageProvider(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	blnk, err := NewBlnk(datasource)
+	ledgerforge, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 
 	tests := []struct {
@@ -62,7 +62,7 @@ func TestGetLineageProvider(t *testing.T) {
 			name: "Metadata with provider",
 			txn: &model.Transaction{
 				MetaData: map[string]interface{}{
-					"BLNK_LINEAGE_PROVIDER": "stripe",
+					"LEDGERFORGE_LINEAGE_PROVIDER": "stripe",
 				},
 			},
 			expected: "stripe",
@@ -71,7 +71,7 @@ func TestGetLineageProvider(t *testing.T) {
 			name: "Provider with non-string value",
 			txn: &model.Transaction{
 				MetaData: map[string]interface{}{
-					"BLNK_LINEAGE_PROVIDER": 123,
+					"LEDGERFORGE_LINEAGE_PROVIDER": 123,
 				},
 			},
 			expected: "",
@@ -80,7 +80,7 @@ func TestGetLineageProvider(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := blnk.getLineageProvider(tt.txn)
+			result := ledgerforge.getLineageProvider(tt.txn)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -158,9 +158,9 @@ func TestValidateLineageProvider(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			mockDS := new(mocks.MockDataSource)
 			tt.mockSetup(mockDS)
-			blnkInstance := &Blnk{datasource: mockDS}
+			ledgerforgeInstance := &LedgerForge{datasource: mockDS}
 
-			result, err := blnkInstance.validateLineageProvider(ctx, tt.provider, tt.sourceBalance)
+			result, err := ledgerforgeInstance.validateLineageProvider(ctx, tt.provider, tt.sourceBalance)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -178,9 +178,9 @@ func TestGetIdentityIdentifier(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	blnk, err := NewBlnk(datasource)
+	ledgerforge, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 
 	tests := []struct {
@@ -216,7 +216,7 @@ func TestGetIdentityIdentifier(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := blnk.getIdentityIdentifier(tt.identity)
+			result := ledgerforge.getIdentityIdentifier(tt.identity)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -228,9 +228,9 @@ func TestSequentialAllocation_FIFO(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	blnk, err := NewBlnk(datasource)
+	ledgerforge, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 
 	now := time.Now()
@@ -285,7 +285,7 @@ func TestSequentialAllocation_FIFO(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := blnk.sequentialAllocation(tt.sources, tt.amount)
+			result := ledgerforge.sequentialAllocation(tt.sources, tt.amount)
 
 			if tt.expected == nil {
 				assert.Nil(t, result)
@@ -307,9 +307,9 @@ func TestCalculateAllocation(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	blnk, err := NewBlnk(datasource)
+	ledgerforge, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 
 	now := time.Now()
@@ -346,7 +346,7 @@ func TestCalculateAllocation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := blnk.calculateAllocation(sources, tt.amount, tt.strategy)
+			result := ledgerforge.calculateAllocation(sources, tt.amount, tt.strategy)
 			assert.NotEmpty(t, result)
 			assert.Equal(t, tt.expectedFirst, result[0].BalanceID)
 		})
@@ -359,9 +359,9 @@ func TestProportionalAllocation(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	blnk, err := NewBlnk(datasource)
+	ledgerforge, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 
 	now := time.Now()
@@ -394,7 +394,7 @@ func TestProportionalAllocation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := blnk.proportionalAllocation(tt.sources, tt.amount)
+			result := ledgerforge.proportionalAllocation(tt.sources, tt.amount)
 
 			total := big.NewInt(0)
 			for _, alloc := range result {
@@ -412,9 +412,9 @@ func TestFindMappingByShadowID(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	blnk, err := NewBlnk(datasource)
+	ledgerforge, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 
 	mappings := []model.LineageMapping{
@@ -453,7 +453,7 @@ func TestFindMappingByShadowID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := blnk.findMappingByShadowID(mappings, tt.shadowBalanceID)
+			result := ledgerforge.findMappingByShadowID(mappings, tt.shadowBalanceID)
 
 			if tt.expectFound {
 				assert.NotNil(t, result)
@@ -483,13 +483,13 @@ func TestLineageIntegration_MultiProvider_FIFO(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	blnk, err := NewBlnk(datasource)
+	ledgerforge, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 
 	t.Run("Spend $70 with FIFO - should deplete stripe first, then paypal", func(t *testing.T) {
-		allocations := blnk.calculateAllocation(sources, big.NewInt(7000), AllocationFIFO)
+		allocations := ledgerforge.calculateAllocation(sources, big.NewInt(7000), AllocationFIFO)
 
 		assert.Len(t, allocations, 2)
 
@@ -501,7 +501,7 @@ func TestLineageIntegration_MultiProvider_FIFO(t *testing.T) {
 	})
 
 	t.Run("Spend $100 with FIFO - should use all three providers", func(t *testing.T) {
-		allocations := blnk.calculateAllocation(sources, big.NewInt(10000), AllocationFIFO)
+		allocations := ledgerforge.calculateAllocation(sources, big.NewInt(10000), AllocationFIFO)
 
 		assert.Len(t, allocations, 3)
 
@@ -517,7 +517,7 @@ func TestLineageIntegration_MultiProvider_FIFO(t *testing.T) {
 	})
 
 	t.Run("Spend $30 with FIFO - only stripe needed", func(t *testing.T) {
-		allocations := blnk.calculateAllocation(sources, big.NewInt(3000), AllocationFIFO)
+		allocations := ledgerforge.calculateAllocation(sources, big.NewInt(3000), AllocationFIFO)
 
 		assert.Len(t, allocations, 1)
 		assert.Equal(t, "bln_stripe_alice", allocations[0].BalanceID)
@@ -543,13 +543,13 @@ func TestLineageIntegration_MultiProvider_LIFO(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	blnk, err := NewBlnk(datasource)
+	ledgerforge, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 
 	t.Run("Spend $40 with LIFO - should deplete bank first, then paypal", func(t *testing.T) {
-		allocations := blnk.calculateAllocation(sources, big.NewInt(4000), AllocationLIFO)
+		allocations := ledgerforge.calculateAllocation(sources, big.NewInt(4000), AllocationLIFO)
 
 		assert.Len(t, allocations, 2)
 
@@ -561,7 +561,7 @@ func TestLineageIntegration_MultiProvider_LIFO(t *testing.T) {
 	})
 
 	t.Run("Spend $100 with LIFO - should use all in reverse order", func(t *testing.T) {
-		allocations := blnk.calculateAllocation(sources, big.NewInt(10000), AllocationLIFO)
+		allocations := ledgerforge.calculateAllocation(sources, big.NewInt(10000), AllocationLIFO)
 
 		assert.Len(t, allocations, 3)
 
@@ -585,13 +585,13 @@ func TestLineageIntegration_MultiProvider_PROPORTIONAL(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	blnk, err := NewBlnk(datasource)
+	ledgerforge, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 
 	t.Run("Spend $50 with PROPORTIONAL - should split 60/30/10", func(t *testing.T) {
-		allocations := blnk.calculateAllocation(sources, big.NewInt(5000), AllocationProp)
+		allocations := ledgerforge.calculateAllocation(sources, big.NewInt(5000), AllocationProp)
 
 		assert.Len(t, allocations, 3)
 
@@ -610,7 +610,7 @@ func TestLineageIntegration_MultiProvider_PROPORTIONAL(t *testing.T) {
 	})
 
 	t.Run("Spend $100 with PROPORTIONAL - should use all funds", func(t *testing.T) {
-		allocations := blnk.calculateAllocation(sources, big.NewInt(10000), AllocationProp)
+		allocations := ledgerforge.calculateAllocation(sources, big.NewInt(10000), AllocationProp)
 
 		total := big.NewInt(0)
 		for _, alloc := range allocations {
@@ -685,8 +685,8 @@ func TestLineageIntegration_FullCreditDebitCycle(t *testing.T) {
 		}
 
 		datasource, _, _ := newTestDataSource()
-		blnk, _ := NewBlnk(datasource)
-		allocations := blnk.calculateAllocation(sources, withdrawAmount, AllocationFIFO)
+		ledgerforge, _ := NewLedgerForge(datasource)
+		allocations := ledgerforge.calculateAllocation(sources, withdrawAmount, AllocationFIFO)
 
 		for _, alloc := range allocations {
 			shadowBalances[alloc.BalanceID].Credit.Add(shadowBalances[alloc.BalanceID].Credit, alloc.Amount)
@@ -708,10 +708,10 @@ func TestLineageIntegration_FullCreditDebitCycle(t *testing.T) {
 
 func TestLineageIntegration_EdgeCases(t *testing.T) {
 	datasource, _, _ := newTestDataSource()
-	blnk, _ := NewBlnk(datasource)
+	ledgerforge, _ := NewLedgerForge(datasource)
 
 	t.Run("Empty sources returns nil", func(t *testing.T) {
-		allocations := blnk.calculateAllocation([]LineageSource{}, big.NewInt(1000), AllocationFIFO)
+		allocations := ledgerforge.calculateAllocation([]LineageSource{}, big.NewInt(1000), AllocationFIFO)
 		assert.Nil(t, allocations)
 	})
 
@@ -719,7 +719,7 @@ func TestLineageIntegration_EdgeCases(t *testing.T) {
 		sources := []LineageSource{
 			{BalanceID: "shadow_1", Balance: big.NewInt(5000), CreatedAt: time.Now()},
 		}
-		allocations := blnk.calculateAllocation(sources, big.NewInt(0), AllocationFIFO)
+		allocations := ledgerforge.calculateAllocation(sources, big.NewInt(0), AllocationFIFO)
 
 		if len(allocations) > 0 {
 			assert.Equal(t, 0, allocations[0].Amount.Cmp(big.NewInt(0)))
@@ -730,7 +730,7 @@ func TestLineageIntegration_EdgeCases(t *testing.T) {
 		sources := []LineageSource{
 			{BalanceID: "shadow_1", Balance: big.NewInt(3000), CreatedAt: time.Now()},
 		}
-		allocations := blnk.calculateAllocation(sources, big.NewInt(5000), AllocationFIFO)
+		allocations := ledgerforge.calculateAllocation(sources, big.NewInt(5000), AllocationFIFO)
 
 		total := big.NewInt(0)
 		for _, alloc := range allocations {
@@ -743,7 +743,7 @@ func TestLineageIntegration_EdgeCases(t *testing.T) {
 		sources := []LineageSource{
 			{BalanceID: "shadow_1", Balance: big.NewInt(5000), CreatedAt: time.Now()},
 		}
-		allocations := blnk.calculateAllocation(sources, big.NewInt(5000), AllocationFIFO)
+		allocations := ledgerforge.calculateAllocation(sources, big.NewInt(5000), AllocationFIFO)
 
 		assert.Len(t, allocations, 1)
 		assert.Equal(t, 0, big.NewInt(5000).Cmp(allocations[0].Amount))
@@ -842,10 +842,10 @@ func TestLineageE2E_DebitFlow_FIFO_ToNonLineageBalance(t *testing.T) {
 	mockDS.On("GetBalanceByIndicator", mock.Anything, mock.Anything).Return(aggregateShadow, nil)
 	mockDS.On("UpdateTransactionMetadata", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
-	blnkInstance := &Blnk{datasource: mockDS}
+	ledgerforgeInstance := &LedgerForge{datasource: mockDS}
 
 	t.Run("Get lineage sources with correct available amounts", func(t *testing.T) {
-		sources, err := blnkInstance.getLineageSources(ctx, mappings)
+		sources, err := ledgerforgeInstance.getLineageSources(ctx, mappings)
 		assert.NoError(t, err)
 		assert.Len(t, sources, 2)
 
@@ -860,7 +860,7 @@ func TestLineageE2E_DebitFlow_FIFO_ToNonLineageBalance(t *testing.T) {
 			{BalanceID: "bln_paypal_shadow", Balance: big.NewInt(5000), CreatedAt: paypalMapping.CreatedAt},
 		}
 
-		allocations := blnkInstance.calculateAllocation(sources, big.NewInt(7000), AllocationFIFO)
+		allocations := ledgerforgeInstance.calculateAllocation(sources, big.NewInt(7000), AllocationFIFO)
 
 		assert.Len(t, allocations, 2)
 
@@ -932,7 +932,7 @@ func TestLineageE2E_DebitFlow_ToLineageEnabledBalance(t *testing.T) {
 	}, nil)
 	mockDS.On("UpsertLineageMapping", mock.Anything, mock.Anything).Return(nil)
 
-	blnkInstance := &Blnk{datasource: mockDS}
+	ledgerforgeInstance := &LedgerForge{datasource: mockDS}
 
 	t.Run("Both balances have lineage enabled", func(t *testing.T) {
 		assert.True(t, aliceMainBalance.TrackFundLineage)
@@ -940,7 +940,7 @@ func TestLineageE2E_DebitFlow_ToLineageEnabledBalance(t *testing.T) {
 	})
 
 	t.Run("Bob should inherit stripe provider from Alice", func(t *testing.T) {
-		bobIdentifier := blnkInstance.getIdentityIdentifier(bobIdentity)
+		bobIdentifier := ledgerforgeInstance.getIdentityIdentifier(bobIdentity)
 		assert.Equal(t, "bob_jones_idt_bob_", bobIdentifier)
 
 		expectedBobStripeShadow := "@stripe_bob_jones_idt_bob__lineage"
@@ -1002,10 +1002,10 @@ func TestLineageE2E_GetBalanceLineage_API(t *testing.T) {
 	mockDS.On("GetBalanceByIDLite", "bln_stripe_shadow").Return(stripeShadow, nil)
 	mockDS.On("GetBalanceByIDLite", "bln_paypal_shadow").Return(paypalShadow, nil)
 
-	blnkInstance := &Blnk{datasource: mockDS}
+	ledgerforgeInstance := &LedgerForge{datasource: mockDS}
 
 	t.Run("Get balance lineage returns correct breakdown", func(t *testing.T) {
-		lineage, err := blnkInstance.GetBalanceLineage(ctx, "bln_alice_main")
+		lineage, err := ledgerforgeInstance.GetBalanceLineage(ctx, "bln_alice_main")
 		assert.NoError(t, err)
 		assert.NotNil(t, lineage)
 
@@ -1049,7 +1049,7 @@ func TestLineageE2E_GetTransactionLineage_API(t *testing.T) {
 		Currency:      "USD",
 		Status:        "APPLIED",
 		MetaData: map[string]interface{}{
-			"BLNK_FUND_ALLOCATION": []interface{}{
+			"LEDGERFORGE_FUND_ALLOCATION": []interface{}{
 				map[string]interface{}{"provider": "stripe", "amount": float64(50)},
 				map[string]interface{}{"provider": "paypal", "amount": float64(20)},
 			},
@@ -1084,10 +1084,10 @@ func TestLineageE2E_GetTransactionLineage_API(t *testing.T) {
 	mockDS.On("GetTransaction", mock.Anything, "txn_main_123").Return(mainTxn, nil)
 	mockDS.On("GetTransactionsByShadowFor", mock.Anything, "txn_main_123").Return(shadowTxns, nil)
 
-	blnkInstance := &Blnk{datasource: mockDS}
+	ledgerforgeInstance := &LedgerForge{datasource: mockDS}
 
 	t.Run("Get transaction lineage returns fund allocation and shadow txns", func(t *testing.T) {
-		lineage, err := blnkInstance.GetTransactionLineage(ctx, "txn_main_123")
+		lineage, err := ledgerforgeInstance.GetTransactionLineage(ctx, "txn_main_123")
 		assert.NoError(t, err)
 		assert.NotNil(t, lineage)
 
@@ -1142,7 +1142,7 @@ func TestPrepareLineageOutbox(t *testing.T) {
 				Precision:     100,
 				Reference:     "ref_123",
 				MetaData: map[string]interface{}{
-					"BLNK_LINEAGE_PROVIDER": "stripe",
+					"LEDGERFORGE_LINEAGE_PROVIDER": "stripe",
 				},
 			},
 			sourceBalance: &model.Balance{
@@ -1183,7 +1183,7 @@ func TestPrepareLineageOutbox(t *testing.T) {
 				PreciseAmount: big.NewInt(10000),
 				Currency:      "USD",
 				MetaData: map[string]interface{}{
-					"BLNK_LINEAGE_PROVIDER": "paypal",
+					"LEDGERFORGE_LINEAGE_PROVIDER": "paypal",
 				},
 			},
 			sourceBalance: &model.Balance{
@@ -1221,9 +1221,9 @@ func TestPrepareLineageOutbox(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockDS := new(mocks.MockDataSource)
-			blnkInstance := &Blnk{datasource: mockDS}
+			ledgerforgeInstance := &LedgerForge{datasource: mockDS}
 
-			outbox := blnkInstance.PrepareLineageOutbox(ctx, tt.txn, tt.sourceBalance, tt.destinationBalance)
+			outbox := ledgerforgeInstance.PrepareLineageOutbox(ctx, tt.txn, tt.sourceBalance, tt.destinationBalance)
 
 			if tt.expectOutbox {
 				assert.NotNil(t, outbox)
@@ -1282,9 +1282,9 @@ func TestProcessLineageFromOutbox(t *testing.T) {
 		mockDS.On("GetBalanceByIDLite", "bln_source").Return(sourceBalance, nil)
 		mockDS.On("GetBalanceByIDLite", "bln_dest").Return(destBalance, nil)
 
-		blnkInstance := &Blnk{datasource: mockDS}
+		ledgerforgeInstance := &LedgerForge{datasource: mockDS}
 
-		err := blnkInstance.ProcessLineageFromOutbox(ctx, entry)
+		err := ledgerforgeInstance.ProcessLineageFromOutbox(ctx, entry)
 		assert.NoError(t, err)
 	})
 
@@ -1314,10 +1314,10 @@ func TestProcessLineageFromOutbox(t *testing.T) {
 		mockDS.On("GetBalanceByIDLite", "bln_missing").Return((*model.Balance)(nil), assert.AnError)
 		mockDS.On("GetBalanceByIDLite", "bln_dest").Return(destBalance, nil)
 
-		blnkInstance := &Blnk{datasource: mockDS}
+		ledgerforgeInstance := &LedgerForge{datasource: mockDS}
 
 		// Should not return error - just logs warning and continues
-		err := blnkInstance.ProcessLineageFromOutbox(ctx, entry)
+		err := ledgerforgeInstance.ProcessLineageFromOutbox(ctx, entry)
 		assert.NoError(t, err)
 	})
 }
@@ -1325,9 +1325,9 @@ func TestProcessLineageFromOutbox(t *testing.T) {
 func TestLineageOutboxProcessor(t *testing.T) {
 	t.Run("Creates processor with default values", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		blnkInstance := &Blnk{datasource: mockDS}
+		ledgerforgeInstance := &LedgerForge{datasource: mockDS}
 
-		processor := NewLineageOutboxProcessor(blnkInstance)
+		processor := NewLineageOutboxProcessor(ledgerforgeInstance)
 
 		assert.NotNil(t, processor)
 		assert.Equal(t, 100, processor.batchSize)
@@ -1338,9 +1338,9 @@ func TestLineageOutboxProcessor(t *testing.T) {
 
 	t.Run("Configures processor with custom values", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		blnkInstance := &Blnk{datasource: mockDS}
+		ledgerforgeInstance := &LedgerForge{datasource: mockDS}
 
-		processor := NewLineageOutboxProcessor(blnkInstance).
+		processor := NewLineageOutboxProcessor(ledgerforgeInstance).
 			WithBatchSize(50).
 			WithPollInterval(5 * time.Second).
 			WithLockDuration(60 * time.Second)
@@ -1352,13 +1352,13 @@ func TestLineageOutboxProcessor(t *testing.T) {
 
 	t.Run("Start and stop processor", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		blnkInstance := &Blnk{datasource: mockDS}
+		ledgerforgeInstance := &LedgerForge{datasource: mockDS}
 
 		// Mock ClaimPendingOutboxEntries to return empty slice
 		mockDS.On("ClaimPendingOutboxEntries", mock.Anything, mock.Anything, mock.Anything).
 			Return([]model.LineageOutbox{}, nil).Maybe()
 
-		processor := NewLineageOutboxProcessor(blnkInstance).
+		processor := NewLineageOutboxProcessor(ledgerforgeInstance).
 			WithPollInterval(100 * time.Millisecond)
 
 		ctx := context.Background()
@@ -1400,8 +1400,8 @@ func TestLineageOutboxProcessor(t *testing.T) {
 		mockDS.On("GetBalanceByIDLite", mock.Anything).Return((*model.Balance)(nil), nil).Maybe()
 		mockDS.On("MarkOutboxCompleted", mock.Anything, int64(1)).Return(nil)
 
-		blnkInstance := &Blnk{datasource: mockDS}
-		processor := NewLineageOutboxProcessor(blnkInstance).
+		ledgerforgeInstance := &LedgerForge{datasource: mockDS}
+		processor := NewLineageOutboxProcessor(ledgerforgeInstance).
 			WithPollInterval(50 * time.Millisecond)
 
 		ctx := context.Background()

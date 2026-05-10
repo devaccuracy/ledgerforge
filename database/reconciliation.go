@@ -23,8 +23,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/blnkfinance/blnk/internal/apierror"
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/internal/apierror"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -42,7 +42,7 @@ func (d Datasource) RecordReconciliation(ctx context.Context, rec *model.Reconci
 	defer span.End()
 
 	_, err := d.Conn.ExecContext(ctx,
-		`INSERT INTO blnk.reconciliations(
+		`INSERT INTO ledgerforge.reconciliations(
 			reconciliation_id, upload_id, status, matched_transactions, 
 			unmatched_transactions, started_at, completed_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
@@ -70,7 +70,7 @@ func (d Datasource) GetReconciliation(ctx context.Context, id string) (*model.Re
 	err := d.Conn.QueryRowContext(ctx, `
 		SELECT id, reconciliation_id, upload_id, status, matched_transactions, 
 			unmatched_transactions, started_at, completed_at
-		FROM blnk.reconciliations
+		FROM ledgerforge.reconciliations
 		WHERE reconciliation_id = $1
 	`, id).Scan(
 		&rec.ID, &rec.ReconciliationID, &rec.UploadID, &rec.Status,
@@ -104,7 +104,7 @@ func (d Datasource) UpdateReconciliationStatus(ctx context.Context, id string, s
 	completedAt := sql.NullTime{Time: time.Now(), Valid: status == "completed"}
 
 	result, err := d.Conn.ExecContext(ctx, `
-		UPDATE blnk.reconciliations
+		UPDATE ledgerforge.reconciliations
 		SET status = $2, matched_transactions = $3, unmatched_transactions = $4, completed_at = $5
 		WHERE reconciliation_id = $1
 	`, id, status, matchedCount, unmatchedCount, completedAt)
@@ -137,7 +137,7 @@ func (d Datasource) GetReconciliationsByUploadID(ctx context.Context, uploadID s
 	rows, err := d.Conn.QueryContext(ctx, `
 		SELECT id, reconciliation_id, upload_id, status, matched_transactions, 
 			unmatched_transactions, started_at, completed_at
-		FROM blnk.reconciliations
+		FROM ledgerforge.reconciliations
 		WHERE upload_id = $1
 		ORDER BY started_at DESC
 	`, uploadID)
@@ -230,7 +230,7 @@ func (d Datasource) RecordUnmatched(ctx context.Context, reconciliationID string
 
 	for _, externalId := range results {
 		_, err := txn.ExecContext(ctx,
-			`INSERT INTO blnk.unmatched(
+			`INSERT INTO ledgerforge.unmatched(
 					external_transaction_id, reconciliation_id, date
 				) VALUES ($1, $2, $3)`,
 			externalId, reconciliationID, time.Now())
@@ -256,7 +256,7 @@ func (d Datasource) RecordUnmatched(ctx context.Context, reconciliationID string
 // - An error if the operation fails, wrapped in an APIError for consistency.
 func (d Datasource) recordMatchInTransaction(ctx context.Context, tx *sql.Tx, match *model.Match) error {
 	_, err := tx.ExecContext(ctx,
-		`INSERT INTO blnk.matches(
+		`INSERT INTO ledgerforge.matches(
 			external_transaction_id, internal_transaction_id, reconciliation_id, amount, date
 		) VALUES ($1, $2, $3, $4, $5)`,
 		match.ExternalTransactionID, match.InternalTransactionID, match.ReconciliationID, match.Amount, match.Date,
@@ -281,7 +281,7 @@ func (d Datasource) RecordMatch(ctx context.Context, match *model.Match) error {
 	defer span.End()
 
 	_, err := d.Conn.ExecContext(ctx,
-		`INSERT INTO blnk.matches(
+		`INSERT INTO ledgerforge.matches(
 			external_transaction_id, internal_transaction_id, reconciliation_id, amount, date
 		) VALUES ($1, $2, $3, $4, $5)`,
 		match.ExternalTransactionID, match.InternalTransactionID, match.ReconciliationID, match.Amount, match.Date,
@@ -307,8 +307,8 @@ func (d Datasource) GetMatchesByReconciliationID(ctx context.Context, reconcilia
 
 	rows, err := d.Conn.QueryContext(ctx, `
 		SELECT m.external_transaction_id, m.internal_transaction_id, m.amount, m.date
-		FROM blnk.matches m
-		JOIN blnk.external_transactions et ON m.external_transaction_id = et.id
+		FROM ledgerforge.matches m
+		JOIN ledgerforge.external_transactions et ON m.external_transaction_id = et.id
 		WHERE et.reconciliation_id = $1
 	`, reconciliationID)
 	if err != nil {
@@ -351,7 +351,7 @@ func (d Datasource) RecordExternalTransaction(ctx context.Context, tx *model.Ext
 	defer span.End()
 
 	_, err := d.Conn.ExecContext(ctx,
-		`INSERT INTO blnk.external_transactions(
+		`INSERT INTO ledgerforge.external_transactions(
 			id, amount, reference, currency, description, date, source, upload_id
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 		tx.ID, tx.Amount, tx.Reference, tx.Currency, tx.Description, tx.Date, tx.Source, uploadID,
@@ -375,7 +375,7 @@ func (d Datasource) GetExternalTransactionsByReconciliationID(ctx context.Contex
 
 	rows, err := d.Conn.QueryContext(ctx, `
 		SELECT id, amount, reference, currency, description, date, source
-		FROM blnk.external_transactions
+		FROM ledgerforge.external_transactions
 		WHERE reconciliation_id = $1
 	`, reconciliationID)
 	if err != nil {
@@ -423,7 +423,7 @@ func (d Datasource) RecordMatchingRule(ctx context.Context, rule *model.Matching
 
 	// Execute the SQL insert query to record the rule in the database
 	_, err = d.Conn.ExecContext(ctx,
-		`INSERT INTO blnk.matching_rules(
+		`INSERT INTO ledgerforge.matching_rules(
 			rule_id, created_at, updated_at, name, description, criteria
 		) VALUES ($1, $2, $3, $4, $5, $6)`,
 		rule.RuleID, rule.CreatedAt, rule.UpdatedAt, rule.Name, rule.Description, criteriaJSON,
@@ -447,7 +447,7 @@ func (d Datasource) GetMatchingRules(ctx context.Context) ([]*model.MatchingRule
 	// Execute the query to fetch all matching rules
 	rows, err := d.Conn.QueryContext(ctx, `
 		SELECT id, rule_id, created_at, updated_at, name, description, criteria
-		FROM blnk.matching_rules
+		FROM ledgerforge.matching_rules
 	`)
 	if err != nil {
 		return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to retrieve matching rules", err)
@@ -504,7 +504,7 @@ func (d Datasource) UpdateMatchingRule(ctx context.Context, rule *model.Matching
 
 	// Execute the SQL update statement
 	result, err := d.Conn.ExecContext(ctx, `
-		UPDATE blnk.matching_rules
+		UPDATE ledgerforge.matching_rules
 		SET name = $2, description = $3, criteria = $4
 		WHERE rule_id = $1
 	`, rule.RuleID, rule.Name, rule.Description, criteriaJSON)
@@ -538,7 +538,7 @@ func (d Datasource) DeleteMatchingRule(ctx context.Context, id string) error {
 
 	// Execute the SQL delete statement
 	result, err := d.Conn.ExecContext(ctx, `
-		DELETE FROM blnk.matching_rules
+		DELETE FROM ledgerforge.matching_rules
 		WHERE rule_id = $1
 	`, id)
 	if err != nil {
@@ -575,7 +575,7 @@ func (d Datasource) GetMatchingRule(ctx context.Context, id string) (*model.Matc
 	// Execute SQL query to retrieve the matching rule by rule_id
 	err := d.Conn.QueryRowContext(ctx, `
 		SELECT id, rule_id, created_at, updated_at, name, description, criteria
-		FROM blnk.matching_rules
+		FROM ledgerforge.matching_rules
 		WHERE rule_id = $1
 	`, id).Scan(
 		&rule.ID, &rule.RuleID, &rule.CreatedAt, &rule.UpdatedAt,
@@ -626,7 +626,7 @@ func (d Datasource) GetExternalTransactionsPaginated(ctx context.Context, upload
 	// Query the database for external transactions if not found in cache
 	rows, err := d.Conn.QueryContext(ctx, `
 		SELECT id, amount, reference, currency, description, date, source
-		FROM blnk.external_transactions
+		FROM ledgerforge.external_transactions
 		WHERE upload_id = $1
 		ORDER BY date DESC
 		LIMIT $2 OFFSET $3
@@ -680,7 +680,7 @@ func (d Datasource) SaveReconciliationProgress(ctx context.Context, reconciliati
 
 	// Execute the query, with conflict handling to update if the record already exists
 	_, err := d.Conn.ExecContext(ctx, `
-		INSERT INTO blnk.reconciliation_progress (reconciliation_id, processed_count, last_processed_external_txn_id)
+		INSERT INTO ledgerforge.reconciliation_progress (reconciliation_id, processed_count, last_processed_external_txn_id)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (reconciliation_id) DO UPDATE
 		SET processed_count = $2, last_processed_external_txn_id = $3
@@ -707,7 +707,7 @@ func (d Datasource) LoadReconciliationProgress(ctx context.Context, reconciliati
 	var progress model.ReconciliationProgress
 	err := d.Conn.QueryRowContext(ctx, `
 		SELECT processed_count, last_processed_external_txn_id
-		FROM blnk.reconciliation_progress
+		FROM ledgerforge.reconciliation_progress
 		WHERE reconciliation_id = $1
 	`, reconciliationID).Scan(&progress.ProcessedCount, &progress.LastProcessedExternalTxnID)
 	// Handle potential errors
@@ -804,7 +804,7 @@ func groupedExternalTransactionsQuery(groupCriteria string) (string, bool) {
 	case "id":
 		return `
         SELECT id::text AS group_key, id, amount, reference, currency, description, date, source
-        FROM blnk.external_transactions
+        FROM ledgerforge.external_transactions
         WHERE upload_id = $1 AND id::text IS NOT NULL AND id::text != ''
         ORDER BY id::text
         LIMIT $2 OFFSET $3
@@ -812,7 +812,7 @@ func groupedExternalTransactionsQuery(groupCriteria string) (string, bool) {
 	case "amount":
 		return `
         SELECT amount::text AS group_key, id, amount, reference, currency, description, date, source
-        FROM blnk.external_transactions
+        FROM ledgerforge.external_transactions
         WHERE upload_id = $1 AND amount::text IS NOT NULL AND amount::text != ''
         ORDER BY amount::text
         LIMIT $2 OFFSET $3
@@ -820,7 +820,7 @@ func groupedExternalTransactionsQuery(groupCriteria string) (string, bool) {
 	case "reference":
 		return `
         SELECT reference::text AS group_key, id, amount, reference, currency, description, date, source
-        FROM blnk.external_transactions
+        FROM ledgerforge.external_transactions
         WHERE upload_id = $1 AND reference::text IS NOT NULL AND reference::text != ''
         ORDER BY reference::text
         LIMIT $2 OFFSET $3
@@ -828,7 +828,7 @@ func groupedExternalTransactionsQuery(groupCriteria string) (string, bool) {
 	case "currency":
 		return `
         SELECT currency::text AS group_key, id, amount, reference, currency, description, date, source
-        FROM blnk.external_transactions
+        FROM ledgerforge.external_transactions
         WHERE upload_id = $1 AND currency::text IS NOT NULL AND currency::text != ''
         ORDER BY currency::text
         LIMIT $2 OFFSET $3
@@ -836,7 +836,7 @@ func groupedExternalTransactionsQuery(groupCriteria string) (string, bool) {
 	case "description":
 		return `
         SELECT description::text AS group_key, id, amount, reference, currency, description, date, source
-        FROM blnk.external_transactions
+        FROM ledgerforge.external_transactions
         WHERE upload_id = $1 AND description::text IS NOT NULL AND description::text != ''
         ORDER BY description::text
         LIMIT $2 OFFSET $3
@@ -844,7 +844,7 @@ func groupedExternalTransactionsQuery(groupCriteria string) (string, bool) {
 	case "date":
 		return `
         SELECT date::text AS group_key, id, amount, reference, currency, description, date, source
-        FROM blnk.external_transactions
+        FROM ledgerforge.external_transactions
         WHERE upload_id = $1 AND date::text IS NOT NULL AND date::text != ''
         ORDER BY date::text
         LIMIT $2 OFFSET $3
@@ -852,7 +852,7 @@ func groupedExternalTransactionsQuery(groupCriteria string) (string, bool) {
 	case "source":
 		return `
         SELECT source::text AS group_key, id, amount, reference, currency, description, date, source
-        FROM blnk.external_transactions
+        FROM ledgerforge.external_transactions
         WHERE upload_id = $1 AND source::text IS NOT NULL AND source::text != ''
         ORDER BY source::text
         LIMIT $2 OFFSET $3

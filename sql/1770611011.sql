@@ -16,16 +16,16 @@
 
 -- Unique index on transaction reference to enforce idempotency
 CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_reference_unique
-ON blnk.transactions (reference);
+ON ledgerforge.transactions (reference);
 
 -- Partial index for stuck QUEUED transaction recovery
 -- Covers the recovery query: WHERE status = 'QUEUED' AND created_at < threshold
 -- The parent_transaction index (idx_transactions_parent_transaction) already exists for the NOT EXISTS subquery
 CREATE INDEX IF NOT EXISTS idx_transactions_queued_recovery
-ON blnk.transactions (created_at ASC)
+ON ledgerforge.transactions (created_at ASC)
 WHERE status = 'QUEUED';
 
 -- +migrate Down
 
-DROP INDEX IF EXISTS blnk.idx_transactions_queued_recovery;
-DROP INDEX IF EXISTS blnk.idx_transactions_reference_unique;
+DROP INDEX IF EXISTS ledgerforge.idx_transactions_queued_recovery;
+DROP INDEX IF EXISTS ledgerforge.idx_transactions_reference_unique;

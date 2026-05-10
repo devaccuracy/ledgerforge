@@ -20,9 +20,9 @@ import (
 	"strconv"
 	"time"
 
-	model2 "github.com/blnkfinance/blnk/api/model"
+	model2 "github.com/devaccuracy/ledgerforge/api/model"
 
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/gin-gonic/gin"
 )
 
@@ -50,7 +50,7 @@ func (a Api) CreateBalance(c *gin.Context) {
 		return
 	}
 
-	resp, err := a.blnk.CreateBalance(c.Request.Context(), newBalance.ToBalance())
+	resp, err := a.ledgerforge.CreateBalance(c.Request.Context(), newBalance.ToBalance())
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -83,7 +83,7 @@ func (a Api) GetBalance(c *gin.Context) {
 	// Extract 'with_queued' parameter from the query, default to false
 	withQueued := c.DefaultQuery("with_queued", "false") == "true"
 
-	resp, err := a.blnk.GetBalanceByID(c.Request.Context(), id, includes, withQueued)
+	resp, err := a.ledgerforge.GetBalanceByID(c.Request.Context(), id, includes, withQueued)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -130,7 +130,7 @@ func (a Api) GetBalances(c *gin.Context) {
 		}
 
 		// Use the new filter method
-		resp, err := a.blnk.GetAllBalancesWithFilter(c.Request.Context(), filters, limit, offset)
+		resp, err := a.ledgerforge.GetAllBalancesWithFilter(c.Request.Context(), filters, limit, offset)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -141,7 +141,7 @@ func (a Api) GetBalances(c *gin.Context) {
 	}
 
 	// Fetch balances with pagination
-	resp, err := a.blnk.GetAllBalances(c.Request.Context(), limit, offset)
+	resp, err := a.ledgerforge.GetAllBalances(c.Request.Context(), limit, offset)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -177,7 +177,7 @@ func (a Api) FilterBalances(c *gin.Context) {
 		return
 	}
 
-	resp, count, err := a.blnk.GetAllBalancesWithFilterAndOptions(c.Request.Context(), filters, opts, limit, offset)
+	resp, count, err := a.ledgerforge.GetAllBalancesWithFilterAndOptions(c.Request.Context(), filters, opts, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -214,7 +214,7 @@ func (a Api) CreateBalanceMonitor(c *gin.Context) {
 		return
 	}
 
-	resp, err := a.blnk.CreateMonitor(c.Request.Context(), newMonitor.ToBalanceMonitor())
+	resp, err := a.ledgerforge.CreateMonitor(c.Request.Context(), newMonitor.ToBalanceMonitor())
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -240,7 +240,7 @@ func (a Api) GetBalanceMonitor(c *gin.Context) {
 		return
 	}
 
-	resp, err := a.blnk.GetMonitorByID(c.Request.Context(), id)
+	resp, err := a.ledgerforge.GetMonitorByID(c.Request.Context(), id)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -260,7 +260,7 @@ func (a Api) GetBalanceMonitor(c *gin.Context) {
 // - 400 Bad Request: If there's an error retrieving the balance monitors.
 // - 200 OK: If the balance monitors are successfully retrieved.
 func (a Api) GetAllBalanceMonitors(c *gin.Context) {
-	monitors, err := a.blnk.GetAllMonitors(c.Request.Context())
+	monitors, err := a.ledgerforge.GetAllMonitors(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -286,7 +286,7 @@ func (a Api) GetBalanceMonitorsByBalanceID(c *gin.Context) {
 		return
 	}
 
-	monitors, err := a.blnk.GetMonitorByID(c.Request.Context(), balanceID)
+	monitors, err := a.ledgerforge.GetMonitorByID(c.Request.Context(), balanceID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -320,7 +320,7 @@ func (a Api) UpdateBalanceMonitor(c *gin.Context) {
 	}
 
 	monitor.MonitorID = id
-	err := a.blnk.UpdateMonitor(c.Request.Context(), &monitor)
+	err := a.ledgerforge.UpdateMonitor(c.Request.Context(), &monitor)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -346,7 +346,7 @@ func (a Api) DeleteBalanceMonitor(c *gin.Context) {
 		return
 	}
 
-	err := a.blnk.DeleteMonitor(c.Request.Context(), id)
+	err := a.ledgerforge.DeleteMonitor(c.Request.Context(), id)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -373,7 +373,7 @@ func (a Api) TakeBalanceSnapshots(c *gin.Context) {
 	}
 
 	// Call the service to take snapshots
-	a.blnk.TakeBalanceSnapshots(c.Request.Context(), batchSize)
+	a.ledgerforge.TakeBalanceSnapshots(c.Request.Context(), batchSize)
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Snapshotting in progress. should be completed shortly",
@@ -418,7 +418,7 @@ func (a Api) GetBalanceAtTime(c *gin.Context) {
 	fromSourceStr := c.Query("from_source")
 	fromSource := fromSourceStr == "true" || fromSourceStr == "1"
 
-	balance, err := a.blnk.GetBalanceAtTime(c.Request.Context(), balanceID, timestamp, fromSource)
+	balance, err := a.ledgerforge.GetBalanceAtTime(c.Request.Context(), balanceID, timestamp, fromSource)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -463,7 +463,7 @@ func (a Api) GetBalanceByIndicator(c *gin.Context) {
 		return
 	}
 
-	resp, err := a.blnk.GetBalanceByIndicator(c.Request.Context(), indicator, currency)
+	resp, err := a.ledgerforge.GetBalanceByIndicator(c.Request.Context(), indicator, currency)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -492,7 +492,7 @@ func (a Api) UpdateBalanceIdentity(c *gin.Context) {
 		return
 	}
 
-	if err := a.blnk.UpdateBalanceIdentity(balanceID, request.IdentityId); err != nil {
+	if err := a.ledgerforge.UpdateBalanceIdentity(balanceID, request.IdentityId); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -507,7 +507,7 @@ func (a Api) GetBalanceLineage(c *gin.Context) {
 		return
 	}
 
-	lineage, err := a.blnk.GetBalanceLineage(c.Request.Context(), id)
+	lineage, err := a.ledgerforge.GetBalanceLineage(c.Request.Context(), id)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

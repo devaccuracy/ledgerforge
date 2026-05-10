@@ -26,14 +26,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/blnkfinance/blnk"
-	"github.com/blnkfinance/blnk/api"
-	"github.com/blnkfinance/blnk/api/middleware"
-	"github.com/blnkfinance/blnk/config"
-	"github.com/blnkfinance/blnk/database"
-	"github.com/blnkfinance/blnk/internal/search"
-	trace "github.com/blnkfinance/blnk/internal/traces"
 	"github.com/caddyserver/certmagic"
+	"github.com/devaccuracy/ledgerforge"
+	"github.com/devaccuracy/ledgerforge/api"
+	"github.com/devaccuracy/ledgerforge/api/middleware"
+	"github.com/devaccuracy/ledgerforge/config"
+	"github.com/devaccuracy/ledgerforge/database"
+	"github.com/devaccuracy/ledgerforge/internal/search"
+	trace "github.com/devaccuracy/ledgerforge/internal/traces"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	_ "github.com/mattn/go-sqlite3"
@@ -55,7 +55,7 @@ func serveTLS(r *gin.Engine, conf config.ServerConfig) error {
 
 	certPath := conf.CertStoragePath
 	if certPath == "" {
-		certPath = "/var/lib/blnk/certs"
+		certPath = "/var/lib/ledgerforge/certs"
 	}
 	cfg.Storage = &certmagic.FileStorage{Path: certPath}
 
@@ -179,8 +179,8 @@ func healthCheckHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "UP"})
 }
 
-func initializeRouter(b *blnkInstance) *gin.Engine {
-	router := api.NewAPI(b.blnk).Router()
+func initializeRouter(b *ledgerforgeInstance) *gin.Engine {
+	router := api.NewAPI(b.ledgerforge).Router()
 	router.GET("/health", healthCheckHandler)
 	if h := trace.MetricsHandler(); h != nil {
 		cfg, _ := config.Fetch()
@@ -196,7 +196,7 @@ func initializeRouter(b *blnkInstance) *gin.Engine {
 }
 
 func initializeOpenTelemetry(ctx context.Context) (func(context.Context) error, error) {
-	shutdown, err := trace.SetupOTelSDK(ctx, "BLNK")
+	shutdown, err := trace.SetupOTelSDK(ctx, "LEDGERFORGE")
 	if err != nil {
 		return nil, fmt.Errorf("error setting up OTel SDK: %w", err)
 	}
@@ -235,9 +235,22 @@ func initializeTypeSense(ctx context.Context, cfg *config.Configuration) (*searc
 	return nil, fmt.Errorf("failed to initialize TypeSense after %d attempts: %v", maxRetries, err)
 }
 
-func initializePostHog() (posthog.Client, string) {
-	client, _ := posthog.NewWithConfig("phc_XbsHF5iBSnPiTA96gl7xygazrwBa0r2Ut4vEHoBHNiG",
-		posthog.Config{Endpoint: "https://us.i.posthog.com"})
+func initializePostHog(cfg *config.Configuration) (posthog.Client, string) {
+	if cfg.TelemetryKey == "" {
+		logrus.Warn("telemetry is enabled but LEDGERFORGE_TELEMETRY_KEY is not configured; skipping telemetry")
+		return nil, ""
+	}
+
+	phConfig := posthog.Config{}
+	if cfg.TelemetryEndpoint != "" {
+		phConfig.Endpoint = cfg.TelemetryEndpoint
+	}
+
+	client, err := posthog.NewWithConfig(cfg.TelemetryKey, phConfig)
+	if err != nil {
+		logrus.WithError(err).Warn("failed to initialize telemetry client; skipping telemetry")
+		return nil, ""
+	}
 	heartbeatID := getOrCreateHeartbeatID()
 	sendHeartbeat(client, heartbeatID)
 	return client, heartbeatID
@@ -293,21 +306,21 @@ func initializeTelemetryAndObservability(ctx context.Context, cfg *config.Config
 
 	// Initialize PostHog if telemetry is enabled
 	if cfg.EnableTelemetry {
-		phClient, _ = initializePostHog()
+		phClient, _ = initializePostHog(cfg)
 	}
 
 	return phClient, tracingShutdown, nil
 }
 
 /*
-serverCommands returns the Cobra command responsible for starting the Blnk server.
+serverCommands returns the Cobra command responsible for starting the LedgerForge server.
 It sets up the API routes, traces, and TypeSense client before launching the server.
 */
-func serverCommands(b *blnkInstance) *cobra.Command {
+func serverCommands(b *ledgerforgeInstance) *cobra.Command {
 	// Define the `start` command for starting the server
 	cmd := &cobra.Command{
 		Use:   "start",
-		Short: "start blnk server", // Short description of the command
+		Short: "start ledgerforge server", // Short description of the command
 		Run: func(cmd *cobra.Command, args []string) {
 			ctx := context.Background()
 
@@ -342,7 +355,7 @@ func serverCommands(b *blnkInstance) *cobra.Command {
 			if err != nil {
 				logrus.Errorf("TypeSense initialization error: %v", err)
 			} else if tsClient != nil {
-				search.TryReindexIfNeeded(ctx, tsClient, b.blnk.GetDataSource())
+				search.TryReindexIfNeeded(ctx, tsClient, b.ledgerforge.GetDataSource())
 			}
 
 			// Close database connection pool on shutdown
@@ -358,7 +371,7 @@ func serverCommands(b *blnkInstance) *cobra.Command {
 
 			// Start lineage outbox processor
 			// This worker processes pending lineage entries that were captured atomically with transactions
-			lineageProcessor := blnk.NewLineageOutboxProcessor(b.blnk)
+			lineageProcessor := ledgerforge.NewLineageOutboxProcessor(b.ledgerforge)
 			lineageProcessor.Start(ctx)
 			defer lineageProcessor.Stop()
 

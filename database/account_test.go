@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -35,7 +35,7 @@ func TestCreateAccount_Success(t *testing.T) {
 	metaDataJSON, err := json.Marshal(account.MetaData)
 	assert.NoError(t, err)
 
-	mock.ExpectExec("INSERT INTO blnk.accounts").
+	mock.ExpectExec("INSERT INTO ledgerforge.accounts").
 		WithArgs(sqlmock.AnyArg(), account.Name, account.Number, account.BankName, account.Currency, account.LedgerID, account.IdentityID, account.BalanceID, sqlmock.AnyArg(), metaDataJSON).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -154,7 +154,7 @@ func TestUpdateAccount_Success(t *testing.T) {
 	metaDataJSON, err := json.Marshal(account.MetaData)
 	assert.NoError(t, err)
 
-	mock.ExpectExec("UPDATE blnk.accounts").
+	mock.ExpectExec("UPDATE ledgerforge.accounts").
 		WithArgs(account.AccountID, account.Name, account.Number, account.BankName, metaDataJSON).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -169,7 +169,7 @@ func TestDeleteAccount_Success(t *testing.T) {
 
 	ds := Datasource{Conn: db}
 
-	mock.ExpectExec("DELETE FROM blnk.accounts").
+	mock.ExpectExec("DELETE FROM ledgerforge.accounts").
 		WithArgs("acc1").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -198,7 +198,7 @@ func TestCreateAccount_QueryError(t *testing.T) {
 	metaDataJSON, err := json.Marshal(account.MetaData)
 	assert.NoError(t, err)
 
-	mock.ExpectExec("INSERT INTO blnk.accounts").
+	mock.ExpectExec("INSERT INTO ledgerforge.accounts").
 		WithArgs(sqlmock.AnyArg(), account.Name, account.Number, account.BankName, account.Currency, account.LedgerID, account.IdentityID, account.BalanceID, sqlmock.AnyArg(), metaDataJSON).
 		WillReturnError(fmt.Errorf("database connection error"))
 
@@ -289,7 +289,7 @@ func TestUpdateAccount_QueryError(t *testing.T) {
 	metaDataJSON, err := json.Marshal(account.MetaData)
 	assert.NoError(t, err)
 
-	mock.ExpectExec("UPDATE blnk.accounts").
+	mock.ExpectExec("UPDATE ledgerforge.accounts").
 		WithArgs(account.AccountID, account.Name, account.Number, account.BankName, metaDataJSON).
 		WillReturnError(fmt.Errorf("database error"))
 
@@ -304,7 +304,7 @@ func TestDeleteAccount_QueryError(t *testing.T) {
 
 	ds := Datasource{Conn: db}
 
-	mock.ExpectExec("DELETE FROM blnk.accounts").
+	mock.ExpectExec("DELETE FROM ledgerforge.accounts").
 		WithArgs("acc1").
 		WillReturnError(fmt.Errorf("database error"))
 

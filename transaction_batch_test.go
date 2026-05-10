@@ -1,13 +1,13 @@
-package blnk
+package ledgerforge
 
 import (
 	"context"
 	"testing"
 	"time"
 
-	"github.com/blnkfinance/blnk/config"
-	"github.com/blnkfinance/blnk/database/mocks"
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/config"
+	"github.com/devaccuracy/ledgerforge/database/mocks"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -48,14 +48,14 @@ func TestTryRecordQueuedTransactionBatchSkipsWithoutSiblingTransactions(t *testi
 		9,
 	).Return([]*model.Transaction{}, nil).Once()
 
-	blnkInstance := &Blnk{
+	ledgerforgeInstance := &LedgerForge{
 		datasource: ds,
 		config: &config.Configuration{
 			Transaction: config.TransactionConfig{EnableCoalescing: true, BatchSize: 10},
 		},
 	}
 
-	handled, err := blnkInstance.TryRecordQueuedTransactionBatch(context.Background(), &model.Transaction{
+	handled, err := ledgerforgeInstance.TryRecordQueuedTransactionBatch(context.Background(), &model.Transaction{
 		TransactionID:     "txn_current_q",
 		ParentTransaction: "txn_parent",
 		Source:            "bln_income",
@@ -88,14 +88,14 @@ func TestTryRecordQueuedTransactionBatchFailsOpenOnDiscoveryError(t *testing.T) 
 		9,
 	).Return(nil, assert.AnError).Once()
 
-	blnkInstance := &Blnk{
+	ledgerforgeInstance := &LedgerForge{
 		datasource: ds,
 		config: &config.Configuration{
 			Transaction: config.TransactionConfig{EnableCoalescing: true, BatchSize: 10},
 		},
 	}
 
-	handled, err := blnkInstance.TryRecordQueuedTransactionBatch(context.Background(), &model.Transaction{
+	handled, err := ledgerforgeInstance.TryRecordQueuedTransactionBatch(context.Background(), &model.Transaction{
 		TransactionID:     "txn_current_q",
 		ParentTransaction: "txn_parent",
 		Source:            "bln_income",
@@ -154,14 +154,14 @@ func TestBuildQueuedCoalescingBatchFallsBackToSourceScope(t *testing.T) {
 		},
 	}, nil).Once()
 
-	blnkInstance := &Blnk{
+	ledgerforgeInstance := &LedgerForge{
 		datasource: ds,
 		config: &config.Configuration{
 			Transaction: config.TransactionConfig{EnableCoalescing: true, BatchSize: 10},
 		},
 	}
 
-	batch, scope, err := blnkInstance.buildQueuedCoalescingBatch(context.Background(), leader, 10)
+	batch, scope, err := ledgerforgeInstance.buildQueuedCoalescingBatch(context.Background(), leader, 10)
 	assert.NoError(t, err)
 	assert.Equal(t, queuedCoalescingScopeSource, scope)
 	assert.Len(t, batch, 2)
@@ -222,14 +222,14 @@ func TestBuildQueuedCoalescingBatchFallsBackToDestinationScope(t *testing.T) {
 		},
 	}, nil).Once()
 
-	blnkInstance := &Blnk{
+	ledgerforgeInstance := &LedgerForge{
 		datasource: ds,
 		config: &config.Configuration{
 			Transaction: config.TransactionConfig{EnableCoalescing: true, BatchSize: 10},
 		},
 	}
 
-	batch, scope, err := blnkInstance.buildQueuedCoalescingBatch(context.Background(), leader, 10)
+	batch, scope, err := ledgerforgeInstance.buildQueuedCoalescingBatch(context.Background(), leader, 10)
 	assert.NoError(t, err)
 	assert.Equal(t, queuedCoalescingScopeDestination, scope)
 	assert.Len(t, batch, 2)
@@ -254,20 +254,20 @@ func TestRestoreTransactionFlagsFromMetadata(t *testing.T) {
 }
 
 func TestValidateQueuedBatchTransactionReferenceUsesPrefetchedSet(t *testing.T) {
-	blnkInstance := &Blnk{}
+	ledgerforgeInstance := &LedgerForge{}
 	prefetched := map[string]struct{}{
 		"ref_1_q": {},
 	}
 	existing := map[string]struct{}{}
 	batch := make(map[string]struct{})
 
-	err := blnkInstance.validateQueuedBatchTransactionReference(context.Background(), &model.Transaction{
+	err := ledgerforgeInstance.validateQueuedBatchTransactionReference(context.Background(), &model.Transaction{
 		Reference: "ref_1_q",
 	}, prefetched, existing, batch)
 	assert.NoError(t, err)
 	assert.Contains(t, batch, "ref_1_q")
 
-	err = blnkInstance.validateQueuedBatchTransactionReference(context.Background(), &model.Transaction{
+	err = ledgerforgeInstance.validateQueuedBatchTransactionReference(context.Background(), &model.Transaction{
 		Reference: "ref_1_q",
 	}, prefetched, existing, batch)
 	assert.Error(t, err)
@@ -275,15 +275,15 @@ func TestValidateQueuedBatchTransactionReferenceUsesPrefetchedSet(t *testing.T) 
 }
 
 func TestBatchReferenceCheckEnabled(t *testing.T) {
-	blnkInstance := &Blnk{
+	ledgerforgeInstance := &LedgerForge{
 		config: &config.Configuration{
 			Transaction: config.TransactionConfig{
 				DisableBatchReferenceCheck: false,
 			},
 		},
 	}
-	assert.True(t, blnkInstance.batchReferenceCheckEnabled())
+	assert.True(t, ledgerforgeInstance.batchReferenceCheckEnabled())
 
-	blnkInstance.config.Transaction.DisableBatchReferenceCheck = true
-	assert.False(t, blnkInstance.batchReferenceCheckEnabled())
+	ledgerforgeInstance.config.Transaction.DisableBatchReferenceCheck = true
+	assert.False(t, ledgerforgeInstance.batchReferenceCheckEnabled())
 }

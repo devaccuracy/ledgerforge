@@ -1,6 +1,6 @@
-# Contributing to Blnk
+# Contributing to LedgerForge
 
-Thanks for contributing to Blnk. This guide explains how to get changes merged quickly and safely.
+Thanks for contributing to LedgerForge. This guide explains how to get changes merged quickly and safely.
 
 ## Code of Conduct
 
@@ -23,8 +23,8 @@ By participating in this project, you agree to follow the [Code of Conduct](./CO
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/blnkfinance/blnk.git
-cd blnk
+git clone https://github.com/devaccuracy/ledgerforge.git
+cd ledgerforge
 ```
 
 2. Install dependencies:
@@ -36,7 +36,7 @@ go mod tidy
 3. Build the binary:
 
 ```bash
-go build -o blnk ./cmd/*.go
+go build -o ledgerforge ./cmd/*.go
 ```
 
 4. Start required services:
@@ -48,7 +48,7 @@ docker compose up -d postgres redis
 5. Run migrations:
 
 ```bash
-./blnk migrate up
+./ledgerforge migrate up
 ```
 
 ## Running Tests
@@ -125,4 +125,4 @@ Before opening a PR, ensure:
 
 ## Reporting Security Issues
 
-Please do not open public issues for security vulnerabilities. Contact the Blnk team privately first.
+Please do not open public issues for security vulnerabilities. Contact the LedgerForge team privately first.

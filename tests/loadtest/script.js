@@ -8,7 +8,7 @@ import { uuidv4 } from "https://jslib.k6.io/k6-utils/1.4.0/index.js";
 import { textSummary } from "https://jslib.k6.io/k6-summary/0.0.4/index.js";
 
 const URL = __ENV.URL || "https://YOUR_DOMAIN/transactions";
-const API_KEY = __ENV.API_KEY || __ENV.BLNK_API_KEY;
+const API_KEY = __ENV.API_KEY || __ENV.LEDGERFORGE_API_KEY;
 const SUMMARY_OUT = __ENV.SUMMARY_OUT || "tests/loadtest/summary.json";
 // baseline | ramp | contention | hot_source | hot_destination | soak | spike
 const SCENARIO = __ENV.SCENARIO || "baseline";
@@ -235,7 +235,7 @@ function postTxn(source, destination) {
 
   var headers = { "Content-Type": "application/json" };
   if (API_KEY) {
-    headers["X-Blnk-Key"] = API_KEY;
+    headers["X-LedgerForge-Key"] = API_KEY;
   }
   var res = http.post(URL, payload, {
     headers: headers,

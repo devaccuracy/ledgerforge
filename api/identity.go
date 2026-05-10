@@ -20,8 +20,8 @@ import (
 	"net/http"
 	"strconv"
 
-	apimodel "github.com/blnkfinance/blnk/api/model"
-	"github.com/blnkfinance/blnk/model"
+	apimodel "github.com/devaccuracy/ledgerforge/api/model"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/gin-gonic/gin"
 )
 
@@ -43,7 +43,7 @@ func (a Api) CreateIdentity(c *gin.Context) {
 		return
 	}
 
-	resp, err := a.blnk.CreateIdentity(identity)
+	resp, err := a.ledgerforge.CreateIdentity(identity)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -70,7 +70,7 @@ func (a Api) GetIdentity(c *gin.Context) {
 		return
 	}
 
-	resp, err := a.blnk.GetIdentity(id)
+	resp, err := a.ledgerforge.GetIdentity(id)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -104,7 +104,7 @@ func (a Api) UpdateIdentity(c *gin.Context) {
 	}
 
 	identity.IdentityID = id
-	err := a.blnk.UpdateIdentity(&identity)
+	err := a.ledgerforge.UpdateIdentity(&identity)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -130,7 +130,7 @@ func (a Api) DeleteIdentity(c *gin.Context) {
 		return
 	}
 
-	err := a.blnk.DeleteIdentity(id)
+	err := a.ledgerforge.DeleteIdentity(id)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -179,7 +179,7 @@ func (a Api) GetAllIdentities(c *gin.Context) {
 		}
 
 		// Use the new filter method
-		resp, err := a.blnk.GetAllIdentitiesWithFilter(c.Request.Context(), filters, limitInt, offsetInt)
+		resp, err := a.ledgerforge.GetAllIdentitiesWithFilter(c.Request.Context(), filters, limitInt, offsetInt)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -190,7 +190,7 @@ func (a Api) GetAllIdentities(c *gin.Context) {
 	}
 
 	// Fall back to the legacy method when no filters are present
-	identities, err := a.blnk.GetAllIdentities()
+	identities, err := a.ledgerforge.GetAllIdentities()
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -226,7 +226,7 @@ func (a Api) FilterIdentities(c *gin.Context) {
 		return
 	}
 
-	resp, count, err := a.blnk.GetAllIdentitiesWithFilterAndOptions(c.Request.Context(), filters, opts, limit, offset)
+	resp, count, err := a.ledgerforge.GetAllIdentitiesWithFilterAndOptions(c.Request.Context(), filters, opts, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -263,7 +263,7 @@ func (a Api) TokenizeIdentityField(c *gin.Context) {
 		return
 	}
 
-	err := a.blnk.TokenizeIdentityField(id, field)
+	err := a.ledgerforge.TokenizeIdentityField(id, field)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -296,7 +296,7 @@ func (a Api) DetokenizeIdentityField(c *gin.Context) {
 		return
 	}
 
-	originalValue, err := a.blnk.DetokenizeIdentityField(id, field)
+	originalValue, err := a.ledgerforge.DetokenizeIdentityField(id, field)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -333,7 +333,7 @@ func (a Api) TokenizeIdentity(c *gin.Context) {
 		return
 	}
 
-	err := a.blnk.TokenizeIdentity(id, request.Fields)
+	err := a.ledgerforge.TokenizeIdentity(id, request.Fields)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -367,7 +367,7 @@ func (a Api) DetokenizeIdentity(c *gin.Context) {
 
 	// If no specific fields are provided, detokenize all tokenized fields
 	if len(request.Fields) == 0 {
-		detokenizedFields, err := a.blnk.DetokenizeIdentity(id)
+		detokenizedFields, err := a.ledgerforge.DetokenizeIdentity(id)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -380,7 +380,7 @@ func (a Api) DetokenizeIdentity(c *gin.Context) {
 	// Detokenize specific fields
 	result := make(map[string]string)
 	for _, field := range request.Fields {
-		value, err := a.blnk.DetokenizeIdentityField(id, field)
+		value, err := a.ledgerforge.DetokenizeIdentityField(id, field)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -406,7 +406,7 @@ func (a Api) GetTokenizedFields(c *gin.Context) {
 		return
 	}
 
-	identity, err := a.blnk.GetIdentity(id)
+	identity, err := a.ledgerforge.GetIdentity(id)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

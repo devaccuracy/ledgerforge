@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/blnkfinance/blnk/config"
+	"github.com/devaccuracy/ledgerforge/config"
 	_ "github.com/lib/pq" // Import the postgres driver
 	"github.com/sirupsen/logrus"
 )

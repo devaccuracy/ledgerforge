@@ -8,7 +8,7 @@ metadata:
   labels:
     io.kompose.service: redis
   name: redis
-  namespace: blnk
+  namespace: ledgerforge
 spec:
   ports:
     - name: "6379"

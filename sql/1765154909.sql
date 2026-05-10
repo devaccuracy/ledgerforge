@@ -13,10 +13,10 @@
 -- limitations under the License.
 
 -- +migrate Up
-ALTER TABLE blnk.external_transactions ALTER COLUMN currency TYPE TEXT;
-ALTER TABLE blnk.external_transactions ALTER COLUMN amount TYPE NUMERIC;
+ALTER TABLE ledgerforge.external_transactions ALTER COLUMN currency TYPE TEXT;
+ALTER TABLE ledgerforge.external_transactions ALTER COLUMN amount TYPE NUMERIC;
 
 -- +migrate Down
-ALTER TABLE blnk.external_transactions ALTER COLUMN currency TYPE VARCHAR(3);
-ALTER TABLE blnk.external_transactions ALTER COLUMN amount TYPE NUMERIC(12, 2);
+ALTER TABLE ledgerforge.external_transactions ALTER COLUMN currency TYPE VARCHAR(3);
+ALTER TABLE ledgerforge.external_transactions ALTER COLUMN amount TYPE NUMERIC(12, 2);
 

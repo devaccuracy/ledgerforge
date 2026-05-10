@@ -6,15 +6,15 @@ import (
 	"net/http"
 	"testing"
 
-	model2 "github.com/blnkfinance/blnk/api/model"
-	"github.com/blnkfinance/blnk/internal/request"
-	"github.com/blnkfinance/blnk/model"
 	"github.com/brianvoe/gofakeit/v6"
+	model2 "github.com/devaccuracy/ledgerforge/api/model"
+	"github.com/devaccuracy/ledgerforge/internal/request"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestCreateAccount(t *testing.T) {
-	router, _, err := setupRouter()
+	router, _, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestCreateAccount(t *testing.T) {
 }
 
 func TestGetAccount(t *testing.T) {
-	router, b, err := setupRouter()
+	router, b, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestGetAccount(t *testing.T) {
 }
 
 func TestGetAllAccounts(t *testing.T) {
-	router, _, err := setupRouter()
+	router, _, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestGetAllAccounts(t *testing.T) {
 }
 
 func TestGenerateMockAccount(t *testing.T) {
-	router, _, err := setupRouter()
+	router, _, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}
@@ -171,6 +171,6 @@ func TestGenerateMockAccount(t *testing.T) {
 		return
 	}
 	assert.Equal(t, http.StatusOK, resp.Code)
-	assert.Equal(t, "Blnk Bank", response["bank_name"])
+	assert.Equal(t, "LedgerForge Bank", response["bank_name"])
 	assert.NotEmpty(t, response["account_number"])
 }

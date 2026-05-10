@@ -1,9 +1,9 @@
-blnk
+ledgerforge
 */node_modules
 node_modules
 .env
 .idea
-blnk.json
+ledgerforge.json
 promtail
 dump.rdb
 heartbeat.db

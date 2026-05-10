@@ -26,8 +26,8 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/blnkfinance/blnk/internal/apierror"
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/internal/apierror"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -75,7 +75,7 @@ func TestRecordReconciliation_Success(t *testing.T) {
 		CompletedAt:           &completedAt,
 	}
 
-	mock.ExpectExec("INSERT INTO blnk.reconciliations").
+	mock.ExpectExec("INSERT INTO ledgerforge.reconciliations").
 		WithArgs(rec.ReconciliationID, rec.UploadID, rec.Status, rec.MatchedTransactions,
 			rec.UnmatchedTransactions, rec.StartedAt, rec.CompletedAt).
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -104,7 +104,7 @@ func TestRecordReconciliation_Fail(t *testing.T) {
 		CompletedAt:           &completedAt,
 	}
 
-	mock.ExpectExec("INSERT INTO blnk.reconciliations").
+	mock.ExpectExec("INSERT INTO ledgerforge.reconciliations").
 		WithArgs(rec.ReconciliationID, rec.UploadID, rec.Status, rec.MatchedTransactions,
 			rec.UnmatchedTransactions, rec.StartedAt, rec.CompletedAt).
 		WillReturnError(fmt.Errorf("failed to insert"))
@@ -170,7 +170,7 @@ func TestUpdateReconciliationStatus_Success(t *testing.T) {
 	ds := Datasource{Conn: db}
 	ctx := context.TODO()
 
-	mock.ExpectExec("UPDATE blnk.reconciliations").
+	mock.ExpectExec("UPDATE ledgerforge.reconciliations").
 		WithArgs("rec123", "completed", 10, 5, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -186,7 +186,7 @@ func TestUpdateReconciliationStatus_NotFound(t *testing.T) {
 	ds := Datasource{Conn: db}
 	ctx := context.TODO()
 
-	mock.ExpectExec("UPDATE blnk.reconciliations").
+	mock.ExpectExec("UPDATE ledgerforge.reconciliations").
 		WithArgs("rec123", "completed", 10, 5, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 0))
 
@@ -203,7 +203,7 @@ func TestUpdateReconciliationStatus_Fail(t *testing.T) {
 	ds := Datasource{Conn: db}
 	ctx := context.TODO()
 
-	mock.ExpectExec("UPDATE blnk.reconciliations").
+	mock.ExpectExec("UPDATE ledgerforge.reconciliations").
 		WithArgs("rec123", "completed", 10, 5, sqlmock.AnyArg()).
 		WillReturnError(fmt.Errorf("failed to update"))
 
@@ -240,7 +240,7 @@ func TestRecordMatches_Success(t *testing.T) {
 	mock.ExpectBegin()
 
 	for _, match := range matches {
-		mock.ExpectExec("INSERT INTO blnk.matches").
+		mock.ExpectExec("INSERT INTO ledgerforge.matches").
 			WithArgs(match.ExternalTransactionID, match.InternalTransactionID, match.ReconciliationID, match.Amount, match.Date).
 			WillReturnResult(sqlmock.NewResult(1, 1))
 	}
@@ -270,7 +270,7 @@ func TestRecordMatches_Fail(t *testing.T) {
 	}
 
 	mock.ExpectBegin()
-	mock.ExpectExec("INSERT INTO blnk.matches").
+	mock.ExpectExec("INSERT INTO ledgerforge.matches").
 		WithArgs(matches[0].ExternalTransactionID, matches[0].InternalTransactionID, matches[0].ReconciliationID, matches[0].Amount, matches[0].Date).
 		WillReturnError(fmt.Errorf("failed to insert match"))
 	mock.ExpectRollback()
@@ -289,7 +289,7 @@ func TestGetReconciliationsByUploadID_Success(t *testing.T) {
 	ctx := context.TODO()
 	completedAt := time.Now()
 
-	mock.ExpectQuery("SELECT id, reconciliation_id, upload_id, status, matched_transactions, unmatched_transactions, started_at, completed_at FROM blnk.reconciliations WHERE upload_id").
+	mock.ExpectQuery("SELECT id, reconciliation_id, upload_id, status, matched_transactions, unmatched_transactions, started_at, completed_at FROM ledgerforge.reconciliations WHERE upload_id").
 		WithArgs("upl123").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "reconciliation_id", "upload_id", "status", "matched_transactions", "unmatched_transactions", "started_at", "completed_at",
@@ -312,7 +312,7 @@ func TestGetReconciliationsByUploadID_Empty(t *testing.T) {
 	ds := Datasource{Conn: db}
 	ctx := context.TODO()
 
-	mock.ExpectQuery("SELECT id, reconciliation_id, upload_id, status, matched_transactions, unmatched_transactions, started_at, completed_at FROM blnk.reconciliations WHERE upload_id").
+	mock.ExpectQuery("SELECT id, reconciliation_id, upload_id, status, matched_transactions, unmatched_transactions, started_at, completed_at FROM ledgerforge.reconciliations WHERE upload_id").
 		WithArgs("upl123").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "reconciliation_id", "upload_id", "status", "matched_transactions", "unmatched_transactions", "started_at", "completed_at",
@@ -353,7 +353,7 @@ func TestRecordUnmatched_Success(t *testing.T) {
 
 	mock.ExpectBegin()
 	for _, extID := range externalIDs {
-		mock.ExpectExec("INSERT INTO blnk.unmatched").
+		mock.ExpectExec("INSERT INTO ledgerforge.unmatched").
 			WithArgs(extID, "rec123", sqlmock.AnyArg()).
 			WillReturnResult(sqlmock.NewResult(1, 1))
 	}
@@ -372,7 +372,7 @@ func TestRecordUnmatched_Error(t *testing.T) {
 	ctx := context.TODO()
 
 	mock.ExpectBegin()
-	mock.ExpectExec("INSERT INTO blnk.unmatched").
+	mock.ExpectExec("INSERT INTO ledgerforge.unmatched").
 		WithArgs("ext1", "rec123", sqlmock.AnyArg()).
 		WillReturnError(fmt.Errorf("insert error"))
 	mock.ExpectRollback()
@@ -398,7 +398,7 @@ func TestRecordMatch_Success(t *testing.T) {
 		Date:                  time.Now(),
 	}
 
-	mock.ExpectExec("INSERT INTO blnk.matches").
+	mock.ExpectExec("INSERT INTO ledgerforge.matches").
 		WithArgs(match.ExternalTransactionID, match.InternalTransactionID, match.ReconciliationID, match.Amount, match.Date).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -422,7 +422,7 @@ func TestRecordMatch_Error(t *testing.T) {
 		Date:                  time.Now(),
 	}
 
-	mock.ExpectExec("INSERT INTO blnk.matches").
+	mock.ExpectExec("INSERT INTO ledgerforge.matches").
 		WithArgs(match.ExternalTransactionID, match.InternalTransactionID, match.ReconciliationID, match.Amount, match.Date).
 		WillReturnError(fmt.Errorf("insert error"))
 
@@ -439,7 +439,7 @@ func TestGetMatchesByReconciliationID_Success(t *testing.T) {
 	ds := Datasource{Conn: db}
 	ctx := context.TODO()
 
-	mock.ExpectQuery("SELECT m.external_transaction_id, m.internal_transaction_id, m.amount, m.date FROM blnk.matches m").
+	mock.ExpectQuery("SELECT m.external_transaction_id, m.internal_transaction_id, m.amount, m.date FROM ledgerforge.matches m").
 		WithArgs("rec123").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"external_transaction_id", "internal_transaction_id", "amount", "date",
@@ -461,7 +461,7 @@ func TestGetMatchesByReconciliationID_Error(t *testing.T) {
 	ds := Datasource{Conn: db}
 	ctx := context.TODO()
 
-	mock.ExpectQuery("SELECT m.external_transaction_id, m.internal_transaction_id, m.amount, m.date FROM blnk.matches m").
+	mock.ExpectQuery("SELECT m.external_transaction_id, m.internal_transaction_id, m.amount, m.date FROM ledgerforge.matches m").
 		WithArgs("rec123").
 		WillReturnError(fmt.Errorf("query error"))
 
@@ -490,7 +490,7 @@ func TestRecordExternalTransaction_Success(t *testing.T) {
 	}
 	uploadID := "upl123"
 
-	mock.ExpectExec("INSERT INTO blnk.external_transactions").
+	mock.ExpectExec("INSERT INTO ledgerforge.external_transactions").
 		WithArgs(extTxn.ID, extTxn.Amount, extTxn.Reference, extTxn.Currency, extTxn.Description, extTxn.Date, extTxn.Source, uploadID).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -517,7 +517,7 @@ func TestRecordExternalTransaction_Error(t *testing.T) {
 	}
 	uploadID := "upl123"
 
-	mock.ExpectExec("INSERT INTO blnk.external_transactions").
+	mock.ExpectExec("INSERT INTO ledgerforge.external_transactions").
 		WithArgs(extTxn.ID, extTxn.Amount, extTxn.Reference, extTxn.Currency, extTxn.Description, extTxn.Date, extTxn.Source, uploadID).
 		WillReturnError(fmt.Errorf("insert error"))
 
@@ -543,7 +543,7 @@ func TestRecordMatchingRule_Success(t *testing.T) {
 		Criteria:    []model.MatchingCriteria{{Field: "amount", Operator: "equals", Value: "100"}},
 	}
 
-	mock.ExpectExec("INSERT INTO blnk.matching_rules").
+	mock.ExpectExec("INSERT INTO ledgerforge.matching_rules").
 		WithArgs(rule.RuleID, sqlmock.AnyArg(), sqlmock.AnyArg(), rule.Name, rule.Description, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -568,7 +568,7 @@ func TestRecordMatchingRule_Error(t *testing.T) {
 		Criteria:    []model.MatchingCriteria{{Field: "amount", Operator: "equals", Value: "100"}},
 	}
 
-	mock.ExpectExec("INSERT INTO blnk.matching_rules").
+	mock.ExpectExec("INSERT INTO ledgerforge.matching_rules").
 		WithArgs(rule.RuleID, sqlmock.AnyArg(), sqlmock.AnyArg(), rule.Name, rule.Description, sqlmock.AnyArg()).
 		WillReturnError(fmt.Errorf("insert error"))
 
@@ -585,7 +585,7 @@ func TestGetMatchingRules_Success(t *testing.T) {
 	ds := Datasource{Conn: db}
 	ctx := context.TODO()
 
-	mock.ExpectQuery("SELECT id, rule_id, created_at, updated_at, name, description, criteria FROM blnk.matching_rules").
+	mock.ExpectQuery("SELECT id, rule_id, created_at, updated_at, name, description, criteria FROM ledgerforge.matching_rules").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "rule_id", "created_at", "updated_at", "name", "description", "criteria",
 		}).
@@ -606,7 +606,7 @@ func TestGetMatchingRules_Error(t *testing.T) {
 	ds := Datasource{Conn: db}
 	ctx := context.TODO()
 
-	mock.ExpectQuery("SELECT id, rule_id, created_at, updated_at, name, description, criteria FROM blnk.matching_rules").
+	mock.ExpectQuery("SELECT id, rule_id, created_at, updated_at, name, description, criteria FROM ledgerforge.matching_rules").
 		WillReturnError(fmt.Errorf("query error"))
 
 	rules, err := ds.GetMatchingRules(ctx)
@@ -623,7 +623,7 @@ func TestGetMatchingRule_Success(t *testing.T) {
 	ds := Datasource{Conn: db}
 	ctx := context.TODO()
 
-	mock.ExpectQuery("SELECT id, rule_id, created_at, updated_at, name, description, criteria FROM blnk.matching_rules WHERE rule_id").
+	mock.ExpectQuery("SELECT id, rule_id, created_at, updated_at, name, description, criteria FROM ledgerforge.matching_rules WHERE rule_id").
 		WithArgs("rule1").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "rule_id", "created_at", "updated_at", "name", "description", "criteria",
@@ -642,7 +642,7 @@ func TestGetMatchingRule_NotFound(t *testing.T) {
 	ds := Datasource{Conn: db}
 	ctx := context.TODO()
 
-	mock.ExpectQuery("SELECT id, rule_id, created_at, updated_at, name, description, criteria FROM blnk.matching_rules WHERE rule_id").
+	mock.ExpectQuery("SELECT id, rule_id, created_at, updated_at, name, description, criteria FROM ledgerforge.matching_rules WHERE rule_id").
 		WithArgs("rule_notfound").
 		WillReturnError(sql.ErrNoRows)
 
@@ -660,7 +660,7 @@ func TestDeleteMatchingRule_Success(t *testing.T) {
 	ds := Datasource{Conn: db}
 	ctx := context.TODO()
 
-	mock.ExpectExec("DELETE FROM blnk.matching_rules WHERE rule_id").
+	mock.ExpectExec("DELETE FROM ledgerforge.matching_rules WHERE rule_id").
 		WithArgs("rule1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
@@ -676,7 +676,7 @@ func TestDeleteMatchingRule_NotFound(t *testing.T) {
 	ds := Datasource{Conn: db}
 	ctx := context.TODO()
 
-	mock.ExpectExec("DELETE FROM blnk.matching_rules WHERE rule_id").
+	mock.ExpectExec("DELETE FROM ledgerforge.matching_rules WHERE rule_id").
 		WithArgs("rule_notfound").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
@@ -700,7 +700,7 @@ func TestUpdateMatchingRule_Success(t *testing.T) {
 		Criteria:    []model.MatchingCriteria{{Field: "amount", Operator: "equals", Value: "200"}},
 	}
 
-	mock.ExpectExec("UPDATE blnk.matching_rules SET name").
+	mock.ExpectExec("UPDATE ledgerforge.matching_rules SET name").
 		WithArgs(rule.RuleID, rule.Name, rule.Description, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
@@ -723,7 +723,7 @@ func TestUpdateMatchingRule_NotFound(t *testing.T) {
 		Criteria:    []model.MatchingCriteria{},
 	}
 
-	mock.ExpectExec("UPDATE blnk.matching_rules SET name").
+	mock.ExpectExec("UPDATE ledgerforge.matching_rules SET name").
 		WithArgs(rule.RuleID, rule.Name, rule.Description, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
@@ -740,7 +740,7 @@ func TestGetExternalTransactionsByReconciliationID_Success(t *testing.T) {
 	ds := Datasource{Conn: db}
 	ctx := context.TODO()
 
-	mock.ExpectQuery("SELECT id, amount, reference, currency, description, date, source FROM blnk.external_transactions WHERE reconciliation_id").
+	mock.ExpectQuery("SELECT id, amount, reference, currency, description, date, source FROM ledgerforge.external_transactions WHERE reconciliation_id").
 		WithArgs("rec123").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "amount", "reference", "currency", "description", "date", "source",
@@ -762,7 +762,7 @@ func TestGetExternalTransactionsByReconciliationID_Error(t *testing.T) {
 	ds := Datasource{Conn: db}
 	ctx := context.TODO()
 
-	mock.ExpectQuery("SELECT id, amount, reference, currency, description, date, source FROM blnk.external_transactions").
+	mock.ExpectQuery("SELECT id, amount, reference, currency, description, date, source FROM ledgerforge.external_transactions").
 		WithArgs("rec123").
 		WillReturnError(fmt.Errorf("database error"))
 
@@ -785,7 +785,7 @@ func TestSaveReconciliationProgress_Success(t *testing.T) {
 		LastProcessedExternalTxnID: "ext100",
 	}
 
-	mock.ExpectExec("INSERT INTO blnk.reconciliation_progress").
+	mock.ExpectExec("INSERT INTO ledgerforge.reconciliation_progress").
 		WithArgs("rec123", progress.ProcessedCount, progress.LastProcessedExternalTxnID).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -806,7 +806,7 @@ func TestSaveReconciliationProgress_Error(t *testing.T) {
 		LastProcessedExternalTxnID: "ext100",
 	}
 
-	mock.ExpectExec("INSERT INTO blnk.reconciliation_progress").
+	mock.ExpectExec("INSERT INTO ledgerforge.reconciliation_progress").
 		WithArgs("rec123", progress.ProcessedCount, progress.LastProcessedExternalTxnID).
 		WillReturnError(fmt.Errorf("database error"))
 
@@ -823,7 +823,7 @@ func TestLoadReconciliationProgress_Success(t *testing.T) {
 	ds := Datasource{Conn: db}
 	ctx := context.TODO()
 
-	mock.ExpectQuery("SELECT processed_count, last_processed_external_txn_id FROM blnk.reconciliation_progress WHERE reconciliation_id").
+	mock.ExpectQuery("SELECT processed_count, last_processed_external_txn_id FROM ledgerforge.reconciliation_progress WHERE reconciliation_id").
 		WithArgs("rec123").
 		WillReturnRows(sqlmock.NewRows([]string{"processed_count", "last_processed_external_txn_id"}).
 			AddRow(100, "ext100"))
@@ -842,7 +842,7 @@ func TestLoadReconciliationProgress_NotFound(t *testing.T) {
 	ds := Datasource{Conn: db}
 	ctx := context.TODO()
 
-	mock.ExpectQuery("SELECT processed_count, last_processed_external_txn_id FROM blnk.reconciliation_progress WHERE reconciliation_id").
+	mock.ExpectQuery("SELECT processed_count, last_processed_external_txn_id FROM ledgerforge.reconciliation_progress WHERE reconciliation_id").
 		WithArgs("rec_notfound").
 		WillReturnError(sql.ErrNoRows)
 
@@ -860,7 +860,7 @@ func TestLoadReconciliationProgress_Error(t *testing.T) {
 	ds := Datasource{Conn: db}
 	ctx := context.TODO()
 
-	mock.ExpectQuery("SELECT processed_count, last_processed_external_txn_id FROM blnk.reconciliation_progress WHERE reconciliation_id").
+	mock.ExpectQuery("SELECT processed_count, last_processed_external_txn_id FROM ledgerforge.reconciliation_progress WHERE reconciliation_id").
 		WithArgs("rec123").
 		WillReturnError(fmt.Errorf("database error"))
 
@@ -882,7 +882,7 @@ func TestGetExternalTransactionsPaginated_Success(t *testing.T) {
 	txDate := time.Now()
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, amount, reference, currency, description, date, source
-		FROM blnk.external_transactions
+		FROM ledgerforge.external_transactions
 		WHERE upload_id = $1
 		ORDER BY date DESC
 		LIMIT $2 OFFSET $3`)).
@@ -909,7 +909,7 @@ func TestGetExternalTransactionsPaginated_QueryError(t *testing.T) {
 	uploadID := "upload123"
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, amount, reference, currency, description, date, source
-		FROM blnk.external_transactions
+		FROM ledgerforge.external_transactions
 		WHERE upload_id = $1
 		ORDER BY date DESC
 		LIMIT $2 OFFSET $3`)).
@@ -936,7 +936,7 @@ func TestGetExternalTransactionsPaginated_EmptyResults(t *testing.T) {
 	uploadID := "upload123"
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT id, amount, reference, currency, description, date, source
-		FROM blnk.external_transactions
+		FROM ledgerforge.external_transactions
 		WHERE upload_id = $1
 		ORDER BY date DESC
 		LIMIT $2 OFFSET $3`)).

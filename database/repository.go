@@ -22,8 +22,8 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/blnkfinance/blnk/internal/filter"
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/internal/filter"
+	"github.com/devaccuracy/ledgerforge/model"
 )
 
 // IDataSource defines the interface for data source operations, grouping related functionalities.

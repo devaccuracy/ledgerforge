@@ -22,7 +22,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/blnkfinance/blnk/internal/request"
+	"github.com/devaccuracy/ledgerforge/internal/request"
 	"github.com/stretchr/testify/assert"
 )
 

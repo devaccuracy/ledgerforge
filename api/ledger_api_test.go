@@ -24,16 +24,16 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/blnkfinance/blnk/internal/request"
+	"github.com/devaccuracy/ledgerforge/internal/request"
 
-	model2 "github.com/blnkfinance/blnk/api/model"
 	"github.com/brianvoe/gofakeit/v6"
+	model2 "github.com/devaccuracy/ledgerforge/api/model"
 
-	"github.com/blnkfinance/blnk/config"
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/config"
+	"github.com/devaccuracy/ledgerforge/model"
 
-	"github.com/blnkfinance/blnk"
-	"github.com/blnkfinance/blnk/database"
+	"github.com/devaccuracy/ledgerforge"
+	"github.com/devaccuracy/ledgerforge/database"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -65,14 +65,20 @@ func SetUpTestRequest(s TestRequest) (*httptest.ResponseRecorder, error) {
 	return resp, nil
 }
 
-func setupRouter() (*gin.Engine, *blnk.Blnk, error) {
+func setupRouter(t *testing.T) (*gin.Engine, *ledgerforge.LedgerForge, error) {
+	t.Helper()
+
+	if testing.Short() {
+		t.Skip("skipping API integration tests in short mode")
+	}
+
 	config.MockConfig(&config.Configuration{
 		Queue: config.QueueConfig{
 			TransactionQueue: "transaction_queue_test_api_md_async",
 			NumberOfQueues:   1,
 		},
 		Redis:      config.RedisConfig{Dns: "localhost:6379"},
-		DataSource: config.DataSourceConfig{Dns: "postgres://postgres:@localhost:5432/blnk?sslmode=disable"},
+		DataSource: config.DataSourceConfig{Dns: "postgres://postgres:@localhost:5432/ledgerforge?sslmode=disable"},
 	})
 	cnf, err := config.Fetch()
 	if err != nil {
@@ -82,17 +88,17 @@ func setupRouter() (*gin.Engine, *blnk.Blnk, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	newBlnk, err := blnk.NewBlnk(db)
+	newLedgerForge, err := ledgerforge.NewLedgerForge(db)
 	if err != nil {
 		return nil, nil, err
 	}
-	router := NewAPI(newBlnk).Router()
+	router := NewAPI(newLedgerForge).Router()
 
-	return router, newBlnk, nil
+	return router, newLedgerForge, nil
 }
 
 func TestCreateLedger(t *testing.T) {
-	router, blnk, err := setupRouter()
+	router, ledgerforge, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}
@@ -143,7 +149,7 @@ func TestCreateLedger(t *testing.T) {
 
 			if tt.expectedCode == http.StatusCreated {
 				// Verify that the ledger is actually created in the database
-				ledgerFromDB, err := blnk.GetLedgerByID(response.LedgerID)
+				ledgerFromDB, err := ledgerforge.GetLedgerByID(response.LedgerID)
 				if err != nil {
 					t.Errorf("Failed to retrieve ledger by ID: %v", err)
 					return
@@ -156,7 +162,7 @@ func TestCreateLedger(t *testing.T) {
 }
 
 func TestGetLedger(t *testing.T) {
-	router, b, _ := setupRouter()
+	router, b, _ := setupRouter(t)
 	validPayload := model.Ledger{Name: gofakeit.Name()}
 	newLedger, err := b.CreateLedger(validPayload)
 	if err != nil {

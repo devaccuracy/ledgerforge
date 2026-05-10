@@ -13,10 +13,10 @@
 -- limitations under the License.
 
 -- +migrate Up
-CREATE SCHEMA IF NOT EXISTS blnk;
+CREATE SCHEMA IF NOT EXISTS ledgerforge;
 
 -- +migrate Up
-CREATE TABLE IF NOT EXISTS blnk.ledgers
+CREATE TABLE IF NOT EXISTS ledgerforge.ledgers
 (
     id         SERIAL PRIMARY KEY,
     name       TEXT,
@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS blnk.ledgers
 );
 
 -- +migrate Up
-CREATE TABLE IF NOT EXISTS blnk.identity
+CREATE TABLE IF NOT EXISTS ledgerforge.identity
 (
     id                SERIAL PRIMARY KEY,
     identity_id       TEXT      NOT NULL UNIQUE,
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS blnk.identity
 );
 
 -- +migrate Up
-CREATE TABLE IF NOT EXISTS blnk.balances
+CREATE TABLE IF NOT EXISTS ledgerforge.balances
 (
     id                  SERIAL PRIMARY KEY,
     balance_id          TEXT      NOT NULL UNIQUE,
@@ -61,15 +61,15 @@ CREATE TABLE IF NOT EXISTS blnk.balances
     debit_balance       BIGINT    NOT NULL,
     currency            TEXT      NOT NULL,
     currency_multiplier BIGINT    NOT NULL,
-    ledger_id           TEXT      NOT NULL REFERENCES blnk.LEDGERS (ledger_id),
-    identity_id         TEXT REFERENCES blnk.IDENTITY (identity_id),
+    ledger_id           TEXT      NOT NULL REFERENCES ledgerforge.LEDGERS (ledger_id),
+    identity_id         TEXT REFERENCES ledgerforge.IDENTITY (identity_id),
     created_at          TIMESTAMP NOT NULL DEFAULT NOW(),
     modification_ref    TEXT,
     meta_data           JSONB
 );
 
 -- +migrate Up
-CREATE TABLE IF NOT EXISTS blnk.accounts
+CREATE TABLE IF NOT EXISTS ledgerforge.accounts
 (
     id          SERIAL PRIMARY KEY,
     account_id  TEXT      NOT NULL UNIQUE,
@@ -78,18 +78,18 @@ CREATE TABLE IF NOT EXISTS blnk.accounts
     bank_name   TEXT      NOT NULL,
     currency    TEXT      NOT NULL,
     created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
-    ledger_id   TEXT      NOT NULL REFERENCES blnk.LEDGERS (ledger_id),
-    identity_id TEXT      NOT NULL REFERENCES blnk.IDENTITY (identity_id),
-    balance_id  TEXT      NOT NULL REFERENCES blnk.BALANCES (balance_id),
+    ledger_id   TEXT      NOT NULL REFERENCES ledgerforge.LEDGERS (ledger_id),
+    identity_id TEXT      NOT NULL REFERENCES ledgerforge.IDENTITY (identity_id),
+    balance_id  TEXT      NOT NULL REFERENCES ledgerforge.BALANCES (balance_id),
     meta_data   JSONB
 );
 
 -- +migrate Up
-CREATE TABLE IF NOT EXISTS blnk.balance_monitors
+CREATE TABLE IF NOT EXISTS ledgerforge.balance_monitors
 (
     id            SERIAL PRIMARY KEY,
     monitor_id    TEXT      NOT NULL UNIQUE,
-    balance_id    TEXT      NOT NULL REFERENCES blnk.BALANCES (balance_id),
+    balance_id    TEXT      NOT NULL REFERENCES ledgerforge.BALANCES (balance_id),
     field         TEXT      NOT NULL CHECK (field IN ('debit_balance', 'credit_balance', 'balance')),
     operator      TEXT      NOT NULL CHECK (operator IN ('>', '<', '>=', '<=', '=')),
     value         BIGINT    NOT NULL,
@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS blnk.balance_monitors
 );
 
 -- +migrate Up
-CREATE TABLE IF NOT EXISTS blnk.transactions
+CREATE TABLE IF NOT EXISTS ledgerforge.transactions
 (
     id             SERIAL PRIMARY KEY,
     transaction_id TEXT      NOT NULL UNIQUE,
@@ -114,27 +114,27 @@ CREATE TABLE IF NOT EXISTS blnk.transactions
     created_at     TIMESTAMP NOT NULL DEFAULT NOW(),
     scheduled_for  TIMESTAMP,
     meta_data      JSONB,
-    CONSTRAINT fk_source_balance FOREIGN KEY (source) REFERENCES blnk.balances (balance_id),
-    CONSTRAINT fk_destination_balance FOREIGN KEY (destination) REFERENCES blnk.balances (balance_id)
+    CONSTRAINT fk_source_balance FOREIGN KEY (source) REFERENCES ledgerforge.balances (balance_id),
+    CONSTRAINT fk_destination_balance FOREIGN KEY (destination) REFERENCES ledgerforge.balances (balance_id)
 );
 
 -- +migrate Up
-CREATE INDEX idx_transactions_reference ON blnk.transactions (reference);
-CREATE INDEX idx_balances_indicator ON blnk.balances (indicator);
-CREATE UNIQUE INDEX idx_unique_indicator_on_non_nulls ON blnk.balances (indicator) WHERE indicator IS NOT NULL;
+CREATE INDEX idx_transactions_reference ON ledgerforge.transactions (reference);
+CREATE INDEX idx_balances_indicator ON ledgerforge.balances (indicator);
+CREATE UNIQUE INDEX idx_unique_indicator_on_non_nulls ON ledgerforge.balances (indicator) WHERE indicator IS NOT NULL;
 
 -- +migrate Up
-INSERT INTO blnk.ledgers (name, ledger_id, created_at, meta_data)
+INSERT INTO ledgerforge.ledgers (name, ledger_id, created_at, meta_data)
 VALUES ('General Ledger', 'general_ledger_id', NOW(), '{}')
 ON CONFLICT (ledger_id) DO NOTHING;
 
 
 -- +migrate Down
-DROP INDEX IF EXISTS blnk.idx_transactions_reference;
-DROP INDEX IF EXISTS blnk.idx_balances_indicator;
-DROP TABLE IF EXISTS blnk.transactions CASCADE;
-DROP TABLE IF EXISTS blnk.balance_monitors CASCADE;
-DROP TABLE IF EXISTS blnk.accounts CASCADE;
-DROP TABLE IF EXISTS blnk.balances CASCADE;
-DROP TABLE IF EXISTS blnk.identity CASCADE;
-DROP TABLE IF EXISTS blnk.ledgers CASCADE;
+DROP INDEX IF EXISTS ledgerforge.idx_transactions_reference;
+DROP INDEX IF EXISTS ledgerforge.idx_balances_indicator;
+DROP TABLE IF EXISTS ledgerforge.transactions CASCADE;
+DROP TABLE IF EXISTS ledgerforge.balance_monitors CASCADE;
+DROP TABLE IF EXISTS ledgerforge.accounts CASCADE;
+DROP TABLE IF EXISTS ledgerforge.balances CASCADE;
+DROP TABLE IF EXISTS ledgerforge.identity CASCADE;
+DROP TABLE IF EXISTS ledgerforge.ledgers CASCADE;

@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package blnk
+package ledgerforge
 
 import (
 	"context"
@@ -27,11 +27,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/blnkfinance/blnk/config"
-	"github.com/blnkfinance/blnk/database"
-	"github.com/blnkfinance/blnk/internal/files"
-	"github.com/blnkfinance/blnk/internal/notification"
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/config"
+	"github.com/devaccuracy/ledgerforge/database"
+	"github.com/devaccuracy/ledgerforge/internal/files"
+	"github.com/devaccuracy/ledgerforge/internal/notification"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/sirupsen/logrus"
 	"github.com/texttheater/golang-levenshtein/levenshtein"
 	"github.com/wacul/ptr"
@@ -64,7 +64,7 @@ type transactionProcessor struct {
 	unmatched         int
 	datasource        database.IDataSource
 	progressSaveCount int
-	blnk              *Blnk
+	ledgerforge       *LedgerForge
 }
 
 // reconciler defines the function type for reconciling a batch of transactions.
@@ -96,7 +96,7 @@ func contains(slice []string, item string) bool {
 // - string: The ID of the upload.
 // - int: The total number of records processed.
 // - error: If any step of the process fails.
-func (s *Blnk) UploadExternalData(ctx context.Context, source string, reader io.Reader, filename string) (string, int, error) {
+func (s *LedgerForge) UploadExternalData(ctx context.Context, source string, reader io.Reader, filename string) (string, int, error) {
 	return files.UploadExternalData(ctx, source, reader, filename, func(ctx context.Context, uploadID string, txn model.ExternalTransaction) error {
 		return s.storeExternalTransaction(ctx, uploadID, txn)
 	})
@@ -109,7 +109,7 @@ func (s *Blnk) UploadExternalData(ctx context.Context, source string, reader io.
 // - txn: The external transaction to store.
 // Returns:
 // - error: If storing the transaction fails.
-func (s *Blnk) storeExternalTransaction(ctx context.Context, uploadID string, txn model.ExternalTransaction) error {
+func (s *LedgerForge) storeExternalTransaction(ctx context.Context, uploadID string, txn model.ExternalTransaction) error {
 	return s.datasource.RecordExternalTransaction(ctx, &txn, uploadID)
 }
 
@@ -118,7 +118,7 @@ func (s *Blnk) storeExternalTransaction(ctx context.Context, uploadID string, tx
 // Parameters:
 // - ctx: The context for controlling execution.
 // - reconciliation: The reconciliation object to be indexed.
-func (l *Blnk) postReconciliationActions(_ context.Context, reconciliation model.Reconciliation) {
+func (l *LedgerForge) postReconciliationActions(_ context.Context, reconciliation model.Reconciliation) {
 	go func() {
 		// Queue the reconciliation data for indexing.
 		err := l.queue.queueIndexData(reconciliation.ReconciliationID, "reconciliations", reconciliation)
@@ -141,7 +141,7 @@ func (l *Blnk) postReconciliationActions(_ context.Context, reconciliation model
 // Returns:
 // - string: The ID of the reconciliation process.
 // - error: If the reconciliation fails to start.
-func (s *Blnk) StartReconciliation(ctx context.Context, uploadID string, strategy string, groupCriteria string, matchingRuleIDs []string, isDryRun bool) (string, error) {
+func (s *LedgerForge) StartReconciliation(ctx context.Context, uploadID string, strategy string, groupCriteria string, matchingRuleIDs []string, isDryRun bool) (string, error) {
 	// Generate a unique ID for the reconciliation.
 	reconciliationID := model.GenerateUUIDWithSuffix("recon")
 	// Initialize a new reconciliation object with the provided parameters.
@@ -190,7 +190,7 @@ func (s *Blnk) StartReconciliation(ctx context.Context, uploadID string, strateg
 // Returns:
 // - string: The ID of the reconciliation process.
 // - error: If the reconciliation fails to start.
-func (s *Blnk) StartInstantReconciliation(ctx context.Context, externalTransactions []model.ExternalTransaction,
+func (s *LedgerForge) StartInstantReconciliation(ctx context.Context, externalTransactions []model.ExternalTransaction,
 	strategy string, groupCriteria string, matchingRuleIDs []string, isDryRun bool,
 ) (string, error) {
 	// Generate a unique ID for the reconciliation
@@ -254,7 +254,7 @@ func (s *Blnk) StartInstantReconciliation(ctx context.Context, externalTransacti
 // Returns:
 // - *model.Reconciliation: The retrieved reconciliation object.
 // - error: If the reconciliation cannot be found or if retrieval fails.
-func (s *Blnk) GetReconciliation(ctx context.Context, reconciliationID string) (*model.Reconciliation, error) {
+func (s *LedgerForge) GetReconciliation(ctx context.Context, reconciliationID string) (*model.Reconciliation, error) {
 	reconciliation, err := s.datasource.GetReconciliation(ctx, reconciliationID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve reconciliation: %w", err)
@@ -271,7 +271,7 @@ func (s *Blnk) GetReconciliation(ctx context.Context, reconciliationID string) (
 // - rules: A list of matching rules containing criteria to apply.
 // Returns:
 // - bool: True if the transactions match based on the rules, otherwise false.
-func (s *Blnk) matchesRules(externalTxn *model.Transaction, groupTxn model.Transaction, rules []model.MatchingRule) bool {
+func (s *LedgerForge) matchesRules(externalTxn *model.Transaction, groupTxn model.Transaction, rules []model.MatchingRule) bool {
 	for _, rule := range rules {
 		allCriteriaMet := true
 		// Iterate through each rule's criteria to check if all conditions are satisfied.
@@ -316,7 +316,7 @@ func (s *Blnk) matchesRules(externalTxn *model.Transaction, groupTxn model.Trans
 // Returns:
 // - model.ReconciliationProgress: The current progress of the reconciliation.
 // - error: If the progress cannot be retrieved.
-func (s *Blnk) loadReconciliationProgress(ctx context.Context, reconciliationID string) (model.ReconciliationProgress, error) {
+func (s *LedgerForge) loadReconciliationProgress(ctx context.Context, reconciliationID string) (model.ReconciliationProgress, error) {
 	return s.datasource.LoadReconciliationProgress(ctx, reconciliationID)
 }
 
@@ -330,7 +330,7 @@ func (s *Blnk) loadReconciliationProgress(ctx context.Context, reconciliationID 
 // - matchingRuleIDs: A list of matching rule IDs to apply during the process.
 // Returns:
 // - error: If any step in the reconciliation process fails.
-func (s *Blnk) processReconciliation(ctx context.Context, reconciliation model.Reconciliation, strategy string, groupCriteria string, matchingRuleIDs []string) error {
+func (s *LedgerForge) processReconciliation(ctx context.Context, reconciliation model.Reconciliation, strategy string, groupCriteria string, matchingRuleIDs []string) error {
 	// Update the reconciliation status to "in progress".
 	if err := s.updateReconciliationStatus(ctx, reconciliation.ReconciliationID, StatusInProgress); err != nil {
 		return fmt.Errorf("failed to update reconciliation status: %w", err)
@@ -374,7 +374,7 @@ func (s *Blnk) processReconciliation(ctx context.Context, reconciliation model.R
 // - status: The new status to set.
 // Returns:
 // - error: If the status update fails.
-func (s *Blnk) updateReconciliationStatus(ctx context.Context, reconciliationID, status string) error {
+func (s *LedgerForge) updateReconciliationStatus(ctx context.Context, reconciliationID, status string) error {
 	return s.datasource.UpdateReconciliationStatus(ctx, reconciliationID, status, 0, 0)
 }
 
@@ -386,7 +386,7 @@ func (s *Blnk) updateReconciliationStatus(ctx context.Context, reconciliationID,
 // Returns:
 // - model.ReconciliationProgress: The current or newly initialized progress.
 // - error: If the initialization or retrieval fails.
-func (s *Blnk) initializeReconciliationProgress(ctx context.Context, reconciliationID string) (model.ReconciliationProgress, error) {
+func (s *LedgerForge) initializeReconciliationProgress(ctx context.Context, reconciliationID string) (model.ReconciliationProgress, error) {
 	progress, err := s.loadReconciliationProgress(ctx, reconciliationID)
 	if err != nil {
 		logrus.Errorf("Error loading reconciliation progress: %v", err)
@@ -402,7 +402,7 @@ func (s *Blnk) initializeReconciliationProgress(ctx context.Context, reconciliat
 // - matchingRules: A list of matching rules to apply during reconciliation.
 // Returns:
 // - reconciler: A function that performs reconciliation according to the specified strategy.
-func (s *Blnk) createReconciler(strategy string, uploadID string, groupCriteria string, matchingRules []model.MatchingRule) reconciler {
+func (s *LedgerForge) createReconciler(strategy string, uploadID string, groupCriteria string, matchingRules []model.MatchingRule) reconciler {
 	return func(ctx context.Context, txns []*model.Transaction) ([]model.Match, []string) {
 		switch strategy {
 		case "one_to_one":
@@ -428,7 +428,7 @@ func (s *Blnk) createReconciler(strategy string, uploadID string, groupCriteria 
 // - reconciler: The reconciler function to apply.
 // Returns:
 // - *transactionProcessor: The created transaction processor.
-func (s *Blnk) createTransactionProcessor(reconciliation model.Reconciliation, progress model.ReconciliationProgress, reconciler func(ctx context.Context, txns []*model.Transaction) ([]model.Match, []string)) *transactionProcessor {
+func (s *LedgerForge) createTransactionProcessor(reconciliation model.Reconciliation, progress model.ReconciliationProgress, reconciler func(ctx context.Context, txns []*model.Transaction) ([]model.Match, []string)) *transactionProcessor {
 	conf, err := config.Fetch()
 	if err != nil {
 		logrus.Errorf("Error fetching configuration: %v", err)
@@ -439,7 +439,7 @@ func (s *Blnk) createTransactionProcessor(reconciliation model.Reconciliation, p
 		reconciler:        reconciler,
 		datasource:        s.datasource,
 		progressSaveCount: conf.Reconciliation.ProgressInterval,
-		blnk:              s,
+		ledgerforge:       s,
 	}
 }
 
@@ -509,7 +509,7 @@ func (tp *transactionProcessor) updateMatchedTransactionsMetadata(ctx context.Co
 		}
 
 		// Update the internal transaction's metadata
-		err := tp.blnk.updateEntityMetadata(ctx, "transactions", match.InternalTransactionID, metadata)
+		err := tp.ledgerforge.updateEntityMetadata(ctx, "transactions", match.InternalTransactionID, metadata)
 		if err != nil {
 			logrus.Errorf("Error updating metadata for transaction %s: %v", match.InternalTransactionID, err)
 		}
@@ -532,7 +532,7 @@ func (tp *transactionProcessor) getResults() (int, int) {
 // - strategy: The reconciliation strategy to apply.
 // Returns:
 // - error: If any error occurs during processing.
-func (s *Blnk) processTransactions(ctx context.Context, uploadID string, processor *transactionProcessor, strategy string) error {
+func (s *LedgerForge) processTransactions(ctx context.Context, uploadID string, processor *transactionProcessor, strategy string) error {
 	conf, err := config.Fetch()
 	if err != nil {
 		return err
@@ -582,7 +582,7 @@ func (s *Blnk) processTransactions(ctx context.Context, uploadID string, process
 // - unmatchedCount: The number of unmatched transactions.
 // Returns:
 // - error: If any error occurs during finalization.
-func (s *Blnk) finalizeReconciliation(ctx context.Context, reconciliation model.Reconciliation, matchCount, unmatchedCount int) error {
+func (s *LedgerForge) finalizeReconciliation(ctx context.Context, reconciliation model.Reconciliation, matchCount, unmatchedCount int) error {
 	// Update the reconciliation status to "completed".
 	reconciliation.Status = StatusCompleted
 	reconciliation.UnmatchedTransactions = unmatchedCount
@@ -618,7 +618,7 @@ func (s *Blnk) finalizeReconciliation(ctx context.Context, reconciliation model.
 // Returns:
 // - []model.Match: A list of matched transactions.
 // - []string: A list of unmatched transaction IDs.
-func (s *Blnk) oneToOneReconciliation(ctx context.Context, externalTxns []*model.Transaction, matchingRules []model.MatchingRule) ([]model.Match, []string) {
+func (s *LedgerForge) oneToOneReconciliation(ctx context.Context, externalTxns []*model.Transaction, matchingRules []model.MatchingRule) ([]model.Match, []string) {
 	conf, err := config.Fetch()
 	if err != nil {
 		logrus.Errorf("Error fetching configuration: %v", err)
@@ -677,7 +677,7 @@ func (s *Blnk) oneToOneReconciliation(ctx context.Context, externalTxns []*model
 // Returns:
 // - []model.Match: A list of matched transactions.
 // - []string: A list of unmatched transaction IDs.
-func (s *Blnk) oneToManyReconciliation(ctx context.Context, externalTxns []*model.Transaction, groupCriteria string, matchingRules []model.MatchingRule, isExternalGrouped bool) ([]model.Match, []string) {
+func (s *LedgerForge) oneToManyReconciliation(ctx context.Context, externalTxns []*model.Transaction, groupCriteria string, matchingRules []model.MatchingRule, isExternalGrouped bool) ([]model.Match, []string) {
 	conf, err := config.Fetch()
 	if err != nil {
 		logrus.Errorf("Error fetching configuration: %v", err)
@@ -718,7 +718,7 @@ func (s *Blnk) oneToManyReconciliation(ctx context.Context, externalTxns []*mode
 // Returns:
 // - []model.Match: A list of matched transactions.
 // - []string: A list of unmatched transaction IDs.
-func (s *Blnk) manyToOneReconciliation(ctx context.Context, internalTxns []*model.Transaction, uploadID string, groupCriteria string, matchingRules []model.MatchingRule, isExternalGrouped bool) ([]model.Match, []string) {
+func (s *LedgerForge) manyToOneReconciliation(ctx context.Context, internalTxns []*model.Transaction, uploadID string, groupCriteria string, matchingRules []model.MatchingRule, isExternalGrouped bool) ([]model.Match, []string) {
 	conf, err := config.Fetch()
 	if err != nil {
 		logrus.Errorf("Error fetching configuration: %v", err)
@@ -768,9 +768,9 @@ func (s *Blnk) manyToOneReconciliation(ctx context.Context, internalTxns []*mode
 // - unMatchChan: Channel to collect unmatched transactions.
 // Returns:
 // - error: If any error occurs during processing.
-func (s *Blnk) manyToOne(ctx context.Context, internalTxns []*model.Transaction, uploadID string, matchingRules []model.MatchingRule, isExternalGrouped bool, wg *sync.WaitGroup, groupingCriteria string, batchSize int, matchChan chan model.Match, unMatchChan chan string) error {
+func (s *LedgerForge) manyToOne(ctx context.Context, internalTxns []*model.Transaction, uploadID string, matchingRules []model.MatchingRule, isExternalGrouped bool, wg *sync.WaitGroup, groupingCriteria string, batchSize int, matchChan chan model.Match, unMatchChan chan string) error {
 	offset := int64(0)
-	ctx, span := otel.Tracer("blnk.reconciliation").Start(ctx, "ProcessManyToOne")
+	ctx, span := otel.Tracer("ledgerforge.reconciliation").Start(ctx, "ProcessManyToOne")
 	defer span.End()
 
 	// Loop to process transactions in batches.
@@ -807,7 +807,7 @@ func (s *Blnk) manyToOne(ctx context.Context, internalTxns []*model.Transaction,
 // Returns:
 // - map[string][]*model.Transaction: A map of grouped transactions.
 // - error: If there is an error retrieving the transactions.
-func (s *Blnk) groupExternalTransactions(ctx context.Context, uploadID string, groupingCriteria string, batchSize int, offset int64) (map[string][]*model.Transaction, error) {
+func (s *LedgerForge) groupExternalTransactions(ctx context.Context, uploadID string, groupingCriteria string, batchSize int, offset int64) (map[string][]*model.Transaction, error) {
 	return s.datasource.FetchAndGroupExternalTransactions(ctx, uploadID, groupingCriteria, batchSize, offset)
 }
 
@@ -824,7 +824,7 @@ func (s *Blnk) groupExternalTransactions(ctx context.Context, uploadID string, g
 // - unMatchChan: Channel for collecting unmatched transaction IDs.
 // Returns:
 // - error: If any error occurs during processing.
-func (s *Blnk) processGroupedTransactions(singleTxns []*model.Transaction, groupedTxns map[string][]*model.Transaction, groupMap map[string]bool, matchingRules []model.MatchingRule, isExternalGrouped bool, wg *sync.WaitGroup, matchChan chan model.Match, unMatchChan chan string) error {
+func (s *LedgerForge) processGroupedTransactions(singleTxns []*model.Transaction, groupedTxns map[string][]*model.Transaction, groupMap map[string]bool, matchingRules []model.MatchingRule, isExternalGrouped bool, wg *sync.WaitGroup, matchChan chan model.Match, unMatchChan chan string) error {
 	conf, err := config.Fetch()
 	if err != nil {
 		logrus.Errorf("Error fetching configuration: %v", err)
@@ -863,7 +863,7 @@ func (s *Blnk) processGroupedTransactions(singleTxns []*model.Transaction, group
 // - matchChan: Channel for sending matches.
 // Returns:
 // - bool: True if a match is found, false otherwise.
-func (s *Blnk) matchSingleTransaction(singleTxn *model.Transaction, groupedTxns map[string][]*model.Transaction, groupMap map[string]bool, matchingRules []model.MatchingRule, isExternalGrouped bool, matchChan chan model.Match) bool {
+func (s *LedgerForge) matchSingleTransaction(singleTxn *model.Transaction, groupedTxns map[string][]*model.Transaction, groupMap map[string]bool, matchingRules []model.MatchingRule, isExternalGrouped bool, matchChan chan model.Match) bool {
 	for groupKey := range groupMap {
 		if s.matchesGroup(singleTxn, groupedTxns[groupKey], matchingRules) {
 			for _, groupedTxn := range groupedTxns[groupKey] {
@@ -894,9 +894,9 @@ func (s *Blnk) matchSingleTransaction(singleTxn *model.Transaction, groupedTxns 
 // Parameters are similar to `manyToOne`, but it processes transactions in reverse (one external to many internal).
 // Returns:
 // - error: If any error occurs during processing.
-func (s *Blnk) oneToMany(ctx context.Context, singleTxn []*model.Transaction, matchingRules []model.MatchingRule, isExternalGrouped bool, wg *sync.WaitGroup, groupingCriteria string, batchSize int, matchChan chan model.Match, unMatchChan chan string) error {
+func (s *LedgerForge) oneToMany(ctx context.Context, singleTxn []*model.Transaction, matchingRules []model.MatchingRule, isExternalGrouped bool, wg *sync.WaitGroup, groupingCriteria string, batchSize int, matchChan chan model.Match, unMatchChan chan string) error {
 	offset := int64(0)
-	ctx, span := otel.Tracer("blnk.reconciliation").Start(ctx, "ProcessOneToMany")
+	ctx, span := otel.Tracer("ledgerforge.reconciliation").Start(ctx, "ProcessOneToMany")
 	defer span.End()
 
 	for {
@@ -927,7 +927,7 @@ func (s *Blnk) oneToMany(ctx context.Context, singleTxn []*model.Transaction, ma
 // - groupedTxns: The grouped transactions.
 // Returns:
 // - map[string]bool: A map with group keys as true, indicating that they have not yet been processed.
-func (s *Blnk) buildGroupMap(groupedTxns map[string][]*model.Transaction) map[string]bool {
+func (s *LedgerForge) buildGroupMap(groupedTxns map[string][]*model.Transaction) map[string]bool {
 	groupMap := make(map[string]bool)
 	for key := range groupedTxns {
 		groupMap[key] = true
@@ -940,7 +940,7 @@ func (s *Blnk) buildGroupMap(groupedTxns map[string][]*model.Transaction) map[st
 // Returns:
 // - map[string][]*model.Transaction: A map of grouped internal transactions.
 // - error: If any error occurs during grouping.
-func (s *Blnk) groupInternalTransactions(ctx context.Context, groupingCriteria string, batchSize int, offset int64) (map[string][]*model.Transaction, error) {
+func (s *LedgerForge) groupInternalTransactions(ctx context.Context, groupingCriteria string, batchSize int, offset int64) (map[string][]*model.Transaction, error) {
 	return s.datasource.GroupTransactions(ctx, groupingCriteria, batchSize, offset)
 }
 
@@ -954,7 +954,7 @@ func (s *Blnk) groupInternalTransactions(ctx context.Context, groupingCriteria s
 // - unMatchChan: Channel to send unmatched transaction IDs.
 // Returns:
 // - error: If any error occurs during processing.
-func (s *Blnk) findMatchingInternalTransaction(ctx context.Context, externalTxn *model.Transaction, matchingRules []model.MatchingRule, matchChan chan model.Match, unMatchChan chan string) error {
+func (s *LedgerForge) findMatchingInternalTransaction(ctx context.Context, externalTxn *model.Transaction, matchingRules []model.MatchingRule, matchChan chan model.Match, unMatchChan chan string) error {
 	conf, err := config.Fetch()
 	if err != nil {
 		return err
@@ -1019,7 +1019,7 @@ func (s *Blnk) findMatchingInternalTransaction(ctx context.Context, externalTxn 
 // Returns:
 // - []*model.Transaction: A list of external transactions converted to internal transactions.
 // - error: If any error occurs during retrieval.
-func (s *Blnk) getExternalTransactionsPaginated(ctx context.Context, uploadID string, limit int, offset int64) ([]*model.Transaction, error) {
+func (s *LedgerForge) getExternalTransactionsPaginated(ctx context.Context, uploadID string, limit int, offset int64) ([]*model.Transaction, error) {
 	logrus.Errorf("Fetching external transactions: uploadID=%s, limit=%d, offset=%d", uploadID, limit, offset)
 	externalTransaction, err := s.datasource.GetExternalTransactionsPaginated(ctx, uploadID, limit, int64(offset))
 	if err != nil {
@@ -1044,7 +1044,7 @@ func (s *Blnk) getExternalTransactionsPaginated(ctx context.Context, uploadID st
 // Returns:
 // - []*model.Transaction: A list of internal transactions.
 // - error: If any error occurs during retrieval.
-func (s *Blnk) getInternalTransactionsPaginated(ctx context.Context, id string, limit int, offset int64) ([]*model.Transaction, error) {
+func (s *LedgerForge) getInternalTransactionsPaginated(ctx context.Context, id string, limit int, offset int64) ([]*model.Transaction, error) {
 	return s.datasource.GetTransactionsPaginated(ctx, "", limit, offset)
 }
 
@@ -1056,7 +1056,7 @@ func (s *Blnk) getInternalTransactionsPaginated(ctx context.Context, id string, 
 // - matchingRules: The rules for matching transactions.
 // Returns:
 // - bool: True if the group matches the external transaction, false otherwise.
-func (s *Blnk) matchesGroup(externalTxn *model.Transaction, group []*model.Transaction, matchingRules []model.MatchingRule) bool {
+func (s *LedgerForge) matchesGroup(externalTxn *model.Transaction, group []*model.Transaction, matchingRules []model.MatchingRule) bool {
 	var totalAmount float64
 	var minDate, maxDate time.Time
 	descriptions := make([]string, 0, len(group))
@@ -1094,7 +1094,7 @@ func (s *Blnk) matchesGroup(externalTxn *model.Transaction, group []*model.Trans
 
 // dominantCurrency returns the dominant currency in a group of transactions.
 // If there is only one currency, it returns that currency, otherwise, it returns "MIXED".
-func (s *Blnk) dominantCurrency(currencies map[string]bool) string {
+func (s *LedgerForge) dominantCurrency(currencies map[string]bool) string {
 	if len(currencies) == 1 {
 		for currency := range currencies {
 			return currency
@@ -1108,7 +1108,7 @@ func (s *Blnk) dominantCurrency(currencies map[string]bool) string {
 // - ctx: The context for managing the request.
 // - rule: The matching rule to be created.
 // Returns the created rule, or an error if validation or storage fails.
-func (s *Blnk) CreateMatchingRule(ctx context.Context, rule model.MatchingRule) (*model.MatchingRule, error) {
+func (s *LedgerForge) CreateMatchingRule(ctx context.Context, rule model.MatchingRule) (*model.MatchingRule, error) {
 	rule.RuleID = model.GenerateUUIDWithSuffix("rule") // Generate a unique rule ID.
 	rule.CreatedAt = time.Now()
 	rule.UpdatedAt = time.Now()
@@ -1133,7 +1133,7 @@ func (s *Blnk) CreateMatchingRule(ctx context.Context, rule model.MatchingRule) 
 // - ctx: The context for managing the request.
 // - id: The ID of the matching rule to retrieve.
 // Returns the matching rule, or an error if retrieval fails.
-func (s *Blnk) GetMatchingRule(ctx context.Context, id string) (*model.MatchingRule, error) {
+func (s *LedgerForge) GetMatchingRule(ctx context.Context, id string) (*model.MatchingRule, error) {
 	rule, err := s.datasource.GetMatchingRule(ctx, id)
 	if err != nil {
 		return nil, err
@@ -1147,7 +1147,7 @@ func (s *Blnk) GetMatchingRule(ctx context.Context, id string) (*model.MatchingR
 // - ctx: The context for managing the request.
 // - rule: The updated rule data.
 // Returns the updated rule, or an error if validation or update fails.
-func (s *Blnk) UpdateMatchingRule(ctx context.Context, rule model.MatchingRule) (*model.MatchingRule, error) {
+func (s *LedgerForge) UpdateMatchingRule(ctx context.Context, rule model.MatchingRule) (*model.MatchingRule, error) {
 	// Retrieve the existing rule by its ID.
 	existingRule, err := s.GetMatchingRule(ctx, rule.RuleID)
 	if err != nil {
@@ -1178,7 +1178,7 @@ func (s *Blnk) UpdateMatchingRule(ctx context.Context, rule model.MatchingRule) 
 // - ctx: The context for managing the request.
 // - id: The ID of the rule to delete.
 // Returns an error if deletion fails.
-func (s *Blnk) DeleteMatchingRule(ctx context.Context, id string) error {
+func (s *LedgerForge) DeleteMatchingRule(ctx context.Context, id string) error {
 	return s.datasource.DeleteMatchingRule(ctx, id)
 }
 
@@ -1186,7 +1186,7 @@ func (s *Blnk) DeleteMatchingRule(ctx context.Context, id string) error {
 // Parameters:
 // - ctx: The context for managing the request.
 // Returns a list of matching rules, or an error if retrieval fails.
-func (s *Blnk) ListMatchingRules(ctx context.Context) ([]*model.MatchingRule, error) {
+func (s *LedgerForge) ListMatchingRules(ctx context.Context) ([]*model.MatchingRule, error) {
 	return s.datasource.GetMatchingRules(ctx)
 }
 
@@ -1194,7 +1194,7 @@ func (s *Blnk) ListMatchingRules(ctx context.Context) ([]*model.MatchingRule, er
 // Parameters:
 // - rule: The rule to validate.
 // Returns an error if the rule or any of its criteria are invalid.
-func (s *Blnk) validateRule(rule *model.MatchingRule) error {
+func (s *LedgerForge) validateRule(rule *model.MatchingRule) error {
 	// Validate basic structure of the rule.
 	if err := s.validateRuleBasics(rule); err != nil {
 		return err
@@ -1214,7 +1214,7 @@ func (s *Blnk) validateRule(rule *model.MatchingRule) error {
 // Parameters:
 // - rule: The rule to validate.
 // Returns an error if the rule is missing required fields.
-func (s *Blnk) validateRuleBasics(rule *model.MatchingRule) error {
+func (s *LedgerForge) validateRuleBasics(rule *model.MatchingRule) error {
 	if rule.Name == "" {
 		return errors.New("rule name is required")
 	}
@@ -1230,7 +1230,7 @@ func (s *Blnk) validateRuleBasics(rule *model.MatchingRule) error {
 // Parameters:
 // - criteria: The criteria to validate.
 // Returns an error if the criteria are invalid.
-func (s *Blnk) validateCriteria(criteria model.MatchingCriteria) error {
+func (s *LedgerForge) validateCriteria(criteria model.MatchingCriteria) error {
 	if criteria.Field == "" || criteria.Operator == "" {
 		return errors.New("field and operator are required for each criteria")
 	}
@@ -1250,7 +1250,7 @@ func (s *Blnk) validateCriteria(criteria model.MatchingCriteria) error {
 // Parameters:
 // - operator: The operator to validate.
 // Returns an error if the operator is invalid.
-func (s *Blnk) validateOperator(operator string) error {
+func (s *LedgerForge) validateOperator(operator string) error {
 	validOperators := []string{"equals", "greater_than", "less_than", "contains"}
 	if !contains(validOperators, operator) {
 		return errors.New("invalid operator")
@@ -1262,7 +1262,7 @@ func (s *Blnk) validateOperator(operator string) error {
 // Parameters:
 // - field: The field to validate.
 // Returns an error if the field is invalid.
-func (s *Blnk) validateField(field string) error {
+func (s *LedgerForge) validateField(field string) error {
 	validFields := []string{"amount", "date", "description", "reference", "currency"}
 	if !contains(validFields, field) {
 		return errors.New("invalid field")
@@ -1275,7 +1275,7 @@ func (s *Blnk) validateField(field string) error {
 // Parameters:
 // - criteria: The criteria to validate.
 // Returns an error if the drift is invalid.
-func (s *Blnk) validateDrift(criteria model.MatchingCriteria) error {
+func (s *LedgerForge) validateDrift(criteria model.MatchingCriteria) error {
 	if criteria.Operator == "equals" {
 		switch criteria.Field {
 		case "amount":
@@ -1296,7 +1296,7 @@ func (s *Blnk) validateDrift(criteria model.MatchingCriteria) error {
 // - ctx: The context for managing the request.
 // - matchingRuleIDs: The list of matching rule IDs to retrieve.
 // Returns a list of matching rules, or an error if retrieval fails.
-func (s *Blnk) getMatchingRules(ctx context.Context, matchingRuleIDs []string) ([]model.MatchingRule, error) {
+func (s *LedgerForge) getMatchingRules(ctx context.Context, matchingRuleIDs []string) ([]model.MatchingRule, error) {
 	var rules []model.MatchingRule
 	for _, id := range matchingRuleIDs {
 		rule, err := s.GetMatchingRule(ctx, id)
@@ -1314,7 +1314,7 @@ func (s *Blnk) getMatchingRules(ctx context.Context, matchingRuleIDs []string) (
 // - internalValue: The value from the internal transaction.
 // - criteria: The matching criteria, including operator and allowable drift.
 // Returns true if the values match according to the criteria, otherwise false.
-func (s *Blnk) matchesString(externalValue, internalValue string, criteria model.MatchingCriteria) bool {
+func (s *LedgerForge) matchesString(externalValue, internalValue string, criteria model.MatchingCriteria) bool {
 	switch criteria.Operator {
 	case "equals":
 		// Check if any part of the internal value matches the external value exactly.
@@ -1341,7 +1341,7 @@ func (s *Blnk) matchesString(externalValue, internalValue string, criteria model
 // - str1, str2: The strings to compare.
 // - allowableDrift: The allowable difference between the two strings (as a percentage).
 // Returns true if the strings match within the allowable drift, otherwise false.
-func (s *Blnk) partialMatch(str1, str2 string, allowableDrift float64) bool {
+func (s *LedgerForge) partialMatch(str1, str2 string, allowableDrift float64) bool {
 	str1 = strings.ToLower(str1) // Convert to lowercase for case-insensitive comparison.
 	str2 = strings.ToLower(str2)
 
@@ -1367,7 +1367,7 @@ func (s *Blnk) partialMatch(str1, str2 string, allowableDrift float64) bool {
 // - internalValue: The currency value from the internal transaction.
 // - criteria: The matching criteria.
 // Returns true if the currencies match, otherwise false.
-func (s *Blnk) matchesCurrency(externalValue, internalValue string, criteria model.MatchingCriteria) bool {
+func (s *LedgerForge) matchesCurrency(externalValue, internalValue string, criteria model.MatchingCriteria) bool {
 	if internalValue == "MIXED" {
 		// TODO: Handle the special case where the internal value is "MIXED" (multiple currencies in a group).
 		return true
@@ -1381,7 +1381,7 @@ func (s *Blnk) matchesCurrency(externalValue, internalValue string, criteria mod
 // - groupAmount: The total amount from the group of internal transactions.
 // - criteria: The matching criteria, including operator and allowable drift.
 // Returns true if the amounts match according to the criteria, otherwise false.
-func (s *Blnk) matchesGroupAmount(externalAmount, groupAmount float64, criteria model.MatchingCriteria) bool {
+func (s *LedgerForge) matchesGroupAmount(externalAmount, groupAmount float64, criteria model.MatchingCriteria) bool {
 	switch criteria.Operator {
 	case "equals":
 		allowableDrift := groupAmount * criteria.AllowableDrift
@@ -1400,7 +1400,7 @@ func (s *Blnk) matchesGroupAmount(externalAmount, groupAmount float64, criteria 
 // - groupEarliestDate: The earliest date from the group of internal transactions.
 // - criteria: The matching criteria, including operator and allowable drift.
 // Returns true if the dates match according to the criteria, otherwise false.
-func (s *Blnk) matchesGroupDate(externalDate, groupEarliestDate time.Time, criteria model.MatchingCriteria) bool {
+func (s *LedgerForge) matchesGroupDate(externalDate, groupEarliestDate time.Time, criteria model.MatchingCriteria) bool {
 	switch criteria.Operator {
 	case "equals":
 		difference := externalDate.Sub(groupEarliestDate)
@@ -1415,7 +1415,7 @@ func (s *Blnk) matchesGroupDate(externalDate, groupEarliestDate time.Time, crite
 
 // calculateMatchingBounds calculates the query bounds (amount, date) for matching external transactions against internal ones.
 // It iterates through matching rules to find the widest possible range that satisfies all criteria.
-func (s *Blnk) calculateMatchingBounds(externalTxn *model.Transaction, matchingRules []model.MatchingRule) (*float64, *float64, *time.Time, *time.Time, *string) {
+func (s *LedgerForge) calculateMatchingBounds(externalTxn *model.Transaction, matchingRules []model.MatchingRule) (*float64, *float64, *time.Time, *time.Time, *string) {
 	var minAmount, maxAmount *float64
 	var minDate, maxDate *time.Time
 	var currency *string

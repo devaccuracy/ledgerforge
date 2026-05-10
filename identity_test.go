@@ -14,14 +14,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package blnk
+package ledgerforge
 
 import (
 	"encoding/json"
 	"testing"
 	"time"
 
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/model"
 
 	"github.com/brianvoe/gofakeit/v6"
 
@@ -35,9 +35,9 @@ func TestCreateIdentity(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 
 	identity := model.Identity{
@@ -61,7 +61,7 @@ func TestCreateIdentity(t *testing.T) {
 	}
 	metaDataJSON, _ := json.Marshal(identity.MetaData)
 
-	mock.ExpectExec("INSERT INTO blnk.identity").
+	mock.ExpectExec("INSERT INTO ledgerforge.identity").
 		WithArgs(sqlmock.AnyArg(), identity.IdentityType, identity.FirstName, identity.LastName, identity.OtherNames, identity.Gender, identity.DOB, identity.EmailAddress, identity.PhoneNumber, identity.Nationality, identity.OrganizationName, identity.Category, identity.Street, identity.Country, identity.State, identity.PostCode, identity.City, sqlmock.AnyArg(), metaDataJSON).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -81,9 +81,9 @@ func TestGetIdentity(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 
 	testID := "test-id"
@@ -103,7 +103,7 @@ func TestGetIdentity(t *testing.T) {
 	)
 
 	// Updated query to match the actual method's query
-	mock.ExpectQuery("SELECT .* FROM blnk.identity WHERE identity_id =").
+	mock.ExpectQuery("SELECT .* FROM ledgerforge.identity WHERE identity_id =").
 		WithArgs(testID).
 		WillReturnRows(row)
 
@@ -131,9 +131,9 @@ func TestGetAllIdentities(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 
 	rows := sqlmock.NewRows([]string{
@@ -150,7 +150,7 @@ func TestGetAllIdentities(t *testing.T) {
 		"Street", "Country", "State", "PostCode", "City", time.Now(), `{"key":"value"}`,
 	)
 
-	mock.ExpectQuery("SELECT .* FROM blnk.identity").WillReturnRows(rows)
+	mock.ExpectQuery("SELECT .* FROM ledgerforge.identity").WillReturnRows(rows)
 
 	result, err := d.GetAllIdentities()
 
@@ -168,9 +168,9 @@ func TestUpdateIdentity(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 
 	identity := &model.Identity{
@@ -199,7 +199,7 @@ func TestUpdateIdentity(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Update the SQL pattern to include meta_data field
-	mock.ExpectExec(`UPDATE blnk\.identity SET identity_type = \$1, first_name = \$2, last_name = \$3, other_names = \$4, gender = \$5, dob = \$6, email_address = \$7, phone_number = \$8, nationality = \$9, organization_name = \$10, category = \$11, street = \$12, country = \$13, state = \$14, post_code = \$15, city = \$16, meta_data = \$17 WHERE identity_id = \$18`).
+	mock.ExpectExec(`UPDATE ledgerforge\.identity SET identity_type = \$1, first_name = \$2, last_name = \$3, other_names = \$4, gender = \$5, dob = \$6, email_address = \$7, phone_number = \$8, nationality = \$9, organization_name = \$10, category = \$11, street = \$12, country = \$13, state = \$14, post_code = \$15, city = \$16, meta_data = \$17 WHERE identity_id = \$18`).
 		WithArgs(
 			identity.IdentityType,
 			identity.FirstName,
@@ -236,14 +236,14 @@ func TestDeleteIdentity(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 
 	testID := "idt_123"
 
-	mock.ExpectExec("DELETE FROM blnk.identity WHERE identity_id =").
+	mock.ExpectExec("DELETE FROM ledgerforge.identity WHERE identity_id =").
 		WithArgs(testID).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -262,9 +262,9 @@ func TestTokenizeIdentityField_InvalidField(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 
 	err = d.TokenizeIdentityField("idt_123", "invalid_field")
@@ -278,9 +278,9 @@ func TestTokenizeIdentityField_Success(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 
 	testID := "idt_123"
@@ -295,12 +295,12 @@ func TestTokenizeIdentityField_Success(t *testing.T) {
 		"john@example.com", "1234567890", "US", "Org", "Cat",
 		"Street", "Country", "State", "12345", "City", time.Now(), `{}`,
 	)
-	mock.ExpectQuery("SELECT .* FROM blnk.identity WHERE identity_id =").
+	mock.ExpectQuery("SELECT .* FROM ledgerforge.identity WHERE identity_id =").
 		WithArgs(testID).
 		WillReturnRows(row)
 	mock.ExpectCommit()
 
-	mock.ExpectExec("UPDATE blnk.identity SET").
+	mock.ExpectExec("UPDATE ledgerforge.identity SET").
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), testID).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -318,9 +318,9 @@ func TestTokenizeIdentityField_AlreadyTokenized(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 
 	testID := "idt_123"
@@ -335,7 +335,7 @@ func TestTokenizeIdentityField_AlreadyTokenized(t *testing.T) {
 		"john@example.com", "1234567890", "US", "Org", "Cat",
 		"Street", "Country", "State", "12345", "City", time.Now(), `{"tokenized_fields":{"EmailAddress":true}}`,
 	)
-	mock.ExpectQuery("SELECT .* FROM blnk.identity WHERE identity_id =").
+	mock.ExpectQuery("SELECT .* FROM ledgerforge.identity WHERE identity_id =").
 		WithArgs(testID).
 		WillReturnRows(row)
 	mock.ExpectCommit()
@@ -351,9 +351,9 @@ func TestTokenizeIdentity_Success(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 
 	testID := "idt_123"
@@ -368,12 +368,12 @@ func TestTokenizeIdentity_Success(t *testing.T) {
 		"john@example.com", "1234567890", "US", "Org", "Cat",
 		"Street", "Country", "State", "12345", "City", time.Now(), `{}`,
 	)
-	mock.ExpectQuery("SELECT .* FROM blnk.identity WHERE identity_id =").
+	mock.ExpectQuery("SELECT .* FROM ledgerforge.identity WHERE identity_id =").
 		WithArgs(testID).
 		WillReturnRows(row1)
 	mock.ExpectCommit()
 
-	mock.ExpectExec("UPDATE blnk.identity SET").
+	mock.ExpectExec("UPDATE ledgerforge.identity SET").
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), testID).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -391,9 +391,9 @@ func TestDetokenizeIdentityField_NotTokenized(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 
 	testID := "idt_123"
@@ -408,7 +408,7 @@ func TestDetokenizeIdentityField_NotTokenized(t *testing.T) {
 		"john@example.com", "1234567890", "US", "Org", "Cat",
 		"Street", "Country", "State", "12345", "City", time.Now(), `{}`,
 	)
-	mock.ExpectQuery("SELECT .* FROM blnk.identity WHERE identity_id =").
+	mock.ExpectQuery("SELECT .* FROM ledgerforge.identity WHERE identity_id =").
 		WithArgs(testID).
 		WillReturnRows(row)
 	mock.ExpectCommit()
@@ -424,9 +424,9 @@ func TestDetokenizeIdentity_Empty(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 
 	testID := "idt_123"
@@ -441,7 +441,7 @@ func TestDetokenizeIdentity_Empty(t *testing.T) {
 		"john@example.com", "1234567890", "US", "Org", "Cat",
 		"Street", "Country", "State", "12345", "City", time.Now(), `{}`,
 	)
-	mock.ExpectQuery("SELECT .* FROM blnk.identity WHERE identity_id =").
+	mock.ExpectQuery("SELECT .* FROM ledgerforge.identity WHERE identity_id =").
 		WithArgs(testID).
 		WillReturnRows(row)
 	mock.ExpectCommit()
@@ -461,9 +461,9 @@ func TestTokenizeAllPII(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 
 	testID := "idt_123"
@@ -479,12 +479,12 @@ func TestTokenizeAllPII(t *testing.T) {
 			"john@example.com", "1234567890", "US", "Org", "Cat",
 			"Street", "Country", "State", "12345", "City", time.Now(), `{}`,
 		)
-		mock.ExpectQuery("SELECT .* FROM blnk.identity WHERE identity_id =").
+		mock.ExpectQuery("SELECT .* FROM ledgerforge.identity WHERE identity_id =").
 			WithArgs(testID).
 			WillReturnRows(row)
 		mock.ExpectCommit()
 
-		mock.ExpectExec("UPDATE blnk.identity SET").
+		mock.ExpectExec("UPDATE ledgerforge.identity SET").
 			WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), testID).
 			WillReturnResult(sqlmock.NewResult(1, 1))
 	}

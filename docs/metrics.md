@@ -1,10 +1,10 @@
-# Blnk Metrics Reference
+# LedgerForge Metrics Reference
 
-Blnk exposes OpenTelemetry metrics via a Prometheus-compatible `/metrics` endpoint. This document lists all available metrics, their types, attributes, and what they tell you operationally.
+LedgerForge exposes OpenTelemetry metrics via a Prometheus-compatible `/metrics` endpoint. This document lists all available metrics, their types, attributes, and what they tell you operationally.
 
 ## Prerequisites
 
-- Set `"enable_observability": true` in `blnk.json` (or `BLNK_ENABLE_OBSERVABILITY=true`)
+- Set `"enable_observability": true` in `ledgerforge.json` (or `LEDGERFORGE_ENABLE_OBSERVABILITY=true`)
 - Metrics are served on:
   - **Server**: `GET /metrics` on the API port (default `5001`)
   - **Worker**: `GET /metrics` on the monitoring port (default `5004`)
@@ -13,12 +13,12 @@ Blnk exposes OpenTelemetry metrics via a Prometheus-compatible `/metrics` endpoi
 
 When `server.secure` is enabled, the `/metrics` endpoint requires a bearer token:
 
-1. Set `"metrics_bearer_token": "<your-token>"` in `blnk.json` (or `BLNK_METRICS_BEARER_TOKEN`)
+1. Set `"metrics_bearer_token": "<your-token>"` in `ledgerforge.json` (or `LEDGERFORGE_METRICS_BEARER_TOKEN`)
 2. Configure Prometheus to send the token:
 
 ```yaml
 scrape_configs:
-  - job_name: 'blnk-server'
+  - job_name: 'ledgerforge-server'
     authorization:
       type: Bearer
       credentials: '<your-token>'
@@ -37,15 +37,15 @@ If secure mode is enabled without a token configured, the endpoint returns `403 
 
 ## Metrics
 
-> **Naming convention**: OTel instrument names use dots (e.g., `blnk.transaction.total`). The Prometheus exporter converts these to underscores automatically (e.g., `blnk_transaction_total`).
+> **Naming convention**: OTel instrument names use dots (e.g., `ledgerforge.transaction.total`). The Prometheus exporter converts these to underscores automatically (e.g., `ledgerforge_transaction_total`).
 
 ### Transaction Metrics
 
 | Prometheus Name | Type | Attributes | Description |
 |----------------|------|------------|-------------|
-| `blnk_transaction_total` | Counter | `status`, `currency` | Total transactions by final status and currency. Use to track throughput and status distribution. |
-| `blnk_transaction_duration_seconds` | Histogram | `status` | Wall-clock time of `RecordTransaction()` in seconds. Use to monitor processing latency and set SLOs. |
-| `blnk_transaction_rejected_total` | Counter | `reason` | Rejected transactions by reason. Use to alert on elevated rejection rates. |
+| `ledgerforge_transaction_total` | Counter | `status`, `currency` | Total transactions by final status and currency. Use to track throughput and status distribution. |
+| `ledgerforge_transaction_duration_seconds` | Histogram | `status` | Wall-clock time of `RecordTransaction()` in seconds. Use to monitor processing latency and set SLOs. |
+| `ledgerforge_transaction_rejected_total` | Counter | `reason` | Rejected transactions by reason. Use to alert on elevated rejection rates. |
 
 **`status` values**: `APPLIED`, `REJECTED`, `INFLIGHT`, `VOID`, `COMMIT`
 
@@ -57,8 +57,8 @@ If secure mode is enabled without a token configured, the endpoint returns `403 
 
 | Prometheus Name | Type | Attributes | Description |
 |----------------|------|------------|-------------|
-| `blnk_queue_enqueued_total` | Counter | `queue_name` | Transactions enqueued for async processing. Use to monitor inflow rate per queue. |
-| `blnk_queue_processing_duration_seconds` | Histogram | `result` | Time spent processing a transaction in the worker. Use to detect worker slowdowns. |
+| `ledgerforge_queue_enqueued_total` | Counter | `queue_name` | Transactions enqueued for async processing. Use to monitor inflow rate per queue. |
+| `ledgerforge_queue_processing_duration_seconds` | Histogram | `result` | Time spent processing a transaction in the worker. Use to detect worker slowdowns. |
 
 **`queue_name` values**: `new:transaction_1` through `new:transaction_N` (sharded queues), `hot_transactions` (hot lane)
 
@@ -68,21 +68,21 @@ If secure mode is enabled without a token configured, the endpoint returns `403 
 
 | Prometheus Name | Type | Attributes | Description |
 |----------------|------|------------|-------------|
-| `blnk_balance_created_total` | Counter | — | Total balances created. Use to track account growth. |
+| `ledgerforge_balance_created_total` | Counter | — | Total balances created. Use to track account growth. |
 
 ### Inflight Transaction Metrics
 
 | Prometheus Name | Type | Attributes | Description |
 |----------------|------|------------|-------------|
-| `blnk_inflight_commit_total` | Counter | — | Inflight transactions committed. |
-| `blnk_inflight_void_total` | Counter | — | Inflight transactions voided. Use the commit/void ratio to monitor authorization patterns. |
+| `ledgerforge_inflight_commit_total` | Counter | — | Inflight transactions committed. |
+| `ledgerforge_inflight_void_total` | Counter | — | Inflight transactions voided. Use the commit/void ratio to monitor authorization patterns. |
 
 ### Batch Coalescing Metrics
 
 | Prometheus Name | Type | Attributes | Description |
 |----------------|------|------------|-------------|
-| `blnk_transaction_batch_size` | Histogram | — | Number of transactions per coalesced batch. Use to evaluate batching efficiency. |
-| `blnk_transaction_batch_total` | Counter | `result` | Coalescing attempts by outcome. |
+| `ledgerforge_transaction_batch_size` | Histogram | — | Number of transactions per coalesced batch. Use to evaluate batching efficiency. |
+| `ledgerforge_transaction_batch_total` | Counter | `result` | Coalescing attempts by outcome. |
 
 **`result` values**: `success`, `failure`, `skipped`
 
@@ -90,8 +90,8 @@ If secure mode is enabled without a token configured, the endpoint returns `403 
 
 | Prometheus Name | Type | Attributes | Description |
 |----------------|------|------------|-------------|
-| `blnk_hotpairs_contention_total` | Counter | — | Lock acquisition failures. Spikes indicate contention on specific balance pairs. |
-| `blnk_hotpairs_lane_routed_total` | Counter | `lane` | Transactions routed to queue lanes. Use to verify hot lane is activating as expected. |
+| `ledgerforge_hotpairs_contention_total` | Counter | — | Lock acquisition failures. Spikes indicate contention on specific balance pairs. |
+| `ledgerforge_hotpairs_lane_routed_total` | Counter | `lane` | Transactions routed to queue lanes. Use to verify hot lane is activating as expected. |
 
 **`lane` values**: `normal`, `hot`
 
@@ -99,7 +99,7 @@ If secure mode is enabled without a token configured, the endpoint returns `403 
 
 | Prometheus Name | Type | Attributes | Description |
 |----------------|------|------------|-------------|
-| `blnk_worker_retries_total` | Counter | `reason` | Worker retry events. Sustained retries indicate systemic issues. |
+| `ledgerforge_worker_retries_total` | Counter | `reason` | Worker retry events. Sustained retries indicate systemic issues. |
 
 **`reason` values**: `insufficient_funds`, `other`
 
@@ -107,23 +107,23 @@ If secure mode is enabled without a token configured, the endpoint returns `403 
 
 ```promql
 # Transaction throughput (per second, 5 minute window)
-rate(blnk_transaction_total[5m])
+rate(ledgerforge_transaction_total[5m])
 
 # Rejection rate by reason
-rate(blnk_transaction_rejected_total[5m])
+rate(ledgerforge_transaction_rejected_total[5m])
 
 # P99 transaction latency
-histogram_quantile(0.99, rate(blnk_transaction_duration_seconds_bucket[5m]))
+histogram_quantile(0.99, rate(ledgerforge_transaction_duration_seconds_bucket[5m]))
 
 # Queue enqueue rate
-rate(blnk_queue_enqueued_total[5m])
+rate(ledgerforge_queue_enqueued_total[5m])
 
 # Hot lane traffic ratio
-blnk_hotpairs_lane_routed_total{lane="hot"} / blnk_hotpairs_lane_routed_total
+ledgerforge_hotpairs_lane_routed_total{lane="hot"} / ledgerforge_hotpairs_lane_routed_total
 
 # Worker retry rate
-rate(blnk_worker_retries_total[5m])
+rate(ledgerforge_worker_retries_total[5m])
 
 # Batch coalescing success rate
-blnk_transaction_batch_total{result="success"} / blnk_transaction_batch_total
+ledgerforge_transaction_batch_total{result="success"} / ledgerforge_transaction_batch_total
 ```

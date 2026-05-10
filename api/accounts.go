@@ -19,7 +19,7 @@ import (
 	"net/http"
 	"strconv"
 
-	model2 "github.com/blnkfinance/blnk/api/model"
+	model2 "github.com/devaccuracy/ledgerforge/api/model"
 
 	"github.com/brianvoe/gofakeit/v6"
 	"github.com/gin-gonic/gin"
@@ -49,7 +49,7 @@ func (a Api) CreateAccount(c *gin.Context) {
 		return
 	}
 
-	resp, err := a.blnk.CreateAccount(newAccount.ToAccount())
+	resp, err := a.ledgerforge.CreateAccount(newAccount.ToAccount())
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -73,7 +73,7 @@ func (a Api) GetAccount(c *gin.Context) {
 
 	includes := c.QueryArray("include")
 
-	account, err := a.blnk.GetAccount(id, includes)
+	account, err := a.ledgerforge.GetAccount(id, includes)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -119,7 +119,7 @@ func (a Api) GetAllAccounts(c *gin.Context) {
 		}
 
 		// Use the new filter method
-		resp, err := a.blnk.GetAllAccountsWithFilter(c.Request.Context(), filters, limitInt, offsetInt)
+		resp, err := a.ledgerforge.GetAllAccountsWithFilter(c.Request.Context(), filters, limitInt, offsetInt)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -130,7 +130,7 @@ func (a Api) GetAllAccounts(c *gin.Context) {
 	}
 
 	// Fall back to the legacy method when no filters are present
-	accounts, err := a.blnk.GetAllAccounts()
+	accounts, err := a.ledgerforge.GetAllAccounts()
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -165,7 +165,7 @@ func (a Api) FilterAccounts(c *gin.Context) {
 		return
 	}
 
-	resp, count, err := a.blnk.GetAllAccountsWithFilterAndOptions(c.Request.Context(), filters, opts, limit, offset)
+	resp, count, err := a.ledgerforge.GetAllAccountsWithFilterAndOptions(c.Request.Context(), filters, opts, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -188,7 +188,7 @@ func (a Api) FilterAccounts(c *gin.Context) {
 // - 200 OK: Returns a mock account with bank name and account number.
 func (a Api) generateMockAccount(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
-		"bank_name":      "Blnk Bank",
+		"bank_name":      "LedgerForge Bank",
 		"account_number": gofakeit.AchAccount(),
 	})
 }

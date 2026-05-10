@@ -8,7 +8,7 @@ metadata:
   labels:
     io.kompose.service: worker
   name: worker
-  namespace: blnk
+  namespace: ledgerforge
 spec:
   replicas: 1
   selector:
@@ -25,24 +25,24 @@ spec:
     spec:
       containers:
         - command:
-            - blnk
+            - ledgerforge
             - workers
             - --config
-            - /blnk.json
+            - /ledgerforge.json
           env:
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
               value: http://jaeger:4318/v1/traces
-          image: jerryenebeli/blnk:0.13.3
+          image: ghcr.io/devaccuracy/ledgerforge:main
           name: worker
           ports:
             - containerPort: 5004
           resources: {}
           volumeMounts:
-            - name: blnk-config
-              mountPath: /blnk.json
-              subPath: blnk.json
+            - name: ledgerforge-config
+              mountPath: /ledgerforge.json
+              subPath: ledgerforge.json
       restartPolicy: Always
       volumes:
-        - name: blnk-config
+        - name: ledgerforge-config
           configMap:
-            name: blnk-config
+            name: ledgerforge-config

@@ -19,7 +19,7 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/model"
 )
 
 type RecordTransaction struct {

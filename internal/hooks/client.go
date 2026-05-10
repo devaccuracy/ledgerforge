@@ -91,8 +91,8 @@ func (m *redisHookManager) executeHook(ctx context.Context, hook *Hook, payload 
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Blnk-Signature", signature)
-	req.Header.Set("X-Blnk-Timestamp", timestamp)
+	req.Header.Set("X-LedgerForge-Signature", signature)
+	req.Header.Set("X-LedgerForge-Timestamp", timestamp)
 	req.Header.Set("X-Hook-ID", hook.ID)
 	req.Header.Set("X-Hook-Type", string(hook.Type))
 

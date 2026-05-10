@@ -13,7 +13,7 @@
 -- limitations under the License.
 
 -- +migrate Up
-ALTER TABLE blnk.transactions ADD COLUMN parent_transaction TEXT;
+ALTER TABLE ledgerforge.transactions ADD COLUMN parent_transaction TEXT;
 
 -- +migrate Down
-ALTER TABLE blnk.transactions  DROP COLUMN parent_transaction;
+ALTER TABLE ledgerforge.transactions  DROP COLUMN parent_transaction;

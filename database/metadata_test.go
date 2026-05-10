@@ -21,7 +21,7 @@ func TestUpdateLedgerMetadata(t *testing.T) {
 	}
 
 	metadataJSON, _ := json.Marshal(metadata)
-	mock.ExpectExec("UPDATE blnk.ledgers").
+	mock.ExpectExec("UPDATE ledgerforge.ledgers").
 		WithArgs(metadataJSON, "ldg_123").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -45,7 +45,7 @@ func TestUpdateTransactionMetadata(t *testing.T) {
 	metadataJSON, _ := json.Marshal(metadata)
 
 	// Verify the SQL uses jsonb merge operator and updates both direct and parent matches
-	mock.ExpectExec(`UPDATE blnk\.transactions SET meta_data = meta_data \|\| \$1::jsonb WHERE transaction_id = \$2 OR parent_transaction = \$2`).
+	mock.ExpectExec(`UPDATE ledgerforge\.transactions SET meta_data = meta_data \|\| \$1::jsonb WHERE transaction_id = \$2 OR parent_transaction = \$2`).
 		WithArgs(metadataJSON, "txn_123").
 		WillReturnResult(sqlmock.NewResult(1, 2)) // 2 rows affected (1 direct + 1 parent match)
 
@@ -67,7 +67,7 @@ func TestUpdateBalanceMetadata(t *testing.T) {
 	}
 
 	metadataJSON, _ := json.Marshal(metadata)
-	mock.ExpectExec("UPDATE blnk.balances").
+	mock.ExpectExec("UPDATE ledgerforge.balances").
 		WithArgs(metadataJSON, "bal_123").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -88,7 +88,7 @@ func TestUpdateIdentityMetadata(t *testing.T) {
 	}
 
 	metadataJSON, _ := json.Marshal(metadata)
-	mock.ExpectExec("UPDATE blnk.identity").
+	mock.ExpectExec("UPDATE ledgerforge.identity").
 		WithArgs(metadataJSON, "idt_123").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -114,7 +114,7 @@ func TestUpdateMetadata_Error(t *testing.T) {
 	// Test for database error
 	validMetadata := map[string]interface{}{"key": "value"}
 	metadataJSON, _ := json.Marshal(validMetadata)
-	mock.ExpectExec("UPDATE blnk.ledgers").
+	mock.ExpectExec("UPDATE ledgerforge.ledgers").
 		WithArgs(metadataJSON, "ldg_123").
 		WillReturnError(sqlmock.ErrCancelled)
 

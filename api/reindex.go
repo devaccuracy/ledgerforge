@@ -21,7 +21,7 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/blnkfinance/blnk/internal/search"
+	"github.com/devaccuracy/ledgerforge/internal/search"
 	"github.com/gin-gonic/gin"
 )
 
@@ -74,8 +74,8 @@ func (a Api) StartReindex(c *gin.Context) {
 	}
 
 	reindexService := search.NewReindexService(
-		a.blnk.GetSearchClient(),
-		a.blnk.GetDataSource(),
+		a.ledgerforge.GetSearchClient(),
+		a.ledgerforge.GetDataSource(),
 		config,
 	)
 	globalReindexManager.service = reindexService

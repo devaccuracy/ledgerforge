@@ -15,26 +15,26 @@ limitations under the License.
 */
 
 /*
-Package main provides the CLI commands for managing database migrations in the Blnk application.
+Package main provides the CLI commands for managing database migrations in the LedgerForge application.
 This includes commands for applying and rolling back migrations.
 */
 
 package main
 
 import (
-	"github.com/blnkfinance/blnk"
-	"github.com/blnkfinance/blnk/config"
-	"github.com/blnkfinance/blnk/database"
+	"github.com/devaccuracy/ledgerforge"
+	"github.com/devaccuracy/ledgerforge/config"
+	"github.com/devaccuracy/ledgerforge/database"
 	migrate "github.com/rubenv/sql-migrate"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
 
 // migrateCommands creates the root command for migration-related operations.
-func migrateCommands(_ *blnkInstance) *cobra.Command {
+func migrateCommands(_ *ledgerforgeInstance) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "migrate",
-		Short: "start blnk migration",
+		Short: "start ledgerforge migration",
 	}
 
 	// Add subcommands for migrating up and down.
@@ -51,7 +51,7 @@ func migrateUpCommands() *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			// Define the source of the migrations.
 			migrations := migrate.EmbedFileSystemMigrationSource{
-				FileSystem: blnk.SQLFiles,
+				FileSystem: ledgerforge.SQLFiles,
 				Root:       "sql",
 			}
 
@@ -70,7 +70,7 @@ func migrateUpCommands() *cobra.Command {
 			}
 
 			// Set the schema for the migrations.
-			migrate.SetSchema("blnk")
+			migrate.SetSchema("ledgerforge")
 
 			// Apply the migrations.
 			n, err := migrate.Exec(db, "postgres", migrations, migrate.Up)
@@ -92,7 +92,7 @@ func migrateDownCommands() *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			// Define the source of the migrations.
 			migrations := migrate.EmbedFileSystemMigrationSource{
-				FileSystem: blnk.SQLFiles,
+				FileSystem: ledgerforge.SQLFiles,
 				Root:       "sql",
 			}
 

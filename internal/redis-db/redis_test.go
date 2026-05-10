@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 )
@@ -58,6 +59,12 @@ func TestParseRedisURL(t *testing.T) {
 }
 
 func TestNewRedisClient(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("failed to start miniredis: %v", err)
+	}
+	defer mr.Close()
+
 	tests := []struct {
 		name      string
 		addresses []string
@@ -70,7 +77,7 @@ func TestNewRedisClient(t *testing.T) {
 		},
 		{
 			name:      "single address",
-			addresses: []string{"localhost:6379"},
+			addresses: []string{mr.Addr()},
 			wantErr:   false,
 		},
 		{
@@ -99,7 +106,13 @@ func TestRedisIntegration(t *testing.T) {
 		t.Skip("skipping integration test")
 	}
 
-	client, err := NewRedisClient([]string{"localhost:6379"}, false)
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("failed to start miniredis: %v", err)
+	}
+	defer mr.Close()
+
+	client, err := NewRedisClient([]string{mr.Addr()}, false)
 	if err != nil {
 		t.Fatalf("Failed to create Redis client: %v", err)
 	}

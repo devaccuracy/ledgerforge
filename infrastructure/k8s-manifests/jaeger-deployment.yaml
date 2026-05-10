@@ -8,7 +8,7 @@ metadata:
   labels:
     io.kompose.service: jaeger
   name: jaeger
-  namespace: blnk
+  namespace: ledgerforge
 spec:
   replicas: 1
   selector:

@@ -24,9 +24,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/blnkfinance/blnk/internal/apierror"
-	"github.com/blnkfinance/blnk/internal/filter"
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/internal/apierror"
+	"github.com/devaccuracy/ledgerforge/internal/filter"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/sirupsen/logrus"
 )
 
@@ -50,7 +50,7 @@ func (d Datasource) CreateAccount(account model.Account) (model.Account, error) 
 
 	// Insert the new account into the database
 	_, err = d.Conn.ExecContext(context.Background(), `
-		INSERT INTO blnk.accounts (account_id, name, number, bank_name, currency, ledger_id, identity_id, balance_id, created_at, meta_data)
+		INSERT INTO ledgerforge.accounts (account_id, name, number, bank_name, currency, ledger_id, identity_id, balance_id, created_at, meta_data)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`, account.AccountID, account.Name, account.Number, account.BankName, account.Currency, account.LedgerID, account.IdentityID, account.BalanceID, account.CreatedAt, metaDataJSON)
 
@@ -146,28 +146,28 @@ func prepareAccountQueries(queryBuilder strings.Builder, include []string) strin
 	queryBuilder.WriteString(strings.Join(selectFields, ", "))
 	queryBuilder.WriteString(`
         FROM (
-            SELECT * FROM blnk.accounts WHERE account_id = $1
+            SELECT * FROM ledgerforge.accounts WHERE account_id = $1
         ) AS a
     `)
 
 	// Join identity if specified
 	if contains(include, "identity") {
 		queryBuilder.WriteString(`
-            LEFT JOIN blnk.identity i ON a.identity_id = i.identity_id
+            LEFT JOIN ledgerforge.identity i ON a.identity_id = i.identity_id
         `)
 	}
 
 	// Join ledger if specified
 	if contains(include, "ledger") {
 		queryBuilder.WriteString(`
-            LEFT JOIN blnk.ledgers l ON a.ledger_id = l.ledger_id
+            LEFT JOIN ledgerforge.ledgers l ON a.ledger_id = l.ledger_id
         `)
 	}
 
 	// Join balance if specified
 	if contains(include, "balance") {
 		queryBuilder.WriteString(`
-            LEFT JOIN blnk.balances b ON a.balance_id = b.balance_id
+            LEFT JOIN ledgerforge.balances b ON a.balance_id = b.balance_id
         `)
 	}
 
@@ -253,7 +253,7 @@ func (d Datasource) GetAllAccounts() ([]model.Account, error) {
 	// Execute the SQL query to retrieve account data
 	rows, err := d.Conn.QueryContext(context.Background(), `
 		SELECT account_id, name, number, bank_name, currency, created_at, meta_data 
-		FROM blnk.accounts
+		FROM ledgerforge.accounts
 		ORDER BY created_at DESC
 	`)
 	if err != nil {
@@ -299,7 +299,7 @@ func (d Datasource) GetAccountByNumber(number string) (*model.Account, error) {
 	// Query the database for the account with the given number
 	row := d.Conn.QueryRowContext(context.Background(), `
 		SELECT account_id, name, number, bank_name, created_at, meta_data 
-		FROM blnk.accounts WHERE number = $1
+		FROM ledgerforge.accounts WHERE number = $1
 	`, number)
 
 	account := &model.Account{}
@@ -339,7 +339,7 @@ func (d Datasource) UpdateAccount(account *model.Account) error {
 
 	// Execute the SQL update statement
 	_, err = d.Conn.ExecContext(context.Background(), `
-		UPDATE blnk.accounts
+		UPDATE ledgerforge.accounts
 		SET name = $2, number = $3, bank_name = $4, meta_data = $5
 		WHERE account_id = $1
 	`, account.AccountID, account.Name, account.Number, account.BankName, metaDataJSON)
@@ -357,7 +357,7 @@ func (d Datasource) UpdateAccount(account *model.Account) error {
 func (d Datasource) DeleteAccount(id string) error {
 	// Execute the SQL delete statement
 	_, err := d.Conn.ExecContext(context.Background(), `
-		DELETE FROM blnk.accounts WHERE account_id = $1
+		DELETE FROM ledgerforge.accounts WHERE account_id = $1
 	`, id)
 
 	// Return any errors encountered during the deletion
@@ -421,7 +421,7 @@ func (d Datasource) GetAllAccountsWithFilterAndOptions(ctx context.Context, filt
 	// Build base query
 	baseQuery := fmt.Sprintf(`
 		SELECT %s
-		FROM blnk.accounts
+		FROM ledgerforge.accounts
 	`, selectFields)
 
 	var args []interface{}

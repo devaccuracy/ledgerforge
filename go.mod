@@ -1,4 +1,4 @@
-module github.com/blnkfinance/blnk
+module github.com/devaccuracy/ledgerforge
 
 go 1.25.0
 

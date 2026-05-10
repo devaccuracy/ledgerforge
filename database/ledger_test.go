@@ -24,8 +24,8 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 
-	"github.com/blnkfinance/blnk/internal/apierror"
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/internal/apierror"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
 )
@@ -47,7 +47,7 @@ func TestCreateLedger_Success(t *testing.T) {
 	metaDataJSON, err := json.Marshal(ledger.MetaData)
 	assert.NoError(t, err)
 
-	mock.ExpectExec("INSERT INTO blnk.ledgers").
+	mock.ExpectExec("INSERT INTO ledgerforge.ledgers").
 		WithArgs(metaDataJSON, ledger.Name, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -74,7 +74,7 @@ func TestCreateLedger_UniqueViolation(t *testing.T) {
 	metaDataJSON, err := json.Marshal(ledger.MetaData)
 	assert.NoError(t, err)
 
-	mock.ExpectExec("INSERT INTO blnk.ledgers").
+	mock.ExpectExec("INSERT INTO ledgerforge.ledgers").
 		WithArgs(metaDataJSON, ledger.Name, sqlmock.AnyArg()).
 		WillReturnError(&pq.Error{Code: "23505", Message: "unique_violation"})
 
@@ -102,7 +102,7 @@ func TestGetAllLedgers_Success(t *testing.T) {
 		AddRow("ldg1", "Ledger 1", time.Now(), metaDataJSON).
 		AddRow("ldg2", "Ledger 2", time.Now(), metaDataJSON)
 
-	mock.ExpectQuery("SELECT ledger_id, name, created_at, meta_data FROM blnk.ledgers ORDER BY created_at DESC LIMIT \\$1 OFFSET \\$2").
+	mock.ExpectQuery("SELECT ledger_id, name, created_at, meta_data FROM ledgerforge.ledgers ORDER BY created_at DESC LIMIT \\$1 OFFSET \\$2").
 		WithArgs(2, 0).
 		WillReturnRows(rows)
 	ledgers, err := ds.GetAllLedgers(2, 0)
@@ -127,7 +127,7 @@ func TestGetLedgerByID_Success(t *testing.T) {
 	row := sqlmock.NewRows([]string{"ledger_id", "name", "created_at", "meta_data"}).
 		AddRow("ldg1", "Ledger 1", time.Now(), metaDataJSON)
 
-	mock.ExpectQuery("SELECT ledger_id, name, created_at, meta_data FROM blnk.ledgers WHERE ledger_id = ?").
+	mock.ExpectQuery("SELECT ledger_id, name, created_at, meta_data FROM ledgerforge.ledgers WHERE ledger_id = ?").
 		WithArgs("ldg1").
 		WillReturnRows(row)
 
@@ -143,7 +143,7 @@ func TestGetLedgerByID_NotFound(t *testing.T) {
 
 	ds := Datasource{Conn: db}
 
-	mock.ExpectQuery("SELECT ledger_id, name, created_at, meta_data FROM blnk.ledgers WHERE ledger_id = ?").
+	mock.ExpectQuery("SELECT ledger_id, name, created_at, meta_data FROM ledgerforge.ledgers WHERE ledger_id = ?").
 		WithArgs("ldg1").
 		WillReturnError(sql.ErrNoRows)
 
@@ -171,7 +171,7 @@ func TestCreateLedger_QueryError(t *testing.T) {
 	metaDataJSON, err := json.Marshal(ledger.MetaData)
 	assert.NoError(t, err)
 
-	mock.ExpectExec("INSERT INTO blnk.ledgers").
+	mock.ExpectExec("INSERT INTO ledgerforge.ledgers").
 		WithArgs(metaDataJSON, ledger.Name, sqlmock.AnyArg()).
 		WillReturnError(&pq.Error{Code: "42P01", Message: "relation does not exist"})
 
@@ -189,7 +189,7 @@ func TestGetAllLedgers_QueryError(t *testing.T) {
 
 	ds := Datasource{Conn: db}
 
-	mock.ExpectQuery("SELECT ledger_id, name, created_at, meta_data FROM blnk.ledgers").
+	mock.ExpectQuery("SELECT ledger_id, name, created_at, meta_data FROM ledgerforge.ledgers").
 		WithArgs(20, 0).
 		WillReturnError(sql.ErrConnDone)
 
@@ -208,7 +208,7 @@ func TestGetAllLedgers_Empty(t *testing.T) {
 
 	ds := Datasource{Conn: db}
 
-	mock.ExpectQuery("SELECT ledger_id, name, created_at, meta_data FROM blnk.ledgers ORDER BY created_at DESC LIMIT \\$1 OFFSET \\$2").
+	mock.ExpectQuery("SELECT ledger_id, name, created_at, meta_data FROM ledgerforge.ledgers ORDER BY created_at DESC LIMIT \\$1 OFFSET \\$2").
 		WithArgs(20, 0).
 		WillReturnRows(sqlmock.NewRows([]string{"ledger_id", "name", "created_at", "meta_data"}))
 
@@ -228,7 +228,7 @@ func TestGetAllLedgers_InvalidLimit(t *testing.T) {
 	metaDataJSON, err := json.Marshal(metaData)
 	assert.NoError(t, err)
 
-	mock.ExpectQuery("SELECT ledger_id, name, created_at, meta_data FROM blnk.ledgers ORDER BY created_at DESC LIMIT \\$1 OFFSET \\$2").
+	mock.ExpectQuery("SELECT ledger_id, name, created_at, meta_data FROM ledgerforge.ledgers ORDER BY created_at DESC LIMIT \\$1 OFFSET \\$2").
 		WithArgs(20, 0).
 		WillReturnRows(sqlmock.NewRows([]string{"ledger_id", "name", "created_at", "meta_data"}).
 			AddRow("ldg1", "Ledger 1", time.Now(), metaDataJSON))
@@ -245,7 +245,7 @@ func TestGetLedgerByID_QueryError(t *testing.T) {
 
 	ds := Datasource{Conn: db}
 
-	mock.ExpectQuery("SELECT ledger_id, name, created_at, meta_data FROM blnk.ledgers WHERE ledger_id = ?").
+	mock.ExpectQuery("SELECT ledger_id, name, created_at, meta_data FROM ledgerforge.ledgers WHERE ledger_id = ?").
 		WithArgs("ldg1").
 		WillReturnError(sql.ErrConnDone)
 
@@ -267,12 +267,12 @@ func TestUpdateLedger_Success(t *testing.T) {
 	metaDataJSON, err := json.Marshal(metaData)
 	assert.NoError(t, err)
 
-	mock.ExpectQuery("SELECT ledger_id, name, created_at, meta_data FROM blnk.ledgers WHERE ledger_id = ?").
+	mock.ExpectQuery("SELECT ledger_id, name, created_at, meta_data FROM ledgerforge.ledgers WHERE ledger_id = ?").
 		WithArgs("ldg1").
 		WillReturnRows(sqlmock.NewRows([]string{"ledger_id", "name", "created_at", "meta_data"}).
 			AddRow("ldg1", "Old Name", time.Now(), metaDataJSON))
 
-	mock.ExpectExec("UPDATE blnk.ledgers SET name").
+	mock.ExpectExec("UPDATE ledgerforge.ledgers SET name").
 		WithArgs("New Name", "ldg1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
@@ -292,7 +292,7 @@ func TestUpdateLedger_NotFound(t *testing.T) {
 
 	ds := Datasource{Conn: db}
 
-	mock.ExpectQuery("SELECT ledger_id, name, created_at, meta_data FROM blnk.ledgers WHERE ledger_id = ?").
+	mock.ExpectQuery("SELECT ledger_id, name, created_at, meta_data FROM ledgerforge.ledgers WHERE ledger_id = ?").
 		WithArgs("ldg_notfound").
 		WillReturnError(sql.ErrNoRows)
 
@@ -314,12 +314,12 @@ func TestUpdateLedger_UniqueViolation(t *testing.T) {
 	metaDataJSON, err := json.Marshal(metaData)
 	assert.NoError(t, err)
 
-	mock.ExpectQuery("SELECT ledger_id, name, created_at, meta_data FROM blnk.ledgers WHERE ledger_id = ?").
+	mock.ExpectQuery("SELECT ledger_id, name, created_at, meta_data FROM ledgerforge.ledgers WHERE ledger_id = ?").
 		WithArgs("ldg1").
 		WillReturnRows(sqlmock.NewRows([]string{"ledger_id", "name", "created_at", "meta_data"}).
 			AddRow("ldg1", "Old Name", time.Now(), metaDataJSON))
 
-	mock.ExpectExec("UPDATE blnk.ledgers SET name").
+	mock.ExpectExec("UPDATE ledgerforge.ledgers SET name").
 		WithArgs("Duplicate Name", "ldg1").
 		WillReturnError(&pq.Error{Code: "23505", Message: "unique_violation"})
 

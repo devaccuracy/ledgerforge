@@ -30,9 +30,9 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/blnkfinance/blnk/internal/apierror"
-	"github.com/blnkfinance/blnk/internal/filter"
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/internal/apierror"
+	"github.com/devaccuracy/ledgerforge/internal/filter"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/sirupsen/logrus"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -60,7 +60,7 @@ func (d Datasource) RecordTransaction(ctx context.Context, txn *model.Transactio
 
 	// Execute the SQL insert statement to record the transaction
 	_, err = d.Conn.ExecContext(ctx,
-		`INSERT INTO blnk.transactions(transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, rate, currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date) 
+		`INSERT INTO ledgerforge.transactions(transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, rate, currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
 		txn.TransactionID, txn.ParentTransaction, txn.Source, txn.Reference, txn.AmountString, txn.PreciseAmount.String(), txn.Precision, txn.Rate, txn.Currency, txn.Destination, txn.Description, txn.Status, txn.CreatedAt, metaDataJSON, txn.ScheduledFor, txn.Hash, txn.EffectiveDate,
 	)
@@ -92,7 +92,7 @@ func recordTransactionInTx(ctx context.Context, tx *sql.Tx, txn *model.Transacti
 	}
 
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO blnk.transactions(transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, rate, currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date) 
+		`INSERT INTO ledgerforge.transactions(transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, rate, currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
 		txn.TransactionID, txn.ParentTransaction, txn.Source, txn.Reference, txn.AmountString, txn.PreciseAmount.String(), txn.Precision, txn.Rate, txn.Currency, txn.Destination, txn.Description, txn.Status, txn.CreatedAt, metaDataJSON, txn.ScheduledFor, txn.Hash, txn.EffectiveDate,
 	)
@@ -119,7 +119,7 @@ func recordTransactionsInTx(ctx context.Context, tx *sql.Tx, txns []*model.Trans
 	}
 
 	stmt, err := tx.PrepareContext(ctx, pq.CopyInSchema(
-		"blnk",
+		"ledgerforge",
 		"transactions",
 		"transaction_id",
 		"parent_transaction",
@@ -388,7 +388,7 @@ func (d Datasource) GetTransaction(ctx context.Context, id string) (*model.Trans
 	// Execute the SQL query to retrieve the transaction by its ID
 	row := d.Conn.QueryRowContext(ctx, `
 		SELECT transaction_id, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, parent_transaction, hash
-		FROM blnk.transactions
+		FROM ledgerforge.transactions
 		WHERE transaction_id = $1
 	`, id)
 
@@ -449,7 +449,7 @@ func (d Datasource) IsParentTransactionVoid(ctx context.Context, parentID string
 	err := d.Conn.QueryRowContext(ctx, `
 		SELECT EXISTS (
 			SELECT 1
-			FROM blnk.transactions
+			FROM ledgerforge.transactions
 			WHERE parent_transaction = $1
 			AND status = 'VOID'
 		)
@@ -486,7 +486,7 @@ func (d Datasource) TransactionExistsByRef(ctx context.Context, reference string
 
 	// Execute the SQL query to check if the transaction exists by reference
 	err := d.Conn.QueryRowContext(ctx, `
-		SELECT EXISTS(SELECT 1 FROM blnk.transactions WHERE reference = $1)
+		SELECT EXISTS(SELECT 1 FROM ledgerforge.transactions WHERE reference = $1)
 	`, reference).Scan(&exists)
 	// Handle errors from the query
 	if err != nil {
@@ -516,7 +516,7 @@ func (d Datasource) GetExistingTransactionReferences(ctx context.Context, refere
 
 	rows, err := d.Conn.QueryContext(ctx, `
 		SELECT reference
-		FROM blnk.transactions
+		FROM ledgerforge.transactions
 		WHERE reference = ANY($1)
 	`, pq.Array(references))
 	if err != nil {
@@ -566,7 +566,7 @@ func (d Datasource) GetTransactionByRef(ctx context.Context, reference string) (
 	// Query the transaction by reference
 	row := d.Conn.QueryRowContext(ctx, `
 		SELECT transaction_id, source, reference, amount, precise_amount, currency, destination, description, status, created_at, meta_data, parent_transaction
-		FROM blnk.transactions
+		FROM ledgerforge.transactions
 		WHERE reference = $1
 	`, reference)
 
@@ -621,7 +621,7 @@ func (d Datasource) UpdateTransactionStatus(ctx context.Context, id string, stat
 
 	// Execute the update query
 	result, err := d.Conn.ExecContext(ctx, `
-		UPDATE blnk.transactions
+		UPDATE ledgerforge.transactions
 		SET status = $2
 		WHERE transaction_id = $1
 	`, id, status)
@@ -668,7 +668,7 @@ func (d Datasource) GetAllTransactions(ctx context.Context, limit, offset int) (
 	// Execute the query to retrieve all transactions
 	rows, err := d.Conn.QueryContext(ctx, `
 		SELECT transaction_id, source, reference, amount, currency, destination, description, status, hash, created_at, meta_data
-		FROM blnk.transactions
+		FROM ledgerforge.transactions
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2
 	`, limit, offset)
@@ -750,7 +750,7 @@ func (d Datasource) GetTotalCommittedTransactions(ctx context.Context, parentID 
 	// SQL query to calculate the total precise amount for the given parent transaction
 	query := `
 		SELECT SUM(precise_amount) AS total_amount
-		FROM blnk.transactions
+		FROM ledgerforge.transactions
 		WHERE parent_transaction = $1 AND status = 'APPLIED'
 		GROUP BY parent_transaction;
 	`
@@ -813,7 +813,7 @@ func (d Datasource) GetTransactionsPaginated(ctx context.Context, _ string, batc
 	// If not found in cache, fetch from the database
 	rows, err := d.Conn.QueryContext(ctx, `
         SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, rate, currency, destination, description, status, created_at, meta_data, scheduled_for, hash
-        FROM blnk.transactions
+        FROM ledgerforge.transactions
         ORDER BY created_at ASC
         LIMIT $1 OFFSET $2
     `, batchSize, offset)
@@ -1007,7 +1007,7 @@ func groupedTransactionsQuery(groupCriteria string) (string, bool) {
         SELECT transaction_id::text AS group_key, transaction_id, parent_transaction, source, reference,
                amount, precise_amount, precision, rate, currency, destination,
                description, status, created_at, meta_data, scheduled_for, hash
-        FROM blnk.transactions
+        FROM ledgerforge.transactions
         WHERE transaction_id::text IS NOT NULL AND transaction_id::text != ''
         ORDER BY transaction_id::text
         LIMIT $1 OFFSET $2
@@ -1017,7 +1017,7 @@ func groupedTransactionsQuery(groupCriteria string) (string, bool) {
         SELECT parent_transaction::text AS group_key, transaction_id, parent_transaction, source, reference,
                amount, precise_amount, precision, rate, currency, destination,
                description, status, created_at, meta_data, scheduled_for, hash
-        FROM blnk.transactions
+        FROM ledgerforge.transactions
         WHERE parent_transaction::text IS NOT NULL AND parent_transaction::text != ''
         ORDER BY parent_transaction::text
         LIMIT $1 OFFSET $2
@@ -1027,7 +1027,7 @@ func groupedTransactionsQuery(groupCriteria string) (string, bool) {
         SELECT source::text AS group_key, transaction_id, parent_transaction, source, reference,
                amount, precise_amount, precision, rate, currency, destination,
                description, status, created_at, meta_data, scheduled_for, hash
-        FROM blnk.transactions
+        FROM ledgerforge.transactions
         WHERE source::text IS NOT NULL AND source::text != ''
         ORDER BY source::text
         LIMIT $1 OFFSET $2
@@ -1037,7 +1037,7 @@ func groupedTransactionsQuery(groupCriteria string) (string, bool) {
         SELECT reference::text AS group_key, transaction_id, parent_transaction, source, reference,
                amount, precise_amount, precision, rate, currency, destination,
                description, status, created_at, meta_data, scheduled_for, hash
-        FROM blnk.transactions
+        FROM ledgerforge.transactions
         WHERE reference::text IS NOT NULL AND reference::text != ''
         ORDER BY reference::text
         LIMIT $1 OFFSET $2
@@ -1047,7 +1047,7 @@ func groupedTransactionsQuery(groupCriteria string) (string, bool) {
         SELECT currency::text AS group_key, transaction_id, parent_transaction, source, reference,
                amount, precise_amount, precision, rate, currency, destination,
                description, status, created_at, meta_data, scheduled_for, hash
-        FROM blnk.transactions
+        FROM ledgerforge.transactions
         WHERE currency::text IS NOT NULL AND currency::text != ''
         ORDER BY currency::text
         LIMIT $1 OFFSET $2
@@ -1057,7 +1057,7 @@ func groupedTransactionsQuery(groupCriteria string) (string, bool) {
         SELECT destination::text AS group_key, transaction_id, parent_transaction, source, reference,
                amount, precise_amount, precision, rate, currency, destination,
                description, status, created_at, meta_data, scheduled_for, hash
-        FROM blnk.transactions
+        FROM ledgerforge.transactions
         WHERE destination::text IS NOT NULL AND destination::text != ''
         ORDER BY destination::text
         LIMIT $1 OFFSET $2
@@ -1067,7 +1067,7 @@ func groupedTransactionsQuery(groupCriteria string) (string, bool) {
         SELECT status::text AS group_key, transaction_id, parent_transaction, source, reference,
                amount, precise_amount, precision, rate, currency, destination,
                description, status, created_at, meta_data, scheduled_for, hash
-        FROM blnk.transactions
+        FROM ledgerforge.transactions
         WHERE status::text IS NOT NULL AND status::text != ''
         ORDER BY status::text
         LIMIT $1 OFFSET $2
@@ -1077,7 +1077,7 @@ func groupedTransactionsQuery(groupCriteria string) (string, bool) {
         SELECT created_at::text AS group_key, transaction_id, parent_transaction, source, reference,
                amount, precise_amount, precision, rate, currency, destination,
                description, status, created_at, meta_data, scheduled_for, hash
-        FROM blnk.transactions
+        FROM ledgerforge.transactions
         WHERE created_at::text IS NOT NULL AND created_at::text != ''
         ORDER BY created_at::text
         LIMIT $1 OFFSET $2
@@ -1108,36 +1108,36 @@ func (d Datasource) GetInflightTransactionsByParentID(ctx context.Context, paren
 		WITH inflight_transactions AS (
 			SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision,
 				   rate, currency, destination, description, status, created_at, meta_data, scheduled_for, hash
-			FROM blnk.transactions
+			FROM ledgerforge.transactions
 			WHERE (transaction_id = $1 OR parent_transaction = $1 OR meta_data->>'QUEUED_PARENT_TRANSACTION' = $1)
 			AND status = 'INFLIGHT'
-		), 
+		),
 		queued_inflight_transactions AS (
-			SELECT t.transaction_id, t.parent_transaction, t.source, t.reference, t.amount, t.precise_amount, t.precision, 
+			SELECT t.transaction_id, t.parent_transaction, t.source, t.reference, t.amount, t.precise_amount, t.precision,
 				   t.rate, t.currency, t.destination, t.description, t.status, t.created_at, t.meta_data, t.scheduled_for, t.hash
-			FROM blnk.transactions t
-			WHERE (t.transaction_id = $1 OR t.parent_transaction = $1) 
+			FROM ledgerforge.transactions t
+			WHERE (t.transaction_id = $1 OR t.parent_transaction = $1)
 			AND t.status = 'QUEUED' AND t.meta_data->>'inflight' = 'true'
 			-- Don't include transactions that have been rejected (check by reference with _q suffix)
 			AND NOT EXISTS (
-				SELECT 1 
-				FROM blnk.transactions rejected
+				SELECT 1
+				FROM ledgerforge.transactions rejected
 				WHERE rejected.reference = t.reference || '_q' AND rejected.status = 'REJECTED'
 			)
 			-- Also don't include if there are child transactions with INFLIGHT status
 			AND NOT EXISTS (
-				SELECT 1 
-				FROM blnk.transactions child
+				SELECT 1
+				FROM ledgerforge.transactions child
 				WHERE child.parent_transaction = t.transaction_id AND child.status = 'INFLIGHT'
 			)
 		)
-		
+
 		SELECT * FROM inflight_transactions
 		UNION ALL
 		-- Only include queued_inflight if there are no inflight transactions
-		SELECT * FROM queued_inflight_transactions 
+		SELECT * FROM queued_inflight_transactions
 		WHERE NOT EXISTS (SELECT 1 FROM inflight_transactions)
-		
+
 		ORDER BY created_at DESC
 		LIMIT $2 OFFSET $3
 	`, parentTransactionID, batchSize, offset)
@@ -1222,23 +1222,23 @@ func (d Datasource) GetRefundableTransactionsByParentID(ctx context.Context, par
 	defer span.End()
 
 	rows, err := d.Conn.QueryContext(ctx, `
-		SELECT 
-			t.transaction_id, t.parent_transaction, t.source, t.reference, t.amount, t.precise_amount, 
-			t.precision, t.rate, t.currency, t.destination, t.description, t.status, t.created_at, 
+		SELECT
+			t.transaction_id, t.parent_transaction, t.source, t.reference, t.amount, t.precise_amount,
+			t.precision, t.rate, t.currency, t.destination, t.description, t.status, t.created_at,
 			t.meta_data, t.scheduled_for, t.hash
-		FROM 
-			blnk.transactions t
-		WHERE 
+		FROM
+			ledgerforge.transactions t
+		WHERE
 			-- Case 1: The transaction is the parent itself and is APPLIED
 			(t.transaction_id = $1 AND t.status = 'APPLIED')
-			
+
 			-- Case 2: The transaction is a child and is APPLIED or VOID
 			OR (t.parent_transaction = $1 AND t.status IN ('APPLIED', 'VOID'))
 
 			-- Case 3: Transaction is APPLIED and linked via metadata QUEUED_PARENT_TRANSACTION
 			OR (t.status = 'APPLIED' AND t.meta_data->>'QUEUED_PARENT_TRANSACTION' = $1)
 
-		ORDER BY 
+		ORDER BY
 			t.created_at DESC
 		LIMIT $2 OFFSET $3
 	`, parentTransactionID, batchSize, offset)
@@ -1321,14 +1321,14 @@ func (d Datasource) GetQueuedAmounts(ctx context.Context, balanceID string) (deb
 	credit = big.NewInt(0)
 
 	rows, err := d.Conn.QueryContext(ctx, `
-        SELECT t.precise_amount, t.source, t.destination 
-        FROM blnk.transactions t
-        WHERE (t.source = $1 OR t.destination = $1) 
+        SELECT t.precise_amount, t.source, t.destination
+        FROM ledgerforge.transactions t
+        WHERE (t.source = $1 OR t.destination = $1)
         AND t.status = 'QUEUED'
         AND NOT EXISTS (
-            SELECT 1 
-            FROM blnk.transactions child 
-            WHERE child.parent_transaction = t.transaction_id 
+            SELECT 1
+            FROM ledgerforge.transactions child
+            WHERE child.parent_transaction = t.transaction_id
             AND (child.status = 'APPLIED' OR child.status = 'REJECTED' OR child.status = 'VOID' or child.status = 'INFLIGHT')
         )`, balanceID)
 	if err != nil {
@@ -1378,7 +1378,7 @@ func (d Datasource) TransactionExistsByIDOrParentID(ctx context.Context, id stri
 	var exists bool
 	err := d.Conn.QueryRowContext(ctx, `
 		SELECT EXISTS(
-			SELECT 1 FROM blnk.transactions 
+			SELECT 1 FROM ledgerforge.transactions
 			WHERE transaction_id = $1 OR parent_transaction = $1
 		)
 	`, id).Scan(&exists)
@@ -1423,9 +1423,9 @@ func (d Datasource) GetTransactionsByParent(ctx context.Context, parentID string
 
 	// If not in cache, query the database
 	rows, err := d.Conn.QueryContext(ctx, `
-		SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, 
+		SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision,
 			   rate, currency, destination, description, status, created_at, meta_data, scheduled_for, hash
-		FROM blnk.transactions
+		FROM ledgerforge.transactions
 		WHERE parent_transaction = $1
 		ORDER BY created_at DESC
 		LIMIT $2 OFFSET $3
@@ -1519,10 +1519,10 @@ func (d Datasource) IsTransactionRefunded(ctx context.Context, transaction *mode
 	var exists bool
 	err := d.Conn.QueryRowContext(ctx, `
 		SELECT EXISTS (
-			SELECT 1 
-			FROM blnk.transactions 
-			WHERE parent_transaction = $1 
-			AND source = $2 
+			SELECT 1
+			FROM ledgerforge.transactions
+			WHERE parent_transaction = $1
+			AND source = $2
 			AND destination = $3
 		)
 	`, transaction.TransactionID, transaction.Destination, transaction.Source).Scan(&exists)
@@ -1546,9 +1546,9 @@ func (d Datasource) GetTransactionsByCriteria(ctx context.Context, minAmount, ma
 	defer span.End()
 
 	query := `
-		SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, 
+		SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision,
 			   rate, currency, destination, description, status, created_at, meta_data, scheduled_for, hash
-		FROM blnk.transactions
+		FROM ledgerforge.transactions
 		WHERE 1=1
 	`
 	var args []interface{}
@@ -1658,7 +1658,7 @@ func (d Datasource) GetTransactionsByShadowFor(ctx context.Context, parentTransa
 
 	rows, err := d.Conn.QueryContext(ctx, `
 		SELECT transaction_id, source, reference, amount, precise_amount, "precision", rate, currency, destination, description, status, created_at, meta_data, scheduled_for, hash
-		FROM blnk.transactions
+		FROM ledgerforge.transactions
 		WHERE meta_data->>'_shadow_for' = $1
 		ORDER BY created_at ASC
 	`, parentTransactionID)
@@ -1778,7 +1778,7 @@ func (d Datasource) GetAllTransactionsWithFilterAndOptions(ctx context.Context, 
 	// Build base query
 	baseQuery := fmt.Sprintf(`
 		SELECT %s
-		FROM blnk.transactions
+		FROM ledgerforge.transactions
 	`, selectFields)
 
 	var args []interface{}
@@ -1903,11 +1903,11 @@ func (d Datasource) GetStuckQueuedTransactions(ctx context.Context, threshold ti
 
 	rows, err := d.Conn.QueryContext(ctx, `
 		SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, rate, currency, destination, description, status, created_at, meta_data, scheduled_for, hash
-		FROM blnk.transactions t
+		FROM ledgerforge.transactions t
 		WHERE t.status = 'QUEUED'
 		  AND t.created_at < $1
 		  AND NOT EXISTS (
-		      SELECT 1 FROM blnk.transactions child
+		      SELECT 1 FROM ledgerforge.transactions child
 		      WHERE child.parent_transaction = t.transaction_id
 		  )
 		ORDER BY t.created_at ASC
@@ -1975,7 +1975,7 @@ func (d Datasource) GetQueuedTransactionsForCoalescing(ctx context.Context, sour
 
 	rows, err := d.Conn.QueryContext(ctx, `
 		SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, rate, currency, destination, description, status, created_at, meta_data, scheduled_for, hash
-		FROM blnk.transactions t
+		FROM ledgerforge.transactions t
 		WHERE t.status = 'QUEUED'
 		  AND t.source = $1
 		  AND t.destination = $2
@@ -1983,7 +1983,7 @@ func (d Datasource) GetQueuedTransactionsForCoalescing(ctx context.Context, sour
 		  AND t.transaction_id <> $4
 		  AND t.created_at >= $5
 		  AND NOT EXISTS (
-		      SELECT 1 FROM blnk.transactions child
+		      SELECT 1 FROM ledgerforge.transactions child
 		      WHERE child.parent_transaction = t.transaction_id
 		  )
 		ORDER BY t.created_at ASC
@@ -2014,14 +2014,14 @@ func (d Datasource) GetQueuedTransactionsForSourceCoalescing(ctx context.Context
 
 	rows, err := d.Conn.QueryContext(ctx, `
 		SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, rate, currency, destination, description, status, created_at, meta_data, scheduled_for, hash
-		FROM blnk.transactions t
+		FROM ledgerforge.transactions t
 		WHERE t.status = 'QUEUED'
 		  AND t.source = $1
 		  AND t.currency = $2
 		  AND t.transaction_id <> $3
 		  AND t.created_at >= $4
 		  AND NOT EXISTS (
-		      SELECT 1 FROM blnk.transactions child
+		      SELECT 1 FROM ledgerforge.transactions child
 		      WHERE child.parent_transaction = t.transaction_id
 		  )
 		ORDER BY t.created_at ASC
@@ -2052,14 +2052,14 @@ func (d Datasource) GetQueuedTransactionsForDestinationCoalescing(ctx context.Co
 
 	rows, err := d.Conn.QueryContext(ctx, `
 		SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, rate, currency, destination, description, status, created_at, meta_data, scheduled_for, hash
-		FROM blnk.transactions t
+		FROM ledgerforge.transactions t
 		WHERE t.status = 'QUEUED'
 		  AND t.destination = $1
 		  AND t.currency = $2
 		  AND t.transaction_id <> $3
 		  AND t.created_at >= $4
 		  AND NOT EXISTS (
-		      SELECT 1 FROM blnk.transactions child
+		      SELECT 1 FROM ledgerforge.transactions child
 		      WHERE child.parent_transaction = t.transaction_id
 		  )
 		ORDER BY t.created_at ASC
@@ -2133,14 +2133,14 @@ func (d Datasource) CountQueuedTransactionsForPairLane(ctx context.Context, sour
 	var count int
 	err := d.Conn.QueryRowContext(ctx, `
 		SELECT COUNT(*)
-		FROM blnk.transactions t
+		FROM ledgerforge.transactions t
 		WHERE t.status = 'QUEUED'
 		  AND t.source = $1
 		  AND t.destination = $2
 		  AND t.currency = $3
 		  AND COALESCE(t.meta_data->>'queue_lane', 'normal') = $4
 		  AND NOT EXISTS (
-		      SELECT 1 FROM blnk.transactions child
+		      SELECT 1 FROM ledgerforge.transactions child
 		      WHERE child.parent_transaction = t.transaction_id
 		  )
 	`, source, destination, currency, lane).Scan(&count)

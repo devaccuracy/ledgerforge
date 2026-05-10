@@ -1,18 +1,18 @@
-package blnk
+package ledgerforge
 
 import (
 	"context"
 	"testing"
 
-	dbmocks "github.com/blnkfinance/blnk/database/mocks"
-	"github.com/blnkfinance/blnk/internal/hotpairs"
-	"github.com/blnkfinance/blnk/model"
+	dbmocks "github.com/devaccuracy/ledgerforge/database/mocks"
+	"github.com/devaccuracy/ledgerforge/internal/hotpairs"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
 
 func TestNewQueuedTransactionRecoveryProcessor_UsesSingleWorker(t *testing.T) {
-	processor := NewQueuedTransactionRecoveryProcessor(&Blnk{})
+	processor := NewQueuedTransactionRecoveryProcessor(&LedgerForge{})
 
 	assert.Equal(t, 1, processor.maxWorkers)
 	assert.Equal(t, 100, processor.batchSize)
@@ -20,8 +20,8 @@ func TestNewQueuedTransactionRecoveryProcessor_UsesSingleWorker(t *testing.T) {
 
 func TestProcessStuckTransaction_UsesCoalescingBeforeDirectReplay(t *testing.T) {
 	mockDS := &dbmocks.MockDataSource{}
-	blnk := &Blnk{datasource: mockDS}
-	processor := NewQueuedTransactionRecoveryProcessor(blnk)
+	ledgerforge := &LedgerForge{datasource: mockDS}
+	processor := NewQueuedTransactionRecoveryProcessor(ledgerforge)
 
 	stuckTxn := &model.Transaction{
 		TransactionID: "txn_parent",
@@ -51,8 +51,8 @@ func TestProcessStuckTransaction_UsesCoalescingBeforeDirectReplay(t *testing.T) 
 
 func TestProcessStuckTransaction_UsesHotLaneCoalescingWhenMarkedHot(t *testing.T) {
 	mockDS := &dbmocks.MockDataSource{}
-	blnk := &Blnk{datasource: mockDS}
-	processor := NewQueuedTransactionRecoveryProcessor(blnk)
+	ledgerforge := &LedgerForge{datasource: mockDS}
+	processor := NewQueuedTransactionRecoveryProcessor(ledgerforge)
 
 	stuckTxn := &model.Transaction{
 		TransactionID: "txn_parent",
@@ -84,8 +84,8 @@ func TestProcessStuckTransaction_UsesHotLaneCoalescingWhenMarkedHot(t *testing.T
 
 func TestProcessStuckTransaction_FallsBackToDirectReplayWhenBatchNotHandled(t *testing.T) {
 	mockDS := &dbmocks.MockDataSource{}
-	blnk := &Blnk{datasource: mockDS}
-	processor := NewQueuedTransactionRecoveryProcessor(blnk)
+	ledgerforge := &LedgerForge{datasource: mockDS}
+	processor := NewQueuedTransactionRecoveryProcessor(ledgerforge)
 
 	stuckTxn := &model.Transaction{
 		TransactionID: "txn_parent",

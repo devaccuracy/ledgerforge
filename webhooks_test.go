@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package blnk
+package ledgerforge
 
 import (
 	"net/http"
@@ -24,7 +24,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/blnkfinance/blnk/config"
+	"github.com/devaccuracy/ledgerforge/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -66,10 +66,10 @@ func TestSendWebhook(t *testing.T) {
 		Event:   "transaction.queued",
 		Payload: getTransactionMock(10000, false),
 	}
-	blnk, err := NewBlnk(nil)
+	ledgerforge, err := NewLedgerForge(nil)
 	assert.NoError(t, err)
 
-	err = blnk.SendWebhook(testData)
+	err = ledgerforge.SendWebhook(testData)
 	assert.NoError(t, err)
 
 	// Verify that the task was enqueued
@@ -124,10 +124,10 @@ func TestConnectionReuse(t *testing.T) {
 	}
 	config.ConfigStore.Store(cnf)
 
-	// Create Blnk instance
-	blnk, err := NewBlnk(nil)
+	// Create LedgerForge instance
+	ledgerforge, err := NewLedgerForge(nil)
 	assert.NoError(t, err)
-	defer blnk.Close()
+	defer ledgerforge.Close()
 
 	// Send multiple webhook requests directly (bypass queue for immediate testing)
 	numRequests := 10
@@ -142,7 +142,7 @@ func TestConnectionReuse(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			err := processHTTP(testWebhook, blnk.httpClient)
+			err := processHTTP(testWebhook, ledgerforge.httpClient)
 			assert.NoError(t, err)
 		}()
 	}
@@ -188,17 +188,17 @@ func TestHTTPClientConfiguration(t *testing.T) {
 	}
 	config.ConfigStore.Store(cnf)
 
-	// Create Blnk instance
-	blnk, err := NewBlnk(nil)
+	// Create LedgerForge instance
+	ledgerforge, err := NewLedgerForge(nil)
 	assert.NoError(t, err)
-	defer blnk.Close()
+	defer ledgerforge.Close()
 
 	// Verify HTTP client is configured properly
-	assert.NotNil(t, blnk.httpClient, "HTTP client should be initialized")
-	assert.Equal(t, 30*time.Second, blnk.httpClient.Timeout, "Timeout should be 30 seconds")
+	assert.NotNil(t, ledgerforge.httpClient, "HTTP client should be initialized")
+	assert.Equal(t, 30*time.Second, ledgerforge.httpClient.Timeout, "Timeout should be 30 seconds")
 
 	// Verify transport configuration
-	transport, ok := blnk.httpClient.Transport.(*http.Transport)
+	transport, ok := ledgerforge.httpClient.Transport.(*http.Transport)
 	assert.True(t, ok, "Transport should be *http.Transport")
 	assert.Equal(t, 100, transport.MaxIdleConns, "MaxIdleConns should be 100")
 	assert.Equal(t, 10, transport.MaxIdleConnsPerHost, "MaxIdleConnsPerHost should be 10")
@@ -239,13 +239,13 @@ func TestProcessWebhookWithReusedClient(t *testing.T) {
 	}
 	config.ConfigStore.Store(cnf)
 
-	blnk, err := NewBlnk(nil)
+	ledgerforge, err := NewLedgerForge(nil)
 	assert.NoError(t, err)
-	defer blnk.Close()
+	defer ledgerforge.Close()
 
 	// Store reference to the HTTP client
 	clientMutex.Lock()
-	clientUsed = blnk.httpClient
+	clientUsed = ledgerforge.httpClient
 	clientMutex.Unlock()
 
 	// Create webhook payloads
@@ -253,14 +253,14 @@ func TestProcessWebhookWithReusedClient(t *testing.T) {
 	webhook2 := NewWebhook{Event: "test.event2", Payload: map[string]string{"id": "2"}}
 
 	// Process webhooks using the same client
-	err1 := processHTTP(webhook1, blnk.httpClient)
-	err2 := processHTTP(webhook2, blnk.httpClient)
+	err1 := processHTTP(webhook1, ledgerforge.httpClient)
+	err2 := processHTTP(webhook2, ledgerforge.httpClient)
 
 	assert.NoError(t, err1)
 	assert.NoError(t, err2)
 
 	// Verify the same client instance was used
 	clientMutex.Lock()
-	assert.Same(t, clientUsed, blnk.httpClient, "Should use the same HTTP client instance")
+	assert.Same(t, clientUsed, ledgerforge.httpClient, "Should use the same HTTP client instance")
 	clientMutex.Unlock()
 }

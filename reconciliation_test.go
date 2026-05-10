@@ -13,7 +13,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-package blnk
+package ledgerforge
 
 import (
 	"context"
@@ -23,9 +23,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
-	"github.com/blnkfinance/blnk/config"
-	"github.com/blnkfinance/blnk/database/mocks"
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/config"
+	"github.com/devaccuracy/ledgerforge/database/mocks"
+	"github.com/devaccuracy/ledgerforge/model"
 )
 
 // func TestOneToOneReconciliation(t *testing.T) {
@@ -40,7 +40,7 @@ import (
 // 	}
 // 	config.ConfigStore.Store(cnf)
 // 	mockDS := new(mocks.MockDataSource)
-// 	blnk := &Blnk{datasource: mockDS}
+// 	ledgerforge := &LedgerForge{datasource: mockDS}
 
 // 	ctx := context.Background()
 // 	externalTxns := []*model.Transaction{
@@ -64,7 +64,7 @@ import (
 // 		},
 // 	}
 
-// 	matches, unmatched := blnk.oneToOneReconciliation(ctx, externalTxns, matchingRules)
+// 	matches, unmatched := ledgerforge.oneToOneReconciliation(ctx, externalTxns, matchingRules)
 // 	assert.Equal(t, 2, len(matches), "Expected 2 matches")
 // 	assert.Equal(t, 0, len(unmatched), "Expected 0 unmatched transactions")
 
@@ -91,7 +91,7 @@ func TestOneToManyReconciliation(t *testing.T) {
 	}
 	config.ConfigStore.Store(cnf)
 	mockDS := new(mocks.MockDataSource)
-	blnk := &Blnk{datasource: mockDS}
+	ledgerforge := &LedgerForge{datasource: mockDS}
 
 	ctx := context.Background()
 	externalTxns := []*model.Transaction{
@@ -124,7 +124,7 @@ func TestOneToManyReconciliation(t *testing.T) {
 		},
 	}
 
-	matches, unmatched := blnk.oneToManyReconciliation(ctx, externalTxns, "parent_transaction", matchingRules, false)
+	matches, unmatched := ledgerforge.oneToManyReconciliation(ctx, externalTxns, "parent_transaction", matchingRules, false)
 
 	assert.Equal(t, 3, len(matches), "Expected 3 matches")
 	assert.Equal(t, 0, len(unmatched), "Expected 0 unmatched transactions")
@@ -154,7 +154,7 @@ func TestOneToManyReconciliationNoMatches(t *testing.T) {
 	}
 	config.ConfigStore.Store(cnf)
 	mockDS := new(mocks.MockDataSource)
-	blnk := &Blnk{datasource: mockDS}
+	ledgerforge := &LedgerForge{datasource: mockDS}
 
 	ctx := context.Background()
 	externalTxns := []*model.Transaction{
@@ -187,7 +187,7 @@ func TestOneToManyReconciliationNoMatches(t *testing.T) {
 		},
 	}
 
-	matches, unmatched := blnk.oneToManyReconciliation(ctx, externalTxns, "parent_transaction", matchingRules, false)
+	matches, unmatched := ledgerforge.oneToManyReconciliation(ctx, externalTxns, "parent_transaction", matchingRules, false)
 
 	assert.Equal(t, 0, len(matches), "Expected 3 matches")
 	assert.Equal(t, 1, len(unmatched), "Expected 0 unmatched transactions")
@@ -203,7 +203,7 @@ func TestManyToOneReconciliationUsesUploadID(t *testing.T) {
 	}
 	config.ConfigStore.Store(cnf)
 	mockDS := new(mocks.MockDataSource)
-	blnk := &Blnk{datasource: mockDS}
+	ledgerforge := &LedgerForge{datasource: mockDS}
 
 	ctx := context.Background()
 	internalTxns := []*model.Transaction{
@@ -237,7 +237,7 @@ func TestManyToOneReconciliationUsesUploadID(t *testing.T) {
 		},
 	}
 
-	matches, unmatched := blnk.manyToOneReconciliation(ctx, internalTxns, "upload123", "reference", matchingRules, true)
+	matches, unmatched := ledgerforge.manyToOneReconciliation(ctx, internalTxns, "upload123", "reference", matchingRules, true)
 
 	assert.Equal(t, 3, len(matches), "Expected 3 matches")
 	assert.Equal(t, 0, len(unmatched), "Expected 0 unmatched transactions")
@@ -252,7 +252,7 @@ func TestManyToOneReconciliationUsesUploadID(t *testing.T) {
 
 // TestMatchingRules tests the matching rules functionality
 func TestMatchingRules(t *testing.T) {
-	blnk := &Blnk{}
+	ledgerforge := &LedgerForge{}
 
 	externalTxn := &model.Transaction{
 		TransactionID: "ext1",
@@ -379,7 +379,7 @@ func TestMatchingRules(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := blnk.matchesRules(externalTxn, internalTxn, tt.matchingRules)
+			result := ledgerforge.matchesRules(externalTxn, internalTxn, tt.matchingRules)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -406,7 +406,7 @@ func TestReconciliationEdgeCases(t *testing.T) {
 	config.ConfigStore.Store(cnf)
 	mockDS := new(mocks.MockDataSource)
 
-	blnk := &Blnk{datasource: mockDS}
+	ledgerforge := &LedgerForge{datasource: mockDS}
 
 	ctx := context.Background()
 
@@ -421,7 +421,7 @@ func TestReconciliationEdgeCases(t *testing.T) {
 			},
 		}
 
-		matches, unmatched := blnk.oneToOneReconciliation(ctx, externalTxns, matchingRules)
+		matches, unmatched := ledgerforge.oneToOneReconciliation(ctx, externalTxns, matchingRules)
 
 		assert.Equal(t, 0, len(matches), "Expected 0 matches")
 		assert.Equal(t, 0, len(unmatched), "Expected 0 unmatched transactions")
@@ -443,7 +443,7 @@ func TestReconciliationEdgeCases(t *testing.T) {
 			},
 		}
 
-		matches, unmatched := blnk.oneToOneReconciliation(ctx, externalTxns, matchingRules)
+		matches, unmatched := ledgerforge.oneToOneReconciliation(ctx, externalTxns, matchingRules)
 
 		assert.Equal(t, 0, len(matches), "Expected 0 matches")
 		assert.Equal(t, 1, len(unmatched), "Expected 1 unmatched transaction")
@@ -468,7 +468,7 @@ func TestReconciliationEdgeCases(t *testing.T) {
 			},
 		}
 
-		matches, unmatched := blnk.oneToManyReconciliation(ctx, externalTxns, "", matchingRules, false)
+		matches, unmatched := ledgerforge.oneToManyReconciliation(ctx, externalTxns, "", matchingRules, false)
 
 		assert.Equal(t, 0, len(matches), "Expected 0 matches")
 		assert.Equal(t, 0, len(unmatched), "Expected 1 unmatched transaction")

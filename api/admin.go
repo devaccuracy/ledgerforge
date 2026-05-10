@@ -18,8 +18,8 @@ package api
 import (
 	"net/http"
 
-	"github.com/blnkfinance/blnk/internal/apierror"
-	backups "github.com/blnkfinance/blnk/internal/pg-backups"
+	"github.com/devaccuracy/ledgerforge/internal/apierror"
+	backups "github.com/devaccuracy/ledgerforge/internal/pg-backups"
 	"github.com/gin-gonic/gin"
 )
 

@@ -22,12 +22,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/blnkfinance/blnk/internal/request"
+	"github.com/devaccuracy/ledgerforge/internal/request"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestStartReconciliation(t *testing.T) {
-	router, _, err := setupRouter()
+	router, _, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestStartReconciliation(t *testing.T) {
 }
 
 func TestInstantReconciliation(t *testing.T) {
-	router, _, err := setupRouter()
+	router, _, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestInstantReconciliation(t *testing.T) {
 }
 
 func TestGetReconciliation(t *testing.T) {
-	router, _, err := setupRouter()
+	router, _, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestGetReconciliation(t *testing.T) {
 }
 
 func TestCreateMatchingRule(t *testing.T) {
-	router, _, err := setupRouter()
+	router, _, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestCreateMatchingRule(t *testing.T) {
 }
 
 func TestUpdateMatchingRule(t *testing.T) {
-	router, _, err := setupRouter()
+	router, _, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestUpdateMatchingRule(t *testing.T) {
 }
 
 func TestDeleteMatchingRule(t *testing.T) {
-	router, _, err := setupRouter()
+	router, _, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}

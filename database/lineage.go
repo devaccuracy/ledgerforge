@@ -23,8 +23,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/blnkfinance/blnk/internal/apierror"
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/internal/apierror"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/lib/pq"
 )
 
@@ -32,7 +32,7 @@ import (
 // If a mapping already exists for the same balance_id and provider, it updates the existing record.
 func (d Datasource) UpsertLineageMapping(ctx context.Context, mapping model.LineageMapping) error {
 	_, err := d.Conn.ExecContext(ctx, `
-		INSERT INTO blnk.lineage_mappings (balance_id, provider, shadow_balance_id, aggregate_balance_id, identity_id, created_at)
+		INSERT INTO ledgerforge.lineage_mappings (balance_id, provider, shadow_balance_id, aggregate_balance_id, identity_id, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (balance_id, provider) DO UPDATE SET
 			shadow_balance_id = EXCLUDED.shadow_balance_id,
@@ -57,7 +57,7 @@ func (d Datasource) UpsertLineageMapping(ctx context.Context, mapping model.Line
 func (d Datasource) GetLineageMappings(ctx context.Context, balanceID string) ([]model.LineageMapping, error) {
 	rows, err := d.Conn.QueryContext(ctx, `
 		SELECT id, balance_id, provider, shadow_balance_id, aggregate_balance_id, identity_id, created_at
-		FROM blnk.lineage_mappings
+		FROM ledgerforge.lineage_mappings
 		WHERE balance_id = $1
 		ORDER BY created_at ASC
 	`, balanceID)
@@ -95,7 +95,7 @@ func (d Datasource) GetLineageMappings(ctx context.Context, balanceID string) ([
 func (d Datasource) GetLineageMappingByProvider(ctx context.Context, balanceID, provider string) (*model.LineageMapping, error) {
 	row := d.Conn.QueryRowContext(ctx, `
 		SELECT id, balance_id, provider, shadow_balance_id, aggregate_balance_id, identity_id, created_at
-		FROM blnk.lineage_mappings
+		FROM ledgerforge.lineage_mappings
 		WHERE balance_id = $1 AND provider = $2
 	`, balanceID, provider)
 
@@ -122,7 +122,7 @@ func (d Datasource) GetLineageMappingByProvider(ctx context.Context, balanceID, 
 // DeleteLineageMapping deletes a lineage mapping by its ID.
 func (d Datasource) DeleteLineageMapping(ctx context.Context, id int64) error {
 	result, err := d.Conn.ExecContext(ctx, `
-		DELETE FROM blnk.lineage_mappings WHERE id = $1
+		DELETE FROM ledgerforge.lineage_mappings WHERE id = $1
 	`, id)
 	if err != nil {
 		return apierror.NewAPIError(apierror.ErrInternalServer, "Failed to delete lineage mapping", err)
@@ -144,7 +144,7 @@ func (d Datasource) DeleteLineageMapping(ctx context.Context, id int64) error {
 // This ensures the outbox entry is committed atomically with the main transaction.
 func (d Datasource) InsertLineageOutboxInTx(ctx context.Context, tx *sql.Tx, outbox *model.LineageOutbox) error {
 	query := `
-		INSERT INTO blnk.lineage_outbox
+		INSERT INTO ledgerforge.lineage_outbox
 		(transaction_id, source_balance_id, destination_balance_id, provider, lineage_type, payload, status, max_attempts, created_at, inflight)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id
@@ -174,7 +174,7 @@ func insertLineageOutboxesInTx(ctx context.Context, tx *sql.Tx, outboxes []*mode
 
 	var query strings.Builder
 	query.WriteString(`
-		INSERT INTO blnk.lineage_outbox
+		INSERT INTO ledgerforge.lineage_outbox
 		(transaction_id, source_balance_id, destination_balance_id, provider, lineage_type, payload, status, max_attempts, created_at, inflight)
 		VALUES
 	`)
@@ -251,7 +251,7 @@ func insertLineageOutboxesInTx(ctx context.Context, tx *sql.Tx, outboxes []*mode
 // Use this for queueing work like shadow commit/void that happens after the main transaction commits.
 func (d Datasource) InsertLineageOutbox(ctx context.Context, outbox *model.LineageOutbox) error {
 	query := `
-		INSERT INTO blnk.lineage_outbox
+		INSERT INTO ledgerforge.lineage_outbox
 		(transaction_id, source_balance_id, destination_balance_id, provider, lineage_type, payload, status, max_attempts, created_at, inflight)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id
@@ -280,10 +280,10 @@ func (d Datasource) ClaimPendingOutboxEntries(ctx context.Context, batchSize int
 	lockedUntil := time.Now().Add(lockDuration)
 
 	query := `
-		UPDATE blnk.lineage_outbox
+		UPDATE ledgerforge.lineage_outbox
 		SET status = $1, locked_until = $2
 		WHERE id IN (
-			SELECT id FROM blnk.lineage_outbox
+			SELECT id FROM ledgerforge.lineage_outbox
 			WHERE status = 'pending'
 			  AND (locked_until IS NULL OR locked_until < NOW())
 			  AND attempts < max_attempts
@@ -351,7 +351,7 @@ func (d Datasource) ClaimPendingOutboxEntries(ctx context.Context, batchSize int
 // MarkOutboxCompleted marks an outbox entry as completed.
 func (d Datasource) MarkOutboxCompleted(ctx context.Context, id int64) error {
 	_, err := d.Conn.ExecContext(ctx, `
-		UPDATE blnk.lineage_outbox
+		UPDATE ledgerforge.lineage_outbox
 		SET status = $1, processed_at = NOW(), locked_until = NULL
 		WHERE id = $2
 	`, model.OutboxStatusCompleted, id)
@@ -365,7 +365,7 @@ func (d Datasource) MarkOutboxCompleted(ctx context.Context, id int64) error {
 // If attempts exceed max_attempts, the status becomes 'failed', otherwise it returns to 'pending' for retry.
 func (d Datasource) MarkOutboxFailed(ctx context.Context, id int64, errMsg string) error {
 	_, err := d.Conn.ExecContext(ctx, `
-		UPDATE blnk.lineage_outbox
+		UPDATE ledgerforge.lineage_outbox
 		SET status = CASE WHEN attempts + 1 >= max_attempts THEN $1 ELSE $2 END,
 			attempts = attempts + 1,
 			last_error = $3,
@@ -382,7 +382,7 @@ func (d Datasource) MarkOutboxFailed(ctx context.Context, id int64, errMsg strin
 func (d Datasource) GetOutboxByTransactionID(ctx context.Context, transactionID string) (*model.LineageOutbox, error) {
 	row := d.Conn.QueryRowContext(ctx, `
 		SELECT id, transaction_id, source_balance_id, destination_balance_id, provider, lineage_type, payload, status, attempts, max_attempts, last_error, created_at, processed_at, locked_until, inflight
-		FROM blnk.lineage_outbox
+		FROM ledgerforge.lineage_outbox
 		WHERE transaction_id = $1
 	`, transactionID)
 
@@ -433,7 +433,7 @@ func (d Datasource) GetOutboxByTransactionID(ctx context.Context, transactionID 
 func (d Datasource) HasPendingCreditOutbox(ctx context.Context, balanceID string) (bool, error) {
 	var count int
 	err := d.Conn.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM blnk.lineage_outbox
+		SELECT COUNT(*) FROM ledgerforge.lineage_outbox
 		WHERE destination_balance_id = $1
 		  AND lineage_type IN ('credit', 'both')
 		  AND status IN ('pending', 'processing')

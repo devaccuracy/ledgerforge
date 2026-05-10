@@ -42,7 +42,7 @@ type TokenizationService struct {
 }
 
 var ErrTokenizationDisabled = errors.New(
-	"tokenization is disabled: BLNK_TOKENIZATION_SECRET or tokenization_secret in your blnk.json file must be set to a 32-byte value",
+	"tokenization is disabled: LEDGERFORGE_TOKENIZATION_SECRET or tokenization_secret in your ledgerforge.json file must be set to a 32-byte value",
 )
 
 func (s *TokenizationService) ensureEnabled() error {

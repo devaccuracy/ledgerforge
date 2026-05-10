@@ -20,29 +20,33 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blnkfinance/blnk/config"
+	"github.com/alicebob/miniredis/v2"
+	"github.com/devaccuracy/ledgerforge/config"
 
 	"github.com/stretchr/testify/assert"
 )
 
-func TestSet(t *testing.T) {
-	cnf := &config.Configuration{
+func newTestRedisConfig(t *testing.T) *config.Configuration {
+	t.Helper()
+
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("failed to start miniredis: %v", err)
+	}
+	t.Cleanup(mr.Close)
+
+	return &config.Configuration{
 		Redis: config.RedisConfig{
-			Dns: "localhost:6379",
+			Dns: mr.Addr(),
 		},
-		Queue: config.QueueConfig{
-			WebhookQueue:   "webhook_queue",
-			NumberOfQueues: 1,
-		},
-		Server: config.ServerConfig{SecretKey: "some-secret"},
-		AccountNumberGeneration: config.AccountNumberGenerationConfig{
-			HttpService: config.AccountGenerationHttpService{
-				Url: "http://example.com/generateAccount",
-			},
+		DataSource: config.DataSourceConfig{
+			Dns: "postgres://test:test@localhost/test?sslmode=disable",
 		},
 	}
+}
 
-	config.ConfigStore.Store(cnf)
+func TestSet(t *testing.T) {
+	config.ConfigStore.Store(newTestRedisConfig(t))
 	ctx := context.Background()
 	mockCache, err := NewCache()
 	assert.NoError(t, err)
@@ -60,7 +64,7 @@ func TestSet(t *testing.T) {
 }
 
 func TestGet(t *testing.T) {
-	config.MockConfig(&config.Configuration{})
+	config.ConfigStore.Store(newTestRedisConfig(t))
 	ctx := context.Background()
 	mockCache, err := NewCache()
 	assert.NoError(t, err)
@@ -84,7 +88,7 @@ func TestGet(t *testing.T) {
 }
 
 func TestGetNonExistentKey(t *testing.T) {
-	config.MockConfig(&config.Configuration{})
+	config.ConfigStore.Store(newTestRedisConfig(t))
 	ctx := context.Background()
 	mockCache, err := NewCache()
 	assert.NoError(t, err)
@@ -96,7 +100,7 @@ func TestGetNonExistentKey(t *testing.T) {
 }
 
 func TestDelete(t *testing.T) {
-	config.MockConfig(&config.Configuration{})
+	config.ConfigStore.Store(newTestRedisConfig(t))
 	ctx := context.Background()
 	mockCache, err := NewCache()
 	assert.NoError(t, err)

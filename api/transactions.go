@@ -24,10 +24,10 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	model2 "github.com/blnkfinance/blnk/api/model"
-	"github.com/blnkfinance/blnk/config"
-	"github.com/blnkfinance/blnk/database"
-	"github.com/blnkfinance/blnk/model"
+	model2 "github.com/devaccuracy/ledgerforge/api/model"
+	"github.com/devaccuracy/ledgerforge/config"
+	"github.com/devaccuracy/ledgerforge/database"
+	"github.com/devaccuracy/ledgerforge/model"
 
 	"github.com/gin-gonic/gin"
 	validation "github.com/go-ozzo/ozzo-validation/v4"
@@ -125,8 +125,8 @@ func (a Api) RecordTransaction(c *gin.Context) {
 		return
 	}
 
-	// Record the transaction using the Blnk service
-	resp, err := a.blnk.RecordTransaction(c.Request.Context(), newTransaction.ToTransaction())
+	// Record the transaction using the LedgerForge service
+	resp, err := a.ledgerforge.RecordTransaction(c.Request.Context(), newTransaction.ToTransaction())
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -163,8 +163,8 @@ func (a Api) QueueTransaction(c *gin.Context) {
 		return
 	}
 
-	// Queue the transaction using the Blnk service
-	resp, err := a.blnk.QueueTransaction(c.Request.Context(), newTransaction.ToTransaction())
+	// Queue the transaction using the LedgerForge service
+	resp, err := a.ledgerforge.QueueTransaction(c.Request.Context(), newTransaction.ToTransaction())
 	if err != nil {
 		logrus.WithError(err).Error("failed to queue transaction")
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -191,7 +191,7 @@ func (a Api) RefundTransaction(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "id is required. pass id in the route /:id"})
 		return
 	}
-	transaction, err := a.blnk.ProcessTransactionInBatches(c.Request.Context(), id, big.NewInt(0), 1, false, a.blnk.GetRefundableTransactionsByParentID, a.blnk.RefundWorker)
+	transaction, err := a.ledgerforge.ProcessTransactionInBatches(c.Request.Context(), id, big.NewInt(0), 1, false, a.ledgerforge.GetRefundableTransactionsByParentID, a.ledgerforge.RefundWorker)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -222,7 +222,7 @@ func (a Api) GetTransaction(c *gin.Context) {
 		return
 	}
 
-	resp, err := a.blnk.GetTransaction(c.Request.Context(), id)
+	resp, err := a.ledgerforge.GetTransaction(c.Request.Context(), id)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -249,7 +249,7 @@ func (a Api) GetTransactionByRef(c *gin.Context) {
 		return
 	}
 
-	resp, err := a.blnk.GetTransactionByRef(c.Request.Context(), reference)
+	resp, err := a.ledgerforge.GetTransactionByRef(c.Request.Context(), reference)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -298,7 +298,7 @@ func (a Api) GetAllTransactions(c *gin.Context) {
 		}
 
 		// Use the new filter method
-		transactions, err := a.blnk.GetAllTransactionsWithFilter(c.Request.Context(), filters, limitInt, offsetInt)
+		transactions, err := a.ledgerforge.GetAllTransactionsWithFilter(c.Request.Context(), filters, limitInt, offsetInt)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -315,7 +315,7 @@ func (a Api) GetAllTransactions(c *gin.Context) {
 	}
 
 	// Fall back to legacy method when no filters are present
-	transactions, err := a.blnk.GetAllTransactions(limitInt, offsetInt)
+	transactions, err := a.ledgerforge.GetAllTransactions(limitInt, offsetInt)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -359,7 +359,7 @@ func (a Api) FilterTransactions(c *gin.Context) {
 		return
 	}
 
-	transactions, count, err := a.blnk.GetAllTransactionsWithFilterAndOptions(c.Request.Context(), filters, opts, limit, offset)
+	transactions, count, err := a.ledgerforge.GetAllTransactionsWithFilterAndOptions(c.Request.Context(), filters, opts, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -421,7 +421,7 @@ func (a Api) UpdateInflightStatus(c *gin.Context) {
 
 	status := req.Status
 	if status == "commit" {
-		transaction, err := a.blnk.ProcessTransactionInBatches(c.Request.Context(), id, amount, 1, false, a.blnk.GetInflightTransactionsByParentID, a.blnk.CommitWorker)
+		transaction, err := a.ledgerforge.ProcessTransactionInBatches(c.Request.Context(), id, amount, 1, false, a.ledgerforge.GetInflightTransactionsByParentID, a.ledgerforge.CommitWorker)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -432,7 +432,7 @@ func (a Api) UpdateInflightStatus(c *gin.Context) {
 		}
 		resp = transformTransaction(transaction[0])
 	} else if status == "void" {
-		transaction, err := a.blnk.ProcessTransactionInBatches(c.Request.Context(), id, amount, 1, false, a.blnk.GetInflightTransactionsByParentID, a.blnk.VoidWorker)
+		transaction, err := a.ledgerforge.ProcessTransactionInBatches(c.Request.Context(), id, amount, 1, false, a.ledgerforge.GetInflightTransactionsByParentID, a.ledgerforge.VoidWorker)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -451,7 +451,7 @@ func (a Api) UpdateInflightStatus(c *gin.Context) {
 }
 
 // CreateBulkTransactions handles the creation of multiple transactions in a batch.
-// It parses the request, calls the Blnk service to handle the core logic,
+// It parses the request, calls the LedgerForge service to handle the core logic,
 // and returns the appropriate HTTP response based on the result.
 func (a Api) CreateBulkTransactions(c *gin.Context) {
 	// Parse the request into the model struct
@@ -462,7 +462,7 @@ func (a Api) CreateBulkTransactions(c *gin.Context) {
 	}
 
 	// Call the service layer method to handle bulk transaction creation
-	result, err := a.blnk.CreateBulkTransactions(c.Request.Context(), &req)
+	result, err := a.ledgerforge.CreateBulkTransactions(c.Request.Context(), &req)
 	// Handle the response based on the result and error from the service layer
 	if err != nil {
 		// If there was an error during synchronous processing
@@ -499,7 +499,7 @@ func (a Api) GetTransactionLineage(c *gin.Context) {
 		return
 	}
 
-	lineage, err := a.blnk.GetTransactionLineage(c.Request.Context(), id)
+	lineage, err := a.ledgerforge.GetTransactionLineage(c.Request.Context(), id)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -523,7 +523,7 @@ func (a Api) RecoverQueuedTransactions(c *gin.Context) {
 		threshold = parsed
 	}
 
-	recovered, err := a.blnk.RecoverQueuedTransactions(c.Request.Context(), threshold)
+	recovered, err := a.ledgerforge.RecoverQueuedTransactions(c.Request.Context(), threshold)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

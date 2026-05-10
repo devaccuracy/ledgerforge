@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blnkfinance/blnk/config"
+	"github.com/devaccuracy/ledgerforge/config"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -50,4 +50,3 @@ func TestConnectDB_UnreachableHost(t *testing.T) {
 	assert.Error(t, err)
 	assert.Nil(t, db)
 }
-

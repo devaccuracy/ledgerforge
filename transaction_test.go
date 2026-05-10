@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package blnk
+package ledgerforge
 
 import (
 	"context"
@@ -28,12 +28,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blnkfinance/blnk/config"
-	"github.com/blnkfinance/blnk/database"
-	"github.com/blnkfinance/blnk/database/mocks"
-	redlock "github.com/blnkfinance/blnk/internal/lock"
-	redis_db "github.com/blnkfinance/blnk/internal/redis-db"
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/config"
+	"github.com/devaccuracy/ledgerforge/database"
+	"github.com/devaccuracy/ledgerforge/database/mocks"
+	redlock "github.com/devaccuracy/ledgerforge/internal/lock"
+	redis_db "github.com/devaccuracy/ledgerforge/internal/redis-db"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/go-redis/redismock/v9"
 	"github.com/hibiken/asynq"
 
@@ -49,7 +49,7 @@ import (
 func TestAcquireTransactionLocker(t *testing.T) {
 	t.Run("fail fast when wait timeout disabled", func(t *testing.T) {
 		db, mock := redismock.NewClientMock()
-		blnk := &Blnk{
+		ledgerforge := &LedgerForge{
 			redis: db,
 			config: &config.Configuration{
 				Transaction: config.TransactionConfig{
@@ -62,14 +62,14 @@ func TestAcquireTransactionLocker(t *testing.T) {
 		mock.ExpectSetNX("key-a", "test-value", 5*time.Second).SetVal(true)
 		mock.ExpectSetNX("key-b", "test-value", 5*time.Second).SetVal(true)
 
-		err := blnk.acquireTransactionLocker(context.Background(), locker)
+		err := ledgerforge.acquireTransactionLocker(context.Background(), locker)
 		require.NoError(t, err)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 
 	t.Run("waits when configured", func(t *testing.T) {
 		db, mock := redismock.NewClientMock()
-		blnk := &Blnk{
+		ledgerforge := &LedgerForge{
 			redis: db,
 			config: &config.Configuration{
 				Transaction: config.TransactionConfig{
@@ -84,7 +84,7 @@ func TestAcquireTransactionLocker(t *testing.T) {
 		mock.ExpectSetNX("key-a", "test-value", 5*time.Second).SetVal(true)
 		mock.ExpectSetNX("key-b", "test-value", 5*time.Second).SetVal(true)
 
-		err := blnk.acquireTransactionLocker(context.Background(), locker)
+		err := ledgerforge.acquireTransactionLocker(context.Background(), locker)
 		require.NoError(t, err)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
@@ -143,7 +143,7 @@ func TestRecordTransaction(t *testing.T) {
 	// Important: Set ExpectationsWereMet to ensure execution occurs in order of appearance
 	mock.MatchExpectationsInOrder(false)
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	assert.NoError(t, err)
 
 	// Use fixed UUIDs for better predictability
@@ -164,7 +164,7 @@ func TestRecordTransaction(t *testing.T) {
 
 	// First, check if transaction exists
 	mock.ExpectQuery(regexp.QuoteMeta(`
-        SELECT EXISTS(SELECT 1 FROM blnk.transactions WHERE reference = $1)
+        SELECT EXISTS(SELECT 1 FROM ledgerforge.transactions WHERE reference = $1)
     `)).WithArgs(txn.Reference).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 
 	// Set up source balance response
@@ -175,7 +175,7 @@ func TestRecordTransaction(t *testing.T) {
 	destinationBalanceRows := sqlmock.NewRows([]string{"balance_id", "indicator", "currency", "currency_multiplier", "ledger_id", "balance", "credit_balance", "debit_balance", "inflight_balance", "inflight_credit_balance", "inflight_debit_balance", "created_at", "version", "track_fund_lineage", "allocation_strategy", "identity_id"}).
 		AddRow(destination, "", "NGN", 1, "ledger-id-destination", 0, 0, 0, 0, 0, 0, time.Now(), 0, false, "FIFO", "")
 
-	balanceQuery := `SELECT balance_id, indicator, currency, currency_multiplier, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE\(allocation_strategy, 'FIFO'\) as allocation_strategy, COALESCE\(identity_id, ''\) as identity_id FROM blnk.balances WHERE balance_id = \$1`
+	balanceQuery := `SELECT balance_id, indicator, currency, currency_multiplier, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE\(allocation_strategy, 'FIFO'\) as allocation_strategy, COALESCE\(identity_id, ''\) as identity_id FROM ledgerforge.balances WHERE balance_id = \$1`
 	balanceQueryPattern := regexp.MustCompile(`\s+`).ReplaceAllString(balanceQuery, `\s*`)
 
 	// Expect balance queries with the source/destination IDs (order can vary)
@@ -187,7 +187,7 @@ func TestRecordTransaction(t *testing.T) {
 
 	// Update source and destination balances (order doesn't matter since MatchExpectationsInOrder is false)
 	mock.ExpectExec(regexp.QuoteMeta(`
-	  UPDATE blnk.balances
+	  UPDATE ledgerforge.balances
 	  SET balance = $2, credit_balance = $3, debit_balance = $4, inflight_balance = $5, inflight_credit_balance = $6, inflight_debit_balance = $7, currency = $8, currency_multiplier = $9, ledger_id = $10, created_at = $11, version = version + 1
 	  WHERE balance_id = $1 AND version = $12
 	`)).WithArgs(
@@ -206,7 +206,7 @@ func TestRecordTransaction(t *testing.T) {
 	).WillReturnResult(sqlmock.NewResult(1, 1))
 
 	mock.ExpectExec(regexp.QuoteMeta(`
-	  UPDATE blnk.balances
+	  UPDATE ledgerforge.balances
 	  SET balance = $2, credit_balance = $3, debit_balance = $4, inflight_balance = $5, inflight_credit_balance = $6, inflight_debit_balance = $7, currency = $8, currency_multiplier = $9, ledger_id = $10, created_at = $11, version = version + 1
 	  WHERE balance_id = $1 AND version = $12
 	`)).WithArgs(
@@ -225,7 +225,7 @@ func TestRecordTransaction(t *testing.T) {
 	).WillReturnResult(sqlmock.NewResult(1, 1))
 
 	// Expect transaction insertion within the same atomic transaction
-	expectedSQL := `INSERT INTO blnk.transactions(transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, rate, currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`
+	expectedSQL := `INSERT INTO ledgerforge.transactions(transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, rate, currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`
 	mock.ExpectExec(regexp.QuoteMeta(expectedSQL)).WithArgs(
 		sqlmock.AnyArg(), // transaction_id
 		sqlmock.AnyArg(), // parent_transaction
@@ -289,7 +289,7 @@ func TestRecordTransactionWithRate(t *testing.T) {
 	// Important: Set ExpectationsWereMet to ensure execution occurs in order of appearance
 	mock.MatchExpectationsInOrder(false)
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	assert.NoError(t, err)
 
 	// Use fixed UUIDs for better predictability
@@ -310,7 +310,7 @@ func TestRecordTransactionWithRate(t *testing.T) {
 
 	// First, check if transaction exists
 	mock.ExpectQuery(regexp.QuoteMeta(`
-        SELECT EXISTS(SELECT 1 FROM blnk.transactions WHERE reference = $1)
+        SELECT EXISTS(SELECT 1 FROM ledgerforge.transactions WHERE reference = $1)
     `)).WithArgs(txn.Reference).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 
 	// Set up source balance response - Note this is USD
@@ -321,7 +321,7 @@ func TestRecordTransactionWithRate(t *testing.T) {
 	destinationBalanceRows := sqlmock.NewRows([]string{"balance_id", "indicator", "currency", "currency_multiplier", "ledger_id", "balance", "credit_balance", "debit_balance", "inflight_balance", "inflight_credit_balance", "inflight_debit_balance", "created_at", "version", "track_fund_lineage", "allocation_strategy", "identity_id"}).
 		AddRow(destination, "", "NGN", 1, "ledger-id-destination", 0, 0, 0, 0, 0, 0, time.Now(), 0, false, "FIFO", "")
 
-	balanceQuery := `SELECT balance_id, indicator, currency, currency_multiplier, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE\(allocation_strategy, 'FIFO'\) as allocation_strategy, COALESCE\(identity_id, ''\) as identity_id FROM blnk.balances WHERE balance_id = \$1`
+	balanceQuery := `SELECT balance_id, indicator, currency, currency_multiplier, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE\(allocation_strategy, 'FIFO'\) as allocation_strategy, COALESCE\(identity_id, ''\) as identity_id FROM ledgerforge.balances WHERE balance_id = \$1`
 	balanceQueryPattern := regexp.MustCompile(`\s+`).ReplaceAllString(balanceQuery, `\s*`)
 
 	// Expect balance queries with the source/destination IDs (order can vary)
@@ -333,7 +333,7 @@ func TestRecordTransactionWithRate(t *testing.T) {
 
 	// Update source balance
 	mock.ExpectExec(regexp.QuoteMeta(`
-        UPDATE blnk.balances
+        UPDATE ledgerforge.balances
         SET balance = $2, credit_balance = $3, debit_balance = $4, inflight_balance = $5, inflight_credit_balance = $6, inflight_debit_balance = $7, currency = $8, currency_multiplier = $9, ledger_id = $10, created_at = $11, version = version + 1
         WHERE balance_id = $1 AND version = $12
     `)).WithArgs(
@@ -353,7 +353,7 @@ func TestRecordTransactionWithRate(t *testing.T) {
 
 	// Update destination balance
 	mock.ExpectExec(regexp.QuoteMeta(`
-        UPDATE blnk.balances
+        UPDATE ledgerforge.balances
         SET balance = $2, credit_balance = $3, debit_balance = $4, inflight_balance = $5, inflight_credit_balance = $6, inflight_debit_balance = $7, currency = $8, currency_multiplier = $9, ledger_id = $10, created_at = $11, version = version + 1
         WHERE balance_id = $1 AND version = $12
     `)).WithArgs(
@@ -372,7 +372,7 @@ func TestRecordTransactionWithRate(t *testing.T) {
 	).WillReturnResult(sqlmock.NewResult(1, 1))
 
 	// Expect transaction insertion within the same atomic transaction
-	expectedSQL := `INSERT INTO blnk.transactions(transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, rate, currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`
+	expectedSQL := `INSERT INTO ledgerforge.transactions(transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, rate, currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`
 	mock.ExpectExec(regexp.QuoteMeta(expectedSQL)).WithArgs(
 		sqlmock.AnyArg(), // transaction_id
 		sqlmock.AnyArg(), // parent_transaction
@@ -433,7 +433,7 @@ func TestRecordTransaction_AtomicRollback_InsertFails(t *testing.T) {
 
 	mock.MatchExpectationsInOrder(false)
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	assert.NoError(t, err)
 
 	source := "source-balance-id-atomicity-test"
@@ -452,7 +452,7 @@ func TestRecordTransaction_AtomicRollback_InsertFails(t *testing.T) {
 	}
 
 	mock.ExpectQuery(regexp.QuoteMeta(`
-        SELECT EXISTS(SELECT 1 FROM blnk.transactions WHERE reference = $1)
+        SELECT EXISTS(SELECT 1 FROM ledgerforge.transactions WHERE reference = $1)
     `)).WithArgs(txn.Reference).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 
 	sourceBalanceRows := sqlmock.NewRows([]string{"balance_id", "indicator", "currency", "currency_multiplier", "ledger_id", "balance", "credit_balance", "debit_balance", "inflight_balance", "inflight_credit_balance", "inflight_debit_balance", "created_at", "version", "track_fund_lineage", "allocation_strategy", "identity_id"}).
@@ -461,7 +461,7 @@ func TestRecordTransaction_AtomicRollback_InsertFails(t *testing.T) {
 	destinationBalanceRows := sqlmock.NewRows([]string{"balance_id", "indicator", "currency", "currency_multiplier", "ledger_id", "balance", "credit_balance", "debit_balance", "inflight_balance", "inflight_credit_balance", "inflight_debit_balance", "created_at", "version", "track_fund_lineage", "allocation_strategy", "identity_id"}).
 		AddRow(destination, "", "NGN", 1, "ledger-id-destination", 0, 0, 0, 0, 0, 0, time.Now(), 0, false, "FIFO", "")
 
-	balanceQuery := `SELECT balance_id, indicator, currency, currency_multiplier, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE\(allocation_strategy, 'FIFO'\) as allocation_strategy, COALESCE\(identity_id, ''\) as identity_id FROM blnk.balances WHERE balance_id = \$1`
+	balanceQuery := `SELECT balance_id, indicator, currency, currency_multiplier, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE\(allocation_strategy, 'FIFO'\) as allocation_strategy, COALESCE\(identity_id, ''\) as identity_id FROM ledgerforge.balances WHERE balance_id = \$1`
 	balanceQueryPattern := regexp.MustCompile(`\s+`).ReplaceAllString(balanceQuery, `\s*`)
 
 	mock.ExpectQuery(balanceQueryPattern).WithArgs(source).WillReturnRows(sourceBalanceRows)
@@ -470,7 +470,7 @@ func TestRecordTransaction_AtomicRollback_InsertFails(t *testing.T) {
 	mock.ExpectBegin()
 
 	mock.ExpectExec(regexp.QuoteMeta(`
-	  UPDATE blnk.balances
+	  UPDATE ledgerforge.balances
 	  SET balance = $2, credit_balance = $3, debit_balance = $4, inflight_balance = $5, inflight_credit_balance = $6, inflight_debit_balance = $7, currency = $8, currency_multiplier = $9, ledger_id = $10, created_at = $11, version = version + 1
 	  WHERE balance_id = $1 AND version = $12
 	`)).WithArgs(
@@ -481,7 +481,7 @@ func TestRecordTransaction_AtomicRollback_InsertFails(t *testing.T) {
 	).WillReturnResult(sqlmock.NewResult(1, 1))
 
 	mock.ExpectExec(regexp.QuoteMeta(`
-	  UPDATE blnk.balances
+	  UPDATE ledgerforge.balances
 	  SET balance = $2, credit_balance = $3, debit_balance = $4, inflight_balance = $5, inflight_credit_balance = $6, inflight_debit_balance = $7, currency = $8, currency_multiplier = $9, ledger_id = $10, created_at = $11, version = version + 1
 	  WHERE balance_id = $1 AND version = $12
 	`)).WithArgs(
@@ -491,7 +491,7 @@ func TestRecordTransaction_AtomicRollback_InsertFails(t *testing.T) {
 		sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
 	).WillReturnResult(sqlmock.NewResult(1, 1))
 
-	expectedSQL := `INSERT INTO blnk.transactions(transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, rate, currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`
+	expectedSQL := `INSERT INTO ledgerforge.transactions(transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, rate, currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`
 	mock.ExpectExec(regexp.QuoteMeta(expectedSQL)).WithArgs(
 		sqlmock.AnyArg(), sqlmock.AnyArg(), source, reference,
 		sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
@@ -536,7 +536,7 @@ func TestRecordTransaction_AtomicRollback_SecondBalanceUpdateFails(t *testing.T)
 
 	mock.MatchExpectationsInOrder(true)
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	assert.NoError(t, err)
 
 	source := "source-balance-id-atomicity-test-2"
@@ -555,7 +555,7 @@ func TestRecordTransaction_AtomicRollback_SecondBalanceUpdateFails(t *testing.T)
 	}
 
 	mock.ExpectQuery(regexp.QuoteMeta(`
-        SELECT EXISTS(SELECT 1 FROM blnk.transactions WHERE reference = $1)
+        SELECT EXISTS(SELECT 1 FROM ledgerforge.transactions WHERE reference = $1)
     `)).WithArgs(txn.Reference).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 
 	sourceBalanceRows := sqlmock.NewRows([]string{"balance_id", "indicator", "currency", "currency_multiplier", "ledger_id", "balance", "credit_balance", "debit_balance", "inflight_balance", "inflight_credit_balance", "inflight_debit_balance", "created_at", "version", "track_fund_lineage", "allocation_strategy", "identity_id"}).
@@ -564,7 +564,7 @@ func TestRecordTransaction_AtomicRollback_SecondBalanceUpdateFails(t *testing.T)
 	destinationBalanceRows := sqlmock.NewRows([]string{"balance_id", "indicator", "currency", "currency_multiplier", "ledger_id", "balance", "credit_balance", "debit_balance", "inflight_balance", "inflight_credit_balance", "inflight_debit_balance", "created_at", "version", "track_fund_lineage", "allocation_strategy", "identity_id"}).
 		AddRow(destination, "", "NGN", 1, "ledger-id-destination", 0, 0, 0, 0, 0, 0, time.Now(), 0, false, "FIFO", "")
 
-	balanceQuery := `SELECT balance_id, indicator, currency, currency_multiplier, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE\(allocation_strategy, 'FIFO'\) as allocation_strategy, COALESCE\(identity_id, ''\) as identity_id FROM blnk.balances WHERE balance_id = \$1`
+	balanceQuery := `SELECT balance_id, indicator, currency, currency_multiplier, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE\(allocation_strategy, 'FIFO'\) as allocation_strategy, COALESCE\(identity_id, ''\) as identity_id FROM ledgerforge.balances WHERE balance_id = \$1`
 	balanceQueryPattern := regexp.MustCompile(`\s+`).ReplaceAllString(balanceQuery, `\s*`)
 
 	mock.ExpectQuery(balanceQueryPattern).WithArgs(source).WillReturnRows(sourceBalanceRows)
@@ -573,7 +573,7 @@ func TestRecordTransaction_AtomicRollback_SecondBalanceUpdateFails(t *testing.T)
 	mock.ExpectBegin()
 
 	mock.ExpectExec(regexp.QuoteMeta(`
-        UPDATE blnk.balances
+        UPDATE ledgerforge.balances
         SET balance = $2, credit_balance = $3, debit_balance = $4, inflight_balance = $5, inflight_credit_balance = $6, inflight_debit_balance = $7, currency = $8, currency_multiplier = $9, ledger_id = $10, created_at = $11, version = version + 1
         WHERE balance_id = $1 AND version = $12
     `)).WithArgs(
@@ -584,7 +584,7 @@ func TestRecordTransaction_AtomicRollback_SecondBalanceUpdateFails(t *testing.T)
 	).WillReturnResult(sqlmock.NewResult(1, 1))
 
 	mock.ExpectExec(regexp.QuoteMeta(`
-        UPDATE blnk.balances
+        UPDATE ledgerforge.balances
         SET balance = $2, credit_balance = $3, debit_balance = $4, inflight_balance = $5, inflight_credit_balance = $6, inflight_debit_balance = $7, currency = $8, currency_multiplier = $9, ledger_id = $10, created_at = $11, version = version + 1
         WHERE balance_id = $1 AND version = $12
     `)).WithArgs(
@@ -631,7 +631,7 @@ func TestRecordTransaction_AtomicRollback_FirstBalanceUpdateFails(t *testing.T) 
 
 	mock.MatchExpectationsInOrder(true)
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	assert.NoError(t, err)
 
 	source := "source-balance-id-atomicity-test-3"
@@ -650,7 +650,7 @@ func TestRecordTransaction_AtomicRollback_FirstBalanceUpdateFails(t *testing.T) 
 	}
 
 	mock.ExpectQuery(regexp.QuoteMeta(`
-        SELECT EXISTS(SELECT 1 FROM blnk.transactions WHERE reference = $1)
+        SELECT EXISTS(SELECT 1 FROM ledgerforge.transactions WHERE reference = $1)
     `)).WithArgs(txn.Reference).WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 
 	sourceBalanceRows := sqlmock.NewRows([]string{"balance_id", "indicator", "currency", "currency_multiplier", "ledger_id", "balance", "credit_balance", "debit_balance", "inflight_balance", "inflight_credit_balance", "inflight_debit_balance", "created_at", "version", "track_fund_lineage", "allocation_strategy", "identity_id"}).
@@ -659,7 +659,7 @@ func TestRecordTransaction_AtomicRollback_FirstBalanceUpdateFails(t *testing.T) 
 	destinationBalanceRows := sqlmock.NewRows([]string{"balance_id", "indicator", "currency", "currency_multiplier", "ledger_id", "balance", "credit_balance", "debit_balance", "inflight_balance", "inflight_credit_balance", "inflight_debit_balance", "created_at", "version", "track_fund_lineage", "allocation_strategy", "identity_id"}).
 		AddRow(destination, "", "NGN", 1, "ledger-id-destination", 0, 0, 0, 0, 0, 0, time.Now(), 0, false, "FIFO", "")
 
-	balanceQuery := `SELECT balance_id, indicator, currency, currency_multiplier, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE\(allocation_strategy, 'FIFO'\) as allocation_strategy, COALESCE\(identity_id, ''\) as identity_id FROM blnk.balances WHERE balance_id = \$1`
+	balanceQuery := `SELECT balance_id, indicator, currency, currency_multiplier, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE\(allocation_strategy, 'FIFO'\) as allocation_strategy, COALESCE\(identity_id, ''\) as identity_id FROM ledgerforge.balances WHERE balance_id = \$1`
 	balanceQueryPattern := regexp.MustCompile(`\s+`).ReplaceAllString(balanceQuery, `\s*`)
 
 	mock.ExpectQuery(balanceQueryPattern).WithArgs(source).WillReturnRows(sourceBalanceRows)
@@ -668,7 +668,7 @@ func TestRecordTransaction_AtomicRollback_FirstBalanceUpdateFails(t *testing.T) 
 	mock.ExpectBegin()
 
 	mock.ExpectExec(regexp.QuoteMeta(`
-        UPDATE blnk.balances
+        UPDATE ledgerforge.balances
         SET balance = $2, credit_balance = $3, debit_balance = $4, inflight_balance = $5, inflight_credit_balance = $6, inflight_debit_balance = $7, currency = $8, currency_multiplier = $9, ledger_id = $10, created_at = $11, version = version + 1
         WHERE balance_id = $1 AND version = $12
     `)).WithArgs(
@@ -694,7 +694,7 @@ func TestVoidInflightTransaction_Negative(t *testing.T) {
 	datasource, mock, err := newTestDataSource()
 	assert.NoError(t, err)
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	assert.NoError(t, err)
 
 	source := gofakeit.UUID()
@@ -703,7 +703,7 @@ func TestVoidInflightTransaction_Negative(t *testing.T) {
 	t.Run("Transaction not in INFLIGHT status", func(t *testing.T) {
 		transactionID := gofakeit.UUID()
 
-		mock.ExpectQuery(regexp.QuoteMeta(`SELECT transaction_id, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, parent_transaction, hash FROM blnk.transactions WHERE transaction_id = $1`)).
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT transaction_id, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, parent_transaction, hash FROM ledgerforge.transactions WHERE transaction_id = $1`)).
 			WithArgs(transactionID).
 			WillReturnRows(sqlmock.NewRows([]string{"transaction_id", "source", "reference", "amount", "precise_amount", "precision", "currency", "destination", "description", "status", "created_at", "meta_data", "parent_transaction", "hash"}).
 				AddRow(transactionID, source, gofakeit.UUID(), 100.0, 10000, 100, "USD", destination, gofakeit.UUID(), "APPLIED", time.Now(), metaDataJSON, "", ""))
@@ -716,13 +716,13 @@ func TestVoidInflightTransaction_Negative(t *testing.T) {
 	t.Run("Transaction already voided", func(t *testing.T) {
 		transactionID := gofakeit.UUID()
 
-		mock.ExpectQuery(regexp.QuoteMeta(`SELECT transaction_id, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, parent_transaction, hash FROM blnk.transactions WHERE transaction_id = $1`)).
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT transaction_id, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, parent_transaction, hash FROM ledgerforge.transactions WHERE transaction_id = $1`)).
 			WithArgs(transactionID).
 			WillReturnRows(sqlmock.NewRows([]string{"transaction_id", "source", "reference", "amount", "precise_amount", "precision", "currency", "destination", "description", "status", "created_at", "meta_data", "parent_transaction", "hash"}).
 				AddRow(transactionID, source, gofakeit.UUID(), 100.0, 10000, 100, "USD", destination, gofakeit.UUID(), "INFLIGHT", time.Now(), metaDataJSON, "", ""))
 
 		// Mock IsParentTransactionVoid
-		mock.ExpectQuery(regexp.QuoteMeta(`SELECT EXISTS ( SELECT 1 FROM blnk.transactions WHERE parent_transaction = $1 AND status = 'VOID' )`)).
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT EXISTS ( SELECT 1 FROM ledgerforge.transactions WHERE parent_transaction = $1 AND status = 'VOID' )`)).
 			WithArgs(transactionID).
 			WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 
@@ -752,7 +752,7 @@ func TestQueueTransactionFlow(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -776,9 +776,9 @@ func TestQueueTransactionFlow(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	// Create real Blnk instance
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	// Create real LedgerForge instance
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	txnRef := "txn_" + model.GenerateUUIDWithSuffix("test")
 
@@ -817,7 +817,7 @@ func TestQueueTransactionFlow(t *testing.T) {
 	}
 
 	// Queue the transaction
-	queuedTxn, err := blnk.QueueTransaction(ctx, txn)
+	queuedTxn, err := ledgerforge.QueueTransaction(ctx, txn)
 	require.NoError(t, err, "Failed to queue transaction")
 
 	// Verify initial transaction state
@@ -827,7 +827,7 @@ func TestQueueTransactionFlow(t *testing.T) {
 	originalTxnID := queuedTxn.TransactionID
 
 	queueCopy := createQueueCopy(queuedTxn, queuedTxn.Reference)
-	_, err = blnk.RecordTransaction(ctx, queueCopy)
+	_, err = ledgerforge.RecordTransaction(ctx, queueCopy)
 	assert.NoError(t, err)
 
 	ref := fmt.Sprintf("%s_%s", txnRef, "q")
@@ -869,7 +869,7 @@ func TestQueueTransactionFlowWithSkipQueue(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -892,8 +892,8 @@ func TestQueueTransactionFlowWithSkipQueue(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	txnRef := "txn_" + model.GenerateUUIDWithSuffix("test")
 
@@ -927,7 +927,7 @@ func TestQueueTransactionFlowWithSkipQueue(t *testing.T) {
 	}
 
 	// Queue the transaction
-	queuedTxn, err := blnk.QueueTransaction(ctx, txn)
+	queuedTxn, err := ledgerforge.QueueTransaction(ctx, txn)
 	require.NoError(t, err, "Failed to queue transaction")
 
 	// Verify that the transaction was processed immediately
@@ -968,7 +968,7 @@ func TestInflightTransactionFlowWithSkipQueue(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -991,8 +991,8 @@ func TestInflightTransactionFlowWithSkipQueue(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	txnRef := "txn_" + model.GenerateUUIDWithSuffix("test")
 
@@ -1027,7 +1027,7 @@ func TestInflightTransactionFlowWithSkipQueue(t *testing.T) {
 	}
 
 	// Queue the transaction
-	queuedTxn, err := blnk.QueueTransaction(ctx, txn)
+	queuedTxn, err := ledgerforge.QueueTransaction(ctx, txn)
 	require.NoError(t, err, "Failed to queue transaction")
 
 	// Verify that the transaction was processed immediately
@@ -1068,7 +1068,7 @@ func TestInflightTransactionFlowWithSkipQueueThenCommit(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -1091,8 +1091,8 @@ func TestInflightTransactionFlowWithSkipQueueThenCommit(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	txnRef := "txn_" + model.GenerateUUIDWithSuffix("test")
 
@@ -1127,7 +1127,7 @@ func TestInflightTransactionFlowWithSkipQueueThenCommit(t *testing.T) {
 	}
 
 	// Queue the transaction
-	queuedTxn, err := blnk.QueueTransaction(ctx, txn)
+	queuedTxn, err := ledgerforge.QueueTransaction(ctx, txn)
 	require.NoError(t, err, "Failed to queue transaction")
 
 	// Verify that the transaction was processed immediately
@@ -1156,7 +1156,7 @@ func TestInflightTransactionFlowWithSkipQueueThenCommit(t *testing.T) {
 	require.Equal(t, StatusInflight, queuedEntry.Status, "Should have an INFLIGHT transaction entry")
 
 	// Commit the transaction
-	_, err = blnk.CommitInflightTransaction(ctx, txn.TransactionID, big.NewInt(0))
+	_, err = ledgerforge.CommitInflightTransaction(ctx, txn.TransactionID, big.NewInt(0))
 	require.NoError(t, err, "Failed to commit transaction")
 
 	// Verify balances were updated immediately
@@ -1185,7 +1185,7 @@ func TestInflightTransactionFlowWithSkipQueueThenPartialCommit(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -1208,8 +1208,8 @@ func TestInflightTransactionFlowWithSkipQueueThenPartialCommit(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	txnRef := "txn_" + model.GenerateUUIDWithSuffix("test")
 
@@ -1245,7 +1245,7 @@ func TestInflightTransactionFlowWithSkipQueueThenPartialCommit(t *testing.T) {
 	}
 
 	// Queue the transaction
-	queuedTxn, err := blnk.QueueTransaction(ctx, txn)
+	queuedTxn, err := ledgerforge.QueueTransaction(ctx, txn)
 	require.NoError(t, err, "Failed to queue transaction")
 
 	// Verify that the transaction was processed immediately
@@ -1276,7 +1276,7 @@ func TestInflightTransactionFlowWithSkipQueueThenPartialCommit(t *testing.T) {
 	// Partially commit the transaction (commit half of the original amount)
 	partialAmount := originalAmount / 2 // 250.0
 	partialPreciseAmount := new(big.Int).SetInt64(int64(partialAmount * txn.Precision))
-	partialCommitTxn, err := blnk.CommitInflightTransaction(ctx, inflightEntry.TransactionID, partialPreciseAmount)
+	partialCommitTxn, err := ledgerforge.CommitInflightTransaction(ctx, inflightEntry.TransactionID, partialPreciseAmount)
 	require.NoError(t, err, "Failed to partially commit transaction")
 	require.Equal(t, StatusApplied, partialCommitTxn.Status, "Partial commit transaction should have APPLIED status")
 	require.Equal(t, partialAmount, partialCommitTxn.Amount, "Partial commit amount should match specified amount")
@@ -1308,7 +1308,7 @@ func TestInflightTransactionFlowWithSkipQueueThenPartialCommit(t *testing.T) {
 		"Destination inflight balance should be reduced by the committed amount")
 
 	// Commit the remaining amount (should succeed)
-	remainingCommitTxn, err := blnk.CommitInflightTransaction(ctx, inflightEntry.TransactionID, big.NewInt(0)) // 0 means commit remaining amount
+	remainingCommitTxn, err := ledgerforge.CommitInflightTransaction(ctx, inflightEntry.TransactionID, big.NewInt(0)) // 0 means commit remaining amount
 	require.NoError(t, err, "Failed to commit remaining transaction amount")
 	require.Equal(t, StatusApplied, remainingCommitTxn.Status, "Remaining commit transaction should have APPLIED status")
 
@@ -1335,7 +1335,7 @@ func TestInflightTransactionFlowWithSkipQueueThenPartialCommit(t *testing.T) {
 		"Destination inflight balance should be zero after full commit")
 
 	// Attempt another commit (should fail)
-	_, err = blnk.CommitInflightTransaction(ctx, inflightEntry.TransactionID, big.NewInt(0))
+	_, err = ledgerforge.CommitInflightTransaction(ctx, inflightEntry.TransactionID, big.NewInt(0))
 	require.Error(t, err, "Committing a fully committed transaction should fail")
 	require.Contains(t, err.Error(), "cannot commit. Transaction already committed",
 		"Error message should indicate transaction is already committed")
@@ -1384,7 +1384,7 @@ func TestInflightTransactionFlowWithSkipQueueThenPartialCommitThenVoid(t *testin
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -1407,8 +1407,8 @@ func TestInflightTransactionFlowWithSkipQueueThenPartialCommitThenVoid(t *testin
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	txnRef := "txn_" + model.GenerateUUIDWithSuffix("test")
 
@@ -1444,7 +1444,7 @@ func TestInflightTransactionFlowWithSkipQueueThenPartialCommitThenVoid(t *testin
 	}
 
 	// Queue the transaction
-	queuedTxn, err := blnk.QueueTransaction(ctx, txn)
+	queuedTxn, err := ledgerforge.QueueTransaction(ctx, txn)
 	require.NoError(t, err, "Failed to queue transaction")
 
 	// Verify that the transaction was processed immediately
@@ -1475,7 +1475,7 @@ func TestInflightTransactionFlowWithSkipQueueThenPartialCommitThenVoid(t *testin
 	// Partially commit the transaction (commit half of the original amount)
 	partialAmount := originalAmount / 2 // 250.0
 	partialPreciseAmount := new(big.Int).SetInt64(int64(partialAmount * txn.Precision))
-	partialCommitTxn, err := blnk.CommitInflightTransaction(ctx, inflightEntry.TransactionID, partialPreciseAmount)
+	partialCommitTxn, err := ledgerforge.CommitInflightTransaction(ctx, inflightEntry.TransactionID, partialPreciseAmount)
 	require.NoError(t, err, "Failed to partially commit transaction")
 	require.Equal(t, StatusApplied, partialCommitTxn.Status, "Partial commit transaction should have APPLIED status")
 	require.Equal(t, partialAmount, partialCommitTxn.Amount, "Partial commit amount should match specified amount")
@@ -1507,7 +1507,7 @@ func TestInflightTransactionFlowWithSkipQueueThenPartialCommitThenVoid(t *testin
 		"Destination inflight balance should be reduced by the committed amount")
 
 	// Void the remaining amount
-	voidTxn, err := blnk.VoidInflightTransaction(ctx, inflightEntry.TransactionID)
+	voidTxn, err := ledgerforge.VoidInflightTransaction(ctx, inflightEntry.TransactionID)
 	require.NoError(t, err, "Failed to void remaining transaction amount")
 	require.Equal(t, StatusVoid, voidTxn.Status, "Void transaction should have VOID status")
 
@@ -1531,13 +1531,13 @@ func TestInflightTransactionFlowWithSkipQueueThenPartialCommitThenVoid(t *testin
 		"Destination inflight balance should be zero after void")
 
 	// Attempt another commit (should fail)
-	_, err = blnk.CommitInflightTransaction(ctx, inflightEntry.TransactionID, big.NewInt(0))
+	_, err = ledgerforge.CommitInflightTransaction(ctx, inflightEntry.TransactionID, big.NewInt(0))
 	require.Error(t, err, "Committing a voided transaction should fail")
 	require.Contains(t, err.Error(), "transaction has already been voided",
 		"Error message should indicate transaction is already voided")
 
 	// Attempt another void (should fail)
-	_, err = blnk.VoidInflightTransaction(ctx, inflightEntry.TransactionID)
+	_, err = ledgerforge.VoidInflightTransaction(ctx, inflightEntry.TransactionID)
 	require.Error(t, err, "Voiding an already voided transaction should fail")
 	require.Contains(t, err.Error(), "transaction has already been voided",
 		"Error message should indicate transaction is already voided")
@@ -1579,7 +1579,7 @@ func TestTwoInflightTransactionsCommitOneVoidCommitted(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -1602,8 +1602,8 @@ func TestTwoInflightTransactionsCommitOneVoidCommitted(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	// Create test balances
 	sourceBalance := &model.Balance{
@@ -1654,11 +1654,11 @@ func TestTwoInflightTransactionsCommitOneVoidCommitted(t *testing.T) {
 	}
 
 	// Queue both transactions
-	queuedTxn1, err := blnk.QueueTransaction(ctx, txn1)
+	queuedTxn1, err := ledgerforge.QueueTransaction(ctx, txn1)
 	require.NoError(t, err, "Failed to queue first (higher) transaction")
 	require.Equal(t, StatusInflight, queuedTxn1.Status, "First transaction should be INFLIGHT")
 
-	queuedTxn2, err := blnk.QueueTransaction(ctx, txn2)
+	queuedTxn2, err := ledgerforge.QueueTransaction(ctx, txn2)
 	require.NoError(t, err, "Failed to queue second (lower) transaction")
 	require.Equal(t, StatusInflight, queuedTxn2.Status, "Second transaction should be INFLIGHT")
 
@@ -1691,7 +1691,7 @@ func TestTwoInflightTransactionsCommitOneVoidCommitted(t *testing.T) {
 
 	// Commit the second transaction (lower amount)
 	amount2Precise := new(big.Int).SetInt64(int64(amount2 * txn2.Precision))
-	commitTxn, err := blnk.CommitInflightTransaction(ctx, inflightEntry2.TransactionID, amount2Precise)
+	commitTxn, err := ledgerforge.CommitInflightTransaction(ctx, inflightEntry2.TransactionID, amount2Precise)
 	require.NoError(t, err, "Failed to commit second transaction")
 	require.Equal(t, StatusApplied, commitTxn.Status, "Second transaction should have APPLIED status")
 
@@ -1728,7 +1728,7 @@ func TestTwoInflightTransactionsCommitOneVoidCommitted(t *testing.T) {
 	balanceBeforeVoidAttemptDest := afterCommitDest
 
 	// Attempt to void the already committed transaction (should fail)
-	_, err = blnk.VoidInflightTransaction(ctx, inflightEntry2.TransactionID)
+	_, err = ledgerforge.VoidInflightTransaction(ctx, inflightEntry2.TransactionID)
 	require.Error(t, err, "Voiding an already committed transaction should fail")
 	require.Contains(t, err.Error(), "Transaction already committed",
 		"Error message should indicate transaction is already committed")
@@ -1753,7 +1753,7 @@ func TestTwoInflightTransactionsCommitOneVoidCommitted(t *testing.T) {
 		"Destination inflight balance should be unchanged after failed void attempt")
 
 	// Verify we can still void the first transaction (still inflight)
-	voidTxn, err := blnk.VoidInflightTransaction(ctx, inflightEntry1.TransactionID)
+	voidTxn, err := ledgerforge.VoidInflightTransaction(ctx, inflightEntry1.TransactionID)
 	require.NoError(t, err, "Failed to void first transaction")
 	require.Equal(t, StatusVoid, voidTxn.Status, "First transaction should have VOID status")
 
@@ -1800,7 +1800,7 @@ func TestInflightTransactionWithOvercommitValidation(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -1823,8 +1823,8 @@ func TestInflightTransactionWithOvercommitValidation(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	// Create source and destination balances
 	sourceBalance := &model.Balance{
@@ -1858,7 +1858,7 @@ func TestInflightTransactionWithOvercommitValidation(t *testing.T) {
 	}
 
 	// Process the initial transaction
-	depositResult, err := blnk.QueueTransaction(ctx, depositTxn)
+	depositResult, err := ledgerforge.QueueTransaction(ctx, depositTxn)
 	require.NoError(t, err, "Failed to process initial transaction")
 	require.Equal(t, StatusApplied, depositResult.Status, "Initial transaction should be APPLIED")
 
@@ -1895,7 +1895,7 @@ func TestInflightTransactionWithOvercommitValidation(t *testing.T) {
 	}
 
 	// Queue the transaction
-	queuedTxn, err := blnk.QueueTransaction(ctx, txn)
+	queuedTxn, err := ledgerforge.QueueTransaction(ctx, txn)
 	require.NoError(t, err, "Failed to queue transaction")
 	require.Equal(t, StatusInflight, queuedTxn.Status, "Transaction should be INFLIGHT")
 
@@ -1915,7 +1915,7 @@ func TestInflightTransactionWithOvercommitValidation(t *testing.T) {
 	// Step 2: Attempt to overcommit the transaction (should fail)
 	overCommitAmount := 150.0
 	overCommitPreciseAmount := new(big.Int).SetInt64(int64(overCommitAmount * txn.Precision))
-	_, err = blnk.CommitInflightTransaction(ctx, inflightEntry.TransactionID, overCommitPreciseAmount)
+	_, err = ledgerforge.CommitInflightTransaction(ctx, inflightEntry.TransactionID, overCommitPreciseAmount)
 
 	// Now verify overcommit is prevented
 	require.Error(t, err, "Overcommitting should fail with an error")
@@ -1948,7 +1948,7 @@ func TestInflightTransactionWithOvercommitValidation(t *testing.T) {
 	// Step 3: Partial commit (50 of the 100)
 	partialAmount := 50.0
 	partialPreciseAmount := new(big.Int).SetInt64(int64(partialAmount * txn.Precision))
-	partialCommitTxn, err := blnk.CommitInflightTransaction(ctx, inflightEntry.TransactionID, partialPreciseAmount)
+	partialCommitTxn, err := ledgerforge.CommitInflightTransaction(ctx, inflightEntry.TransactionID, partialPreciseAmount)
 	require.NoError(t, err, "Partial commit should succeed")
 	require.Equal(t, StatusApplied, partialCommitTxn.Status, "Partial commit transaction should have APPLIED status")
 
@@ -1980,7 +1980,7 @@ func TestInflightTransactionWithOvercommitValidation(t *testing.T) {
 		"Destination inflight balance should be 50 after partial commit")
 
 	// Step 4: Full commit (remaining 50)
-	fullCommitTxn, err := blnk.CommitInflightTransaction(ctx, inflightEntry.TransactionID, big.NewInt(0))
+	fullCommitTxn, err := ledgerforge.CommitInflightTransaction(ctx, inflightEntry.TransactionID, big.NewInt(0))
 	require.NoError(t, err, "Full commit should succeed")
 	require.Equal(t, StatusApplied, fullCommitTxn.Status, "Full commit transaction should have APPLIED status")
 
@@ -2008,7 +2008,7 @@ func TestInflightTransactionWithOvercommitValidation(t *testing.T) {
 		"Destination inflight balance should be zero after full commit")
 
 	// Step 5: Attempt another commit (should fail)
-	_, err = blnk.CommitInflightTransaction(ctx, inflightEntry.TransactionID, big.NewInt(0))
+	_, err = ledgerforge.CommitInflightTransaction(ctx, inflightEntry.TransactionID, big.NewInt(0))
 	require.Error(t, err, "Second full commit should fail")
 	require.Contains(t, err.Error(), "cannot commit. Transaction already committed",
 		"Error should mention that transaction is already committed")
@@ -2030,7 +2030,7 @@ func TestInflightTransactionWithOvercommitValidation(t *testing.T) {
 		"Destination inflight balance should remain zero after failed second commit")
 
 	// Step 6: Attempt to void a fully committed transaction (should fail)
-	_, err = blnk.VoidInflightTransaction(ctx, inflightEntry.TransactionID)
+	_, err = ledgerforge.VoidInflightTransaction(ctx, inflightEntry.TransactionID)
 	require.Error(t, err, "Voiding a fully committed transaction should fail")
 	require.Contains(t, err.Error(), "cannot void. Transaction already committed",
 		"Error should mention that transaction is already committed")
@@ -2075,7 +2075,7 @@ func TestInflightTransactionWithPartialOvercommitValidation(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -2098,8 +2098,8 @@ func TestInflightTransactionWithPartialOvercommitValidation(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	// Create source and destination balances
 	sourceBalance := &model.Balance{
@@ -2133,7 +2133,7 @@ func TestInflightTransactionWithPartialOvercommitValidation(t *testing.T) {
 	}
 
 	// Process the initial transaction
-	depositResult, err := blnk.QueueTransaction(ctx, depositTxn)
+	depositResult, err := ledgerforge.QueueTransaction(ctx, depositTxn)
 	require.NoError(t, err, "Failed to process initial transaction")
 	require.Equal(t, StatusApplied, depositResult.Status, "Initial transaction should be APPLIED")
 
@@ -2170,7 +2170,7 @@ func TestInflightTransactionWithPartialOvercommitValidation(t *testing.T) {
 	}
 
 	// Queue the transaction
-	queuedTxn, err := blnk.QueueTransaction(ctx, txn)
+	queuedTxn, err := ledgerforge.QueueTransaction(ctx, txn)
 	require.NoError(t, err, "Failed to queue transaction")
 	require.Equal(t, StatusInflight, queuedTxn.Status, "Transaction should be INFLIGHT")
 
@@ -2190,7 +2190,7 @@ func TestInflightTransactionWithPartialOvercommitValidation(t *testing.T) {
 	// Step 2: Do a partial commit (50 of the 100)
 	partialAmount := 50.0
 	partialPreciseAmount := new(big.Int).SetInt64(int64(partialAmount * txn.Precision))
-	partialCommitTxn, err := blnk.CommitInflightTransaction(ctx, inflightEntry.TransactionID, partialPreciseAmount)
+	partialCommitTxn, err := ledgerforge.CommitInflightTransaction(ctx, inflightEntry.TransactionID, partialPreciseAmount)
 	require.NoError(t, err, "Partial commit should succeed")
 	require.Equal(t, StatusApplied, partialCommitTxn.Status, "Partial commit transaction should have APPLIED status")
 
@@ -2225,7 +2225,7 @@ func TestInflightTransactionWithPartialOvercommitValidation(t *testing.T) {
 	// Try to commit 60 when only 50 remains
 	overCommitAmount := 60.0
 	overCommitPreciseAmount := new(big.Int).SetInt64(int64(overCommitAmount * txn.Precision))
-	_, err = blnk.CommitInflightTransaction(ctx, inflightEntry.TransactionID, overCommitPreciseAmount)
+	_, err = ledgerforge.CommitInflightTransaction(ctx, inflightEntry.TransactionID, overCommitPreciseAmount)
 
 	// Now verify partial overcommit is prevented
 	require.Error(t, err, "Partial overcommit should fail with an error")
@@ -2256,7 +2256,7 @@ func TestInflightTransactionWithPartialOvercommitValidation(t *testing.T) {
 		"Destination inflight balance should remain 50 after failed partial overcommit")
 
 	// Step 4: Full commit (remaining 50)
-	fullCommitTxn, err := blnk.CommitInflightTransaction(ctx, inflightEntry.TransactionID, big.NewInt(0))
+	fullCommitTxn, err := ledgerforge.CommitInflightTransaction(ctx, inflightEntry.TransactionID, big.NewInt(0))
 	require.NoError(t, err, "Full commit should succeed")
 	require.Equal(t, StatusApplied, fullCommitTxn.Status, "Full commit transaction should have APPLIED status")
 
@@ -2284,7 +2284,7 @@ func TestInflightTransactionWithPartialOvercommitValidation(t *testing.T) {
 		"Destination inflight balance should be zero after full commit")
 
 	// Step 5: Attempt another commit (should fail)
-	_, err = blnk.CommitInflightTransaction(ctx, inflightEntry.TransactionID, big.NewInt(0))
+	_, err = ledgerforge.CommitInflightTransaction(ctx, inflightEntry.TransactionID, big.NewInt(0))
 	require.Error(t, err, "Second full commit should fail")
 	require.Contains(t, err.Error(), "cannot commit. Transaction already committed",
 		"Error should mention that transaction is already committed")
@@ -2306,7 +2306,7 @@ func TestInflightTransactionWithPartialOvercommitValidation(t *testing.T) {
 		"Destination inflight balance should remain zero after failed second commit")
 
 	// Step 6: Attempt to void a fully committed transaction (should fail)
-	_, err = blnk.VoidInflightTransaction(ctx, inflightEntry.TransactionID)
+	_, err = ledgerforge.VoidInflightTransaction(ctx, inflightEntry.TransactionID)
 	require.Error(t, err, "Voiding a fully committed transaction should fail")
 	require.Contains(t, err.Error(), "cannot void. Transaction already committed",
 		"Error should mention that transaction is already committed")
@@ -2351,7 +2351,7 @@ func TestInflightTransactionFlowWithSkipQueueThenVoid(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -2374,8 +2374,8 @@ func TestInflightTransactionFlowWithSkipQueueThenVoid(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	txnRef := "txn_" + model.GenerateUUIDWithSuffix("test")
 
@@ -2410,7 +2410,7 @@ func TestInflightTransactionFlowWithSkipQueueThenVoid(t *testing.T) {
 	}
 
 	// Queue the transaction
-	queuedTxn, err := blnk.QueueTransaction(ctx, txn)
+	queuedTxn, err := ledgerforge.QueueTransaction(ctx, txn)
 	require.NoError(t, err, "Failed to queue transaction")
 
 	// Verify that the transaction was processed immediately
@@ -2439,7 +2439,7 @@ func TestInflightTransactionFlowWithSkipQueueThenVoid(t *testing.T) {
 	require.Equal(t, StatusInflight, queuedEntry.Status, "Should have an INFLIGHT transaction entry")
 
 	// Now void the transaction
-	_, err = blnk.VoidInflightTransaction(ctx, queuedEntry.TransactionID)
+	_, err = ledgerforge.VoidInflightTransaction(ctx, queuedEntry.TransactionID)
 	require.NoError(t, err, "Failed to void transaction")
 
 	// Verify balances were reset after void
@@ -2462,7 +2462,7 @@ func TestInflightTransactionFlowWithSkipQueueThenVoid(t *testing.T) {
 		"Destination normal balance should remain zero")
 
 	// Attempt to void again - should fail
-	_, err = blnk.VoidInflightTransaction(ctx, queuedEntry.TransactionID)
+	_, err = ledgerforge.VoidInflightTransaction(ctx, queuedEntry.TransactionID)
 	require.Error(t, err, "Voiding an already voided transaction should fail")
 	require.Contains(t, err.Error(), "transaction has already been voided", "Error message should indicate transaction is already voided")
 }
@@ -2479,7 +2479,7 @@ func TestMultipleSourcesTransactionFlowWithSkipQueue(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -2502,8 +2502,8 @@ func TestMultipleSourcesTransactionFlowWithSkipQueue(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	txnRef := "txn_" + model.GenerateUUIDWithSuffix("test")
 
@@ -2548,7 +2548,7 @@ func TestMultipleSourcesTransactionFlowWithSkipQueue(t *testing.T) {
 	}
 
 	// Queue the transaction
-	queuedTxn, err := blnk.QueueTransaction(ctx, txn)
+	queuedTxn, err := ledgerforge.QueueTransaction(ctx, txn)
 	require.NoError(t, err, "Failed to queue transaction")
 
 	// Verify that the transaction was processed immediately
@@ -2600,7 +2600,7 @@ func TestMultipleSourcesInflightTransactionFlowWithSkipQueueAndCommit(t *testing
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -2623,8 +2623,8 @@ func TestMultipleSourcesInflightTransactionFlowWithSkipQueueAndCommit(t *testing
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	txnRef := "txn_" + model.GenerateUUIDWithSuffix("test")
 
@@ -2670,7 +2670,7 @@ func TestMultipleSourcesInflightTransactionFlowWithSkipQueueAndCommit(t *testing
 	}
 
 	// Queue the transaction
-	queuedTxn, err := blnk.QueueTransaction(ctx, txn)
+	queuedTxn, err := ledgerforge.QueueTransaction(ctx, txn)
 	require.NoError(t, err, "Failed to queue transaction")
 
 	// Verify that the transaction was processed immediately
@@ -2733,13 +2733,13 @@ func TestMultipleSourcesInflightTransactionFlowWithSkipQueueAndCommit(t *testing
 	partialAmount := originalAmount / 2 // 250.0 total (125 from each source)
 
 	sourceOnePartialPreciseAmount := new(big.Int).SetInt64(int64(sourceOnePartialAmount * txn.Precision))
-	partialCommitTxnOne, err := blnk.CommitInflightTransaction(ctx, inflightEntryOne.TransactionID, sourceOnePartialPreciseAmount)
+	partialCommitTxnOne, err := ledgerforge.CommitInflightTransaction(ctx, inflightEntryOne.TransactionID, sourceOnePartialPreciseAmount)
 	require.NoError(t, err, "Failed to partially commit transaction for source one")
 	require.Equal(t, StatusApplied, partialCommitTxnOne.Status, "Partial commit transaction should have APPLIED status")
 	require.Equal(t, sourceOnePartialAmount, partialCommitTxnOne.Amount, "Partial commit amount should match specified amount")
 
 	sourceTwoPartialPreciseAmount := new(big.Int).SetInt64(int64(sourceTwoPartialAmount * txn.Precision))
-	partialCommitTxnTwo, err := blnk.CommitInflightTransaction(ctx, inflightEntryTwo.TransactionID, sourceTwoPartialPreciseAmount)
+	partialCommitTxnTwo, err := ledgerforge.CommitInflightTransaction(ctx, inflightEntryTwo.TransactionID, sourceTwoPartialPreciseAmount)
 	require.NoError(t, err, "Failed to partially commit transaction for source two")
 	require.Equal(t, StatusApplied, partialCommitTxnTwo.Status, "Partial commit transaction should have APPLIED status")
 	require.Equal(t, sourceTwoPartialAmount, partialCommitTxnTwo.Amount, "Partial commit amount should match specified amount")
@@ -2780,11 +2780,11 @@ func TestMultipleSourcesInflightTransactionFlowWithSkipQueueAndCommit(t *testing
 		"Destination inflight balance should be reduced by the committed amount")
 
 	// Commit the remaining amount for both sources
-	remainingCommitTxnOne, err := blnk.CommitInflightTransaction(ctx, inflightEntryOne.TransactionID, big.NewInt(0)) // 0 means commit remaining amount
+	remainingCommitTxnOne, err := ledgerforge.CommitInflightTransaction(ctx, inflightEntryOne.TransactionID, big.NewInt(0)) // 0 means commit remaining amount
 	require.NoError(t, err, "Failed to commit remaining transaction amount for source one")
 	require.Equal(t, StatusApplied, remainingCommitTxnOne.Status, "Remaining commit transaction should have APPLIED status")
 
-	remainingCommitTxnTwo, err := blnk.CommitInflightTransaction(ctx, inflightEntryTwo.TransactionID, big.NewInt(0)) // 0 means commit remaining amount
+	remainingCommitTxnTwo, err := ledgerforge.CommitInflightTransaction(ctx, inflightEntryTwo.TransactionID, big.NewInt(0)) // 0 means commit remaining amount
 	require.NoError(t, err, "Failed to commit remaining transaction amount for source two")
 	require.Equal(t, StatusApplied, remainingCommitTxnTwo.Status, "Remaining commit transaction should have APPLIED status")
 
@@ -2829,12 +2829,12 @@ func TestMultipleSourcesInflightTransactionFlowWithSkipQueueAndCommit(t *testing
 		"Destination inflight balance should be zero after full commit")
 
 	// Attempt another commit on each source (should fail)
-	_, err = blnk.CommitInflightTransaction(ctx, inflightEntryOne.TransactionID, big.NewInt(0))
+	_, err = ledgerforge.CommitInflightTransaction(ctx, inflightEntryOne.TransactionID, big.NewInt(0))
 	require.Error(t, err, "Committing a fully committed transaction should fail")
 	require.Contains(t, err.Error(), "cannot commit. Transaction already committed",
 		"Error message should indicate transaction is already committed")
 
-	_, err = blnk.CommitInflightTransaction(ctx, inflightEntryTwo.TransactionID, big.NewInt(0))
+	_, err = ledgerforge.CommitInflightTransaction(ctx, inflightEntryTwo.TransactionID, big.NewInt(0))
 	require.Error(t, err, "Committing a fully committed transaction should fail")
 	require.Contains(t, err.Error(), "cannot commit. Transaction already committed",
 		"Error message should indicate transaction is already committed")
@@ -2911,7 +2911,7 @@ func TestMultipleDestinationTransactionFlowWithSkipQueue(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -2934,8 +2934,8 @@ func TestMultipleDestinationTransactionFlowWithSkipQueue(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	txnRef := "txn_" + model.GenerateUUIDWithSuffix("test")
 
@@ -2980,7 +2980,7 @@ func TestMultipleDestinationTransactionFlowWithSkipQueue(t *testing.T) {
 	}
 
 	// Queue the transaction
-	queuedTxn, err := blnk.QueueTransaction(ctx, txn)
+	queuedTxn, err := ledgerforge.QueueTransaction(ctx, txn)
 	require.NoError(t, err, "Failed to queue transaction")
 
 	// Verify that the transaction was processed immediately
@@ -3032,7 +3032,7 @@ func TestMultipleDestinationTransactionFlowWithTwoDistributions(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -3055,8 +3055,8 @@ func TestMultipleDestinationTransactionFlowWithTwoDistributions(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	txnRef := "txn_" + model.GenerateUUIDWithSuffix("test")
 
@@ -3104,7 +3104,7 @@ func TestMultipleDestinationTransactionFlowWithTwoDistributions(t *testing.T) {
 	}
 
 	// Queue the transaction
-	queuedTxn, err := blnk.QueueTransaction(ctx, txn)
+	queuedTxn, err := ledgerforge.QueueTransaction(ctx, txn)
 	require.NoError(t, err, "Failed to queue transaction")
 
 	// Verify that the transaction was processed immediately
@@ -3166,7 +3166,7 @@ func TestQueueTransactionFlowWithSkipQueueAndPreciseAmount(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -3189,8 +3189,8 @@ func TestQueueTransactionFlowWithSkipQueueAndPreciseAmount(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	txnRef := "txn_" + model.GenerateUUIDWithSuffix("test")
 
@@ -3224,7 +3224,7 @@ func TestQueueTransactionFlowWithSkipQueueAndPreciseAmount(t *testing.T) {
 	}
 
 	// Queue the transaction
-	queuedTxn, err := blnk.QueueTransaction(ctx, txn)
+	queuedTxn, err := ledgerforge.QueueTransaction(ctx, txn)
 	require.NoError(t, err, "Failed to queue transaction")
 
 	// Verify that the transaction was processed immediately
@@ -3265,7 +3265,7 @@ func TestMultipleSourcesTransactionFlowWithSkipQueueAndPreciseAmount(t *testing.
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -3288,8 +3288,8 @@ func TestMultipleSourcesTransactionFlowWithSkipQueueAndPreciseAmount(t *testing.
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	txnRef := "txn_" + model.GenerateUUIDWithSuffix("test")
 
@@ -3334,7 +3334,7 @@ func TestMultipleSourcesTransactionFlowWithSkipQueueAndPreciseAmount(t *testing.
 	}
 
 	// Queue the transaction
-	queuedTxn, err := blnk.QueueTransaction(ctx, txn)
+	queuedTxn, err := ledgerforge.QueueTransaction(ctx, txn)
 	require.NoError(t, err, "Failed to queue transaction")
 
 	// Verify that the transaction was processed immediately
@@ -3386,7 +3386,7 @@ func TestMultipleDestinationTransactionFlowWithSkipQueueWithPreciseAmount(t *tes
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -3409,8 +3409,8 @@ func TestMultipleDestinationTransactionFlowWithSkipQueueWithPreciseAmount(t *tes
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	txnRef := "txn_" + model.GenerateUUIDWithSuffix("test")
 
@@ -3455,7 +3455,7 @@ func TestMultipleDestinationTransactionFlowWithSkipQueueWithPreciseAmount(t *tes
 	}
 
 	// Queue the transaction
-	queuedTxn, err := blnk.QueueTransaction(ctx, txn)
+	queuedTxn, err := ledgerforge.QueueTransaction(ctx, txn)
 	require.NoError(t, err, "Failed to queue transaction")
 
 	// Verify that the transaction was processed immediately
@@ -3496,13 +3496,17 @@ func TestMultipleDestinationTransactionFlowWithSkipQueueWithPreciseAmount(t *tes
 }
 
 func TestQueueTransactionStatus(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping queue flow test in short mode")
+	}
+
 	// Setup basic configuration
 	cnf := &config.Configuration{
 		Redis: config.RedisConfig{
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -3516,10 +3520,10 @@ func TestQueueTransactionStatus(t *testing.T) {
 	}
 	config.ConfigStore.Store(cnf)
 
-	// Create datasource and blnk instance
+	// Create datasource and ledgerforge instance
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err)
-	blnk, err := NewBlnk(ds)
+	ledgerforge, err := NewLedgerForge(ds)
 	require.NoError(t, err)
 
 	// Create test balances
@@ -3583,7 +3587,7 @@ func TestQueueTransactionStatus(t *testing.T) {
 				Inflight:       tt.inflight,
 			}
 
-			result, err := blnk.QueueTransaction(context.Background(), txn)
+			result, err := ledgerforge.QueueTransaction(context.Background(), txn)
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantStatus, result.Status,
 				"Status mismatch for skipQueue=%v, inflight=%v", tt.skipQueue, tt.inflight)
@@ -3603,7 +3607,7 @@ func TestStandardTransactionRefund(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -3626,8 +3630,8 @@ func TestStandardTransactionRefund(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	txnRef := "txn_" + model.GenerateUUIDWithSuffix("test")
 
@@ -3663,7 +3667,7 @@ func TestStandardTransactionRefund(t *testing.T) {
 	}
 
 	// Process the transaction
-	originalTxn, err := blnk.QueueTransaction(ctx, txn)
+	originalTxn, err := ledgerforge.QueueTransaction(ctx, txn)
 	require.NoError(t, err, "Failed to process transaction")
 	require.Equal(t, StatusApplied, originalTxn.Status, "Transaction should be APPLIED immediately with skip_queue enabled")
 
@@ -3693,7 +3697,7 @@ func TestStandardTransactionRefund(t *testing.T) {
 	require.NoError(t, err, "Failed to get transaction entry")
 
 	// Refund the transaction
-	refundTxn, err := blnk.RefundTransaction(ctx, txnEntry.TransactionID, true)
+	refundTxn, err := ledgerforge.RefundTransaction(ctx, txnEntry.TransactionID, true)
 	require.NoError(t, err, "Failed to refund transaction")
 	require.Equal(t, StatusApplied, refundTxn.Status, "Refund transaction should be APPLIED immediately")
 	require.Equal(t, txnEntry.TransactionID, refundTxn.ParentTransaction, "Refund should reference original transaction as parent")
@@ -3728,7 +3732,7 @@ func TestStandardTransactionRefund(t *testing.T) {
 	require.Equal(t, originalAmount, transactions[0].Amount, "Refund amount should match original")
 
 	// Attempt to refund the refund transaction (should succeed)
-	refundOfRefundTxn, err := blnk.RefundTransaction(ctx, refundTxn.TransactionID, true)
+	refundOfRefundTxn, err := ledgerforge.RefundTransaction(ctx, refundTxn.TransactionID, true)
 	require.NoError(t, err, "Failed to refund the refund transaction")
 	require.Equal(t, StatusApplied, refundOfRefundTxn.Status, "Refund of refund should be APPLIED")
 	require.Equal(t, refundTxn.TransactionID, refundOfRefundTxn.ParentTransaction, "Refund of refund should reference refund as parent")
@@ -3816,7 +3820,7 @@ func TestRejectTransaction(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -3839,8 +3843,8 @@ func TestRejectTransaction(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	// Create a unique transaction reference
 	txnRef := "txn_" + model.GenerateUUIDWithSuffix("reject_test")
@@ -3881,20 +3885,20 @@ func TestRejectTransaction(t *testing.T) {
 	rejectionReason := "Insufficient funds"
 
 	// Reject the transaction
-	rejectedTxn, err := blnk.RejectTransaction(ctx, txn, rejectionReason)
+	rejectedTxn, err := ledgerforge.RejectTransaction(ctx, txn, rejectionReason)
 	require.NoError(t, err, "Failed to reject transaction")
 
 	// Verify rejection details
 	require.Equal(t, StatusRejected, rejectedTxn.Status, "Transaction status should be REJECTED")
-	require.Contains(t, rejectedTxn.MetaData, "blnk_rejection_reason", "Metadata should contain rejection reason")
-	require.Equal(t, rejectionReason, rejectedTxn.MetaData["blnk_rejection_reason"], "Rejection reason should match")
+	require.Contains(t, rejectedTxn.MetaData, "ledgerforge_rejection_reason", "Metadata should contain rejection reason")
+	require.Equal(t, rejectionReason, rejectedTxn.MetaData["ledgerforge_rejection_reason"], "Rejection reason should match")
 
 	// Verify transaction was persisted
 	persistedTxn, err := ds.GetTransactionByRef(ctx, txnRef)
 	require.NoError(t, err, "Failed to get persisted transaction")
 	require.Equal(t, StatusRejected, persistedTxn.Status, "Persisted transaction should have REJECTED status")
-	require.Contains(t, persistedTxn.MetaData, "blnk_rejection_reason", "Persisted metadata should contain rejection reason")
-	require.Equal(t, rejectionReason, persistedTxn.MetaData["blnk_rejection_reason"], "Persisted rejection reason should match")
+	require.Contains(t, persistedTxn.MetaData, "ledgerforge_rejection_reason", "Persisted metadata should contain rejection reason")
+	require.Equal(t, rejectionReason, persistedTxn.MetaData["ledgerforge_rejection_reason"], "Persisted rejection reason should match")
 
 	// Verify balances should be unaffected by rejected transaction
 	updatedSource, err := ds.GetBalanceByIDLite(source.BalanceID)
@@ -3914,7 +3918,7 @@ func TestRejectTransaction(t *testing.T) {
 		"Destination inflight balance should be zero for rejected transaction")
 
 	// Attempt to refund the rejected transaction - should fail
-	_, err = blnk.RefundTransaction(ctx, rejectedTxn.TransactionID, true)
+	_, err = ledgerforge.RefundTransaction(ctx, rejectedTxn.TransactionID, true)
 	require.Error(t, err, "Refunding a rejected transaction should fail")
 	// Check for the specific error substring, ignoring the transaction ID
 	require.Contains(t, err.Error(), "is not in a state that can be refunded (status: REJECTED)",
@@ -3933,7 +3937,7 @@ func TestCommitWorkerFullFlow(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -3956,11 +3960,11 @@ func TestCommitWorkerFullFlow(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	queueName := fmt.Sprintf("%s_%d", cnf.Queue.TransactionQueue, 1)
-	cleanupWorker := startTestAsynqWorker(t, cnf, blnk, queueName)
+	cleanupWorker := startTestAsynqWorker(t, cnf, ledgerforge, queueName)
 	defer cleanupWorker()
 
 	// Create test balances with initial amounts of zero
@@ -3995,7 +3999,7 @@ func TestCommitWorkerFullFlow(t *testing.T) {
 	}
 
 	// Step 2: Queue/process the transaction (which will apply it immediately due to skip_queue)
-	queuedTxn, err := blnk.QueueTransaction(ctx, txn)
+	queuedTxn, err := ledgerforge.QueueTransaction(ctx, txn)
 	require.NoError(t, err, "Failed to queue transaction")
 	require.Equal(t, StatusInflight, queuedTxn.Status, "Transaction should be INFLIGHT immediately when skip_queue is true")
 
@@ -4040,7 +4044,7 @@ func TestCommitWorkerFullFlow(t *testing.T) {
 	close(jobs)
 
 	// Step 6: Run the commit worker
-	go blnk.CommitWorker(ctx, jobs, results, &wg, big.NewInt(0)) // 0 = commit full amount
+	go ledgerforge.CommitWorker(ctx, jobs, results, &wg, big.NewInt(0)) // 0 = commit full amount
 
 	// Wait for the worker to finish
 	wg.Wait()
@@ -4099,7 +4103,7 @@ func TestVoidWorkerFullFlow(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -4122,8 +4126,8 @@ func TestVoidWorkerFullFlow(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	// Create test balances with initial amounts of zero
 	sourceBalance := &model.Balance{
@@ -4157,7 +4161,7 @@ func TestVoidWorkerFullFlow(t *testing.T) {
 	}
 
 	// Step 2: Queue/process the transaction (which will apply it immediately due to skip_queue)
-	queuedTxn, err := blnk.QueueTransaction(ctx, txn)
+	queuedTxn, err := ledgerforge.QueueTransaction(ctx, txn)
 	require.NoError(t, err, "Failed to queue transaction")
 	require.Equal(t, StatusInflight, queuedTxn.Status, "Transaction should be INFLIGHT immediately when skip_queue is true")
 
@@ -4202,7 +4206,7 @@ func TestVoidWorkerFullFlow(t *testing.T) {
 	close(jobs)
 
 	// Step 6: Run the void worker
-	go blnk.VoidWorker(ctx, jobs, results, &wg, big.NewInt(0)) // Amount parameter is not used in VoidWorker
+	go ledgerforge.VoidWorker(ctx, jobs, results, &wg, big.NewInt(0)) // Amount parameter is not used in VoidWorker
 
 	// Wait for the worker to finish
 	wg.Wait()
@@ -4251,7 +4255,7 @@ func TestVoidWorkerFullFlow(t *testing.T) {
 	jobs2 <- txnObj
 	close(jobs2)
 
-	go blnk.VoidWorker(ctx, jobs2, results2, &wg2, big.NewInt(0))
+	go ledgerforge.VoidWorker(ctx, jobs2, results2, &wg2, big.NewInt(0))
 	wg2.Wait()
 	close(results2)
 
@@ -4280,7 +4284,7 @@ func TestRefundWorkerFullFlow(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -4303,8 +4307,8 @@ func TestRefundWorkerFullFlow(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	// Create test balances with initial amounts of zero
 	sourceBalance := &model.Balance{
@@ -4338,7 +4342,7 @@ func TestRefundWorkerFullFlow(t *testing.T) {
 	}
 
 	// Step 2: Queue/process the transaction (which will apply it immediately due to skip_queue)
-	queuedTxn, err := blnk.QueueTransaction(ctx, txn)
+	queuedTxn, err := ledgerforge.QueueTransaction(ctx, txn)
 	require.NoError(t, err, "Failed to queue transaction")
 	require.Equal(t, StatusApplied, queuedTxn.Status, "Transaction should be APPLIED immediately when skip_queue is true")
 
@@ -4386,7 +4390,7 @@ func TestRefundWorkerFullFlow(t *testing.T) {
 	close(jobs)
 
 	// Step 6: Run the refund worker
-	go blnk.RefundWorker(ctx, jobs, results, &wg, big.NewInt(0))
+	go ledgerforge.RefundWorker(ctx, jobs, results, &wg, big.NewInt(0))
 
 	// Wait for the worker to finish
 	wg.Wait()
@@ -4447,7 +4451,7 @@ func TestRefundWorkerFullFlow(t *testing.T) {
 	}
 
 	// Reject the transaction
-	rejectedTxn, err = blnk.RejectTransaction(ctx, rejectedTxn, "Insufficient funds")
+	rejectedTxn, err = ledgerforge.RejectTransaction(ctx, rejectedTxn, "Insufficient funds")
 	require.NoError(t, err, "Failed to reject transaction")
 	require.Equal(t, StatusRejected, rejectedTxn.Status, "Transaction should have REJECTED status")
 
@@ -4461,7 +4465,7 @@ func TestRefundWorkerFullFlow(t *testing.T) {
 	jobs2 <- rejectedTxn
 	close(jobs2)
 
-	go blnk.RefundWorker(ctx, jobs2, results2, &wg2, big.NewInt(0))
+	go ledgerforge.RefundWorker(ctx, jobs2, results2, &wg2, big.NewInt(0))
 	wg2.Wait()
 	close(results2)
 
@@ -4491,7 +4495,7 @@ func TestRefundAlreadyRefundedTransaction(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -4514,8 +4518,8 @@ func TestRefundAlreadyRefundedTransaction(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	txnRef := "txn_" + model.GenerateUUIDWithSuffix("test_already_refunded")
 
@@ -4550,7 +4554,7 @@ func TestRefundAlreadyRefundedTransaction(t *testing.T) {
 	}
 
 	// Process the transaction
-	originalTxn, err := blnk.QueueTransaction(ctx, txn)
+	originalTxn, err := ledgerforge.QueueTransaction(ctx, txn)
 	require.NoError(t, err, "Failed to process transaction")
 	require.Equal(t, StatusApplied, originalTxn.Status, "Transaction should be APPLIED")
 
@@ -4569,7 +4573,7 @@ func TestRefundAlreadyRefundedTransaction(t *testing.T) {
 	require.NoError(t, err, "Failed to get transaction entry")
 
 	// Refund the transaction for the first time
-	refundTxn, err := blnk.RefundTransaction(ctx, txnEntry.TransactionID, true)
+	refundTxn, err := ledgerforge.RefundTransaction(ctx, txnEntry.TransactionID, true)
 	require.NoError(t, err, "Failed to refund transaction the first time")
 	require.Equal(t, StatusApplied, refundTxn.Status, "First refund transaction should be APPLIED")
 
@@ -4582,7 +4586,7 @@ func TestRefundAlreadyRefundedTransaction(t *testing.T) {
 	require.Equal(t, 0, destAfterFirstRefund.Balance.Cmp(big.NewInt(0)), "Destination balance should be zero after first refund")
 
 	// Attempt to refund the original transaction again
-	_, err = blnk.RefundTransaction(ctx, txnEntry.TransactionID, true)
+	_, err = ledgerforge.RefundTransaction(ctx, txnEntry.TransactionID, true)
 	require.Error(t, err, "Refunding an already refunded transaction should fail")
 	// Check for the specific error substring, ignoring the transaction ID
 	require.Contains(t, err.Error(), "has already been refunded", "Error message should indicate the transaction was already refunded")
@@ -4608,7 +4612,7 @@ func TestQueueTransactionFlowAsyncPolled(t *testing.T) {
 			Dns: "localhost:6379", // Ensure Redis is running for queue tests
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable", // Ensure Postgres is running
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable", // Ensure Postgres is running
 		},
 		Queue: config.QueueConfig{ // Ensure queue names are unique if tests run in parallel
 			WebhookQueue:        "webhook_queue_test_async_polled",
@@ -4632,14 +4636,14 @@ func TestQueueTransactionFlowAsyncPolled(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnkInstance, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforgeInstance, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	// Construct the specific transaction queue name
 	transactionQueueName := fmt.Sprintf("%s_%d", cnf.Queue.TransactionQueue, 1)
 
 	// Start the test Asynq worker
-	cleanupWorker := startTestAsynqWorker(t, cnf, blnkInstance, transactionQueueName)
+	cleanupWorker := startTestAsynqWorker(t, cnf, ledgerforgeInstance, transactionQueueName)
 	defer cleanupWorker()
 
 	txnRef := "txn_" + model.GenerateUUIDWithSuffix("test_async_polled")
@@ -4670,7 +4674,7 @@ func TestQueueTransactionFlowAsyncPolled(t *testing.T) {
 		SkipQueue:      false, // Ensure transaction is queued
 	}
 
-	queuedTxn, err := blnkInstance.QueueTransaction(ctx, txn)
+	queuedTxn, err := ledgerforgeInstance.QueueTransaction(ctx, txn)
 	require.NoError(t, err, "Failed to queue transaction")
 	require.Equal(t, StatusQueued, queuedTxn.Status, "Transaction should be QUEUED")
 	t.Logf("Transaction %s (Ref: %s) queued with ID %s", queuedTxn.Reference, queuedTxn.TransactionID, queuedTxn.TransactionID)
@@ -4751,9 +4755,9 @@ func (tl *testLogger) Fatal(args ...interface{}) {
 }
 
 // startTestAsynqWorker sets up and starts an Asynq server for testing purposes.
-// It takes the testing object, configuration, Blnk instance, and the specific transaction queue name.
+// It takes the testing object, configuration, LedgerForge instance, and the specific transaction queue name.
 // It returns a cleanup function that should be deferred by the caller to shut down the server.
-func startTestAsynqWorker(t *testing.T, cnf *config.Configuration, blnkInstance *Blnk, transactionQueueName string) func() {
+func startTestAsynqWorker(t *testing.T, cnf *config.Configuration, ledgerforgeInstance *LedgerForge, transactionQueueName string) func() {
 	redisOption, err := redis_db.ParseRedisURL(cnf.Redis.Dns, false)
 	require.NoError(t, err, "Failed to parse Redis URL for Asynq")
 
@@ -4785,11 +4789,11 @@ func startTestAsynqWorker(t *testing.T, cnf *config.Configuration, blnkInstance 
 		}
 
 		t.Logf("TEST_WORKER: Picked up transaction %s (Ref: %s) for processing.", txn.TransactionID, txn.Reference)
-		processedTxn, err := blnkInstance.RecordTransaction(ctx, &txn) // Use blnkInstance from the outer scope
+		processedTxn, err := ledgerforgeInstance.RecordTransaction(ctx, &txn) // Use ledgerforgeInstance from the outer scope
 		if err != nil {
 			t.Logf("TEST_WORKER: Error recording transaction %s (Ref: %s): %v", txn.TransactionID, txn.Reference, err)
 			if strings.Contains(strings.ToLower(err.Error()), "insufficient funds") || strings.Contains(strings.ToLower(err.Error()), "transaction exceeds overdraft limit") {
-				_, rejectErr := blnkInstance.RejectTransaction(ctx, &txn, err.Error())
+				_, rejectErr := ledgerforgeInstance.RejectTransaction(ctx, &txn, err.Error())
 				if rejectErr != nil {
 					t.Logf("TEST_WORKER: Error rejecting transaction %s after processing error: %v", txn.TransactionID, rejectErr)
 					return fmt.Errorf("processing error: %v, rejection error: %w", err, rejectErr)
@@ -4831,7 +4835,7 @@ func TestInflightTransactionFlowAsyncPolled(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test_inflight_async",
@@ -4857,11 +4861,11 @@ func TestInflightTransactionFlowAsyncPolled(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnkInstance, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforgeInstance, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	// Start the test Asynq worker
-	cleanupWorker := startTestAsynqWorker(t, cnf, blnkInstance, transactionQueueName)
+	cleanupWorker := startTestAsynqWorker(t, cnf, ledgerforgeInstance, transactionQueueName)
 	defer cleanupWorker()
 
 	txnRef := "txn_" + model.GenerateUUIDWithSuffix("test_inflight_async")
@@ -4887,7 +4891,7 @@ func TestInflightTransactionFlowAsyncPolled(t *testing.T) {
 		SkipQueue:      false, // Key: It will be queued first
 	}
 
-	queuedTxn, err := blnkInstance.QueueTransaction(ctx, txn)
+	queuedTxn, err := ledgerforgeInstance.QueueTransaction(ctx, txn)
 	require.NoError(t, err, "Failed to queue inflight transaction")
 	require.Equal(t, StatusQueued, queuedTxn.Status, "Inflight transaction should initially be QUEUED")
 
@@ -4935,7 +4939,7 @@ func TestInflightTransactionFlowAsyncPolled(t *testing.T) {
 
 	// First Partial Commit (100)
 	t.Logf("Submitting first partial commit (amount: %s) for inflightTxn ID: %s, original queuedTxn ID: %s", partialAmount1Precise.String(), inflightTxn.TransactionID, queuedTxn.TransactionID)
-	commitTxn1, err := blnkInstance.CommitInflightTransactionWithQueue(ctx, inflightTxn.TransactionID, partialAmount1Precise)
+	commitTxn1, err := ledgerforgeInstance.CommitInflightTransactionWithQueue(ctx, inflightTxn.TransactionID, partialAmount1Precise)
 	require.NoError(t, err, "Failed to submit first partial commit")
 	require.Equal(t, StatusApplied, commitTxn1.Status, "First partial commit submission should have status COMMIT")
 
@@ -4963,7 +4967,7 @@ func TestInflightTransactionFlowAsyncPolled(t *testing.T) {
 
 	// Second Partial Commit (150)
 	t.Logf("Submitting second partial commit (amount: %s) for inflightTxn ID: %s", partialAmount2Precise.String(), inflightTxn.TransactionID)
-	commitTxn2, err := blnkInstance.CommitInflightTransactionWithQueue(ctx, inflightTxn.TransactionID, partialAmount2Precise)
+	commitTxn2, err := ledgerforgeInstance.CommitInflightTransactionWithQueue(ctx, inflightTxn.TransactionID, partialAmount2Precise)
 	require.NoError(t, err, "Failed to submit second partial commit")
 	require.Equal(t, StatusApplied, commitTxn2.Status, "Second partial commit submission should have status COMMIT")
 
@@ -4993,7 +4997,7 @@ func TestInflightTransactionFlowAsyncPolled(t *testing.T) {
 	// Third Partial Commit (Remaining amount - 250)
 	// Committing with 0 means commit remaining
 	t.Logf("Submitting third partial commit (remaining amount) for inflightTxn ID: %s", inflightTxn.TransactionID)
-	commitTxn3, err := blnkInstance.CommitInflightTransactionWithQueue(ctx, inflightTxn.TransactionID, big.NewInt(0))
+	commitTxn3, err := ledgerforgeInstance.CommitInflightTransactionWithQueue(ctx, inflightTxn.TransactionID, big.NewInt(0))
 	require.NoError(t, err, "Failed to submit third partial commit (remaining)")
 	require.Equal(t, StatusApplied, commitTxn3.Status, "Third partial commit submission should have status COMMIT")
 
@@ -5040,7 +5044,7 @@ func TestMultipleSourcesTransactionFlowAsyncPolled(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test_ms_async",
@@ -5063,14 +5067,14 @@ func TestMultipleSourcesTransactionFlowAsyncPolled(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnkInstance, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforgeInstance, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	// Construct the specific transaction queue name
 	transactionQueueName := fmt.Sprintf("%s_%d", cnf.Queue.TransactionQueue, 1)
 
 	// Start the test Asynq worker
-	cleanupWorker := startTestAsynqWorker(t, cnf, blnkInstance, transactionQueueName)
+	cleanupWorker := startTestAsynqWorker(t, cnf, ledgerforgeInstance, transactionQueueName)
 	defer cleanupWorker()
 
 	txnRef := "txn_" + model.GenerateUUIDWithSuffix("test_ms_async")
@@ -5101,7 +5105,7 @@ func TestMultipleSourcesTransactionFlowAsyncPolled(t *testing.T) {
 		SkipQueue:      false, // Key: Will be queued
 	}
 
-	queuedTxn, err := blnkInstance.QueueTransaction(ctx, txn)
+	queuedTxn, err := ledgerforgeInstance.QueueTransaction(ctx, txn)
 	require.NoError(t, err, "Failed to queue multi-source transaction")
 	require.Equal(t, StatusQueued, queuedTxn.Status, "Multi-source transaction should initially be QUEUED")
 
@@ -5149,7 +5153,7 @@ func TestMultipleDestinationsTransactionFlowAsyncPolled(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test_md_async",
@@ -5172,14 +5176,14 @@ func TestMultipleDestinationsTransactionFlowAsyncPolled(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnkInstance, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforgeInstance, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	// Construct the specific transaction queue name
 	transactionQueueName := fmt.Sprintf("%s_%d", cnf.Queue.TransactionQueue, 1)
 
 	// Start the test Asynq worker
-	cleanupWorker := startTestAsynqWorker(t, cnf, blnkInstance, transactionQueueName)
+	cleanupWorker := startTestAsynqWorker(t, cnf, ledgerforgeInstance, transactionQueueName)
 	defer cleanupWorker()
 
 	txnRef := "txn_" + model.GenerateUUIDWithSuffix("test_md_async")
@@ -5210,7 +5214,7 @@ func TestMultipleDestinationsTransactionFlowAsyncPolled(t *testing.T) {
 		SkipQueue:      false, // Key: Will be queued
 	}
 
-	queuedTxn, err := blnkInstance.QueueTransaction(ctx, txn)
+	queuedTxn, err := ledgerforgeInstance.QueueTransaction(ctx, txn)
 	require.NoError(t, err, "Failed to queue multi-destination transaction")
 	require.Equal(t, StatusQueued, queuedTxn.Status, "Multi-destination transaction should initially be QUEUED")
 
@@ -5265,7 +5269,7 @@ func TestInflightTransactionWithOverdraftOnCommit(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test_overdraft",
@@ -5291,11 +5295,11 @@ func TestInflightTransactionWithOverdraftOnCommit(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	// Start the test Asynq worker to process queued transactions
-	cleanupWorker := startTestAsynqWorker(t, cnf, blnk, transactionQueueName)
+	cleanupWorker := startTestAsynqWorker(t, cnf, ledgerforge, transactionQueueName)
 	defer cleanupWorker()
 
 	// Step 1: Create source and destination balances
@@ -5340,7 +5344,7 @@ func TestInflightTransactionWithOverdraftOnCommit(t *testing.T) {
 
 	// Queue the inflight transaction
 	// When an inflight transaction is queued, it should be in QUEUED status initially
-	queuedTxn, err := blnk.QueueTransaction(ctx, txn)
+	queuedTxn, err := ledgerforge.QueueTransaction(ctx, txn)
 	require.NoError(t, err, "Failed to queue inflight transaction")
 	require.Equal(t, StatusQueued, queuedTxn.Status, "Transaction should be QUEUED")
 
@@ -5355,8 +5359,8 @@ func TestInflightTransactionWithOverdraftOnCommit(t *testing.T) {
 	// Step 4: Now attempt to commit using the commit worker
 	// This simulates the actual flow where a commit request goes through the queue
 	// ProcessTransactionInBatches will use the CommitWorker to process the transaction
-	committedTxns, err := blnk.ProcessTransactionInBatches(ctx, queuedTxn.TransactionID, big.NewInt(0), 1, false,
-		blnk.GetInflightTransactionsByParentID, blnk.CommitWorker)
+	committedTxns, err := ledgerforge.ProcessTransactionInBatches(ctx, queuedTxn.TransactionID, big.NewInt(0), 1, false,
+		ledgerforge.GetInflightTransactionsByParentID, ledgerforge.CommitWorker)
 
 	// Since the transaction was rejected, the commit attempt should either:
 	// 1. Return an error (no inflight transactions found)
@@ -5415,7 +5419,7 @@ func TestCreateBulkTransactionsSyncNonAtomic(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test_bulk",
@@ -5438,8 +5442,8 @@ func TestCreateBulkTransactionsSyncNonAtomic(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	// Create test balances
 	sourceBalance := &model.Balance{
@@ -5497,7 +5501,7 @@ func TestCreateBulkTransactionsSyncNonAtomic(t *testing.T) {
 	}
 
 	// Execute bulk transaction
-	result, err := blnk.CreateBulkTransactions(ctx, req)
+	result, err := ledgerforge.CreateBulkTransactions(ctx, req)
 	require.NoError(t, err, "Failed to create bulk transactions")
 	require.NotNil(t, result, "Result should not be nil")
 	require.Equal(t, "applied", result.Status, "Status should be applied")
@@ -5539,7 +5543,7 @@ func TestCreateBulkTransactionsSyncAtomicSuccess(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test_bulk_atomic",
@@ -5562,8 +5566,8 @@ func TestCreateBulkTransactionsSyncAtomicSuccess(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	// Create test balances
 	sourceBalance := &model.Balance{
@@ -5621,7 +5625,7 @@ func TestCreateBulkTransactionsSyncAtomicSuccess(t *testing.T) {
 	}
 
 	// Execute bulk transaction
-	result, err := blnk.CreateBulkTransactions(ctx, req)
+	result, err := ledgerforge.CreateBulkTransactions(ctx, req)
 	require.NoError(t, err, "Failed to create bulk transactions")
 	require.NotNil(t, result, "Result should not be nil")
 	require.Equal(t, "applied", result.Status, "Status should be applied")
@@ -5663,7 +5667,7 @@ func TestCreateBulkTransactionsInflightAsync(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test_bulk_inflight",
@@ -5686,12 +5690,12 @@ func TestCreateBulkTransactionsInflightAsync(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	// Start the test Asynq worker to process inflight transactions
 	transactionQueueName := fmt.Sprintf("%s_%d", cnf.Queue.TransactionQueue, 1)
-	cleanupWorker := startTestAsynqWorker(t, cnf, blnk, transactionQueueName)
+	cleanupWorker := startTestAsynqWorker(t, cnf, ledgerforge, transactionQueueName)
 	defer cleanupWorker()
 
 	// Create test balances
@@ -5750,7 +5754,7 @@ func TestCreateBulkTransactionsInflightAsync(t *testing.T) {
 	}
 
 	// Execute bulk inflight transaction asynchronously
-	result, err := blnk.CreateBulkTransactions(ctx, req)
+	result, err := ledgerforge.CreateBulkTransactions(ctx, req)
 	require.NoError(t, err, "Failed to create bulk inflight transactions")
 	require.NotNil(t, result, "Result should not be nil")
 	require.Equal(t, "processing", result.Status, "Status should be processing for async")
@@ -5804,8 +5808,8 @@ func TestCreateBulkTransactionsInflightAsync(t *testing.T) {
 		"Destination 2 inflight balance should be credited by second transaction amount")
 
 	// Now commit all inflight transactions using the commit worker with batch ID
-	committedTxns, err := blnk.ProcessTransactionInBatches(ctx, result.BatchID, big.NewInt(0), 1, false,
-		blnk.GetInflightTransactionsByParentID, blnk.CommitWorker)
+	committedTxns, err := ledgerforge.ProcessTransactionInBatches(ctx, result.BatchID, big.NewInt(0), 1, false,
+		ledgerforge.GetInflightTransactionsByParentID, ledgerforge.CommitWorker)
 	require.NoError(t, err, "Failed to commit inflight transactions")
 	require.Equal(t, 2, len(committedTxns), "Should have committed 2 transactions")
 
@@ -5857,7 +5861,7 @@ func TestCreateBulkTransactionsAsync(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test_bulk_async",
@@ -5880,8 +5884,8 @@ func TestCreateBulkTransactionsAsync(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	// Create test balances
 	sourceBalance := &model.Balance{
@@ -5939,7 +5943,7 @@ func TestCreateBulkTransactionsAsync(t *testing.T) {
 	}
 
 	// Execute bulk transaction asynchronously
-	result, err := blnk.CreateBulkTransactions(ctx, req)
+	result, err := ledgerforge.CreateBulkTransactions(ctx, req)
 	require.NoError(t, err, "Failed to create async bulk transactions")
 	require.NotNil(t, result, "Result should not be nil")
 	require.Equal(t, "processing", result.Status, "Status should be processing for async")
@@ -5983,7 +5987,7 @@ func TestCreateBulkTransactionsNonAtomicPartialFailure(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test_bulk_non_atomic_fail",
@@ -6006,8 +6010,8 @@ func TestCreateBulkTransactionsNonAtomicPartialFailure(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	// Create test balances
 	sourceBalance := &model.Balance{
@@ -6058,7 +6062,7 @@ func TestCreateBulkTransactionsNonAtomicPartialFailure(t *testing.T) {
 	}
 
 	// Execute bulk transaction - should fail but first transaction should remain
-	result, err := blnk.CreateBulkTransactions(ctx, req)
+	result, err := ledgerforge.CreateBulkTransactions(ctx, req)
 	require.Error(t, err, "Bulk transaction should fail due to invalid destination")
 	require.NotNil(t, result, "Result should not be nil even on failure")
 	require.Equal(t, "failed", result.Status, "Status should be failed")
@@ -6108,8 +6112,8 @@ func TestGetTransaction_Mock(t *testing.T) {
 
 		mockDS.On("GetTransaction", mock.Anything, txnID).Return(expectedTxn, nil)
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		result, err := blnk.GetTransaction(context.Background(), txnID)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		result, err := ledgerforge.GetTransaction(context.Background(), txnID)
 
 		assert.NoError(t, err)
 		assert.NotNil(t, result)
@@ -6124,8 +6128,8 @@ func TestGetTransaction_Mock(t *testing.T) {
 		txnID := "txn_nonexistent"
 		mockDS.On("GetTransaction", mock.Anything, txnID).Return((*model.Transaction)(nil), fmt.Errorf("not found"))
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		result, err := blnk.GetTransaction(context.Background(), txnID)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		result, err := ledgerforge.GetTransaction(context.Background(), txnID)
 
 		assert.Error(t, err)
 		assert.Nil(t, result)
@@ -6154,8 +6158,8 @@ func TestGetAllTransactions_Mock(t *testing.T) {
 
 		mockDS.On("GetAllTransactions", 10, 0).Return(expectedTxns, nil)
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		result, err := blnk.GetAllTransactions(10, 0)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		result, err := ledgerforge.GetAllTransactions(10, 0)
 
 		assert.NoError(t, err)
 		assert.Len(t, result, 2)
@@ -6169,8 +6173,8 @@ func TestGetAllTransactions_Mock(t *testing.T) {
 
 		mockDS.On("GetAllTransactions", 10, 100).Return([]model.Transaction{}, nil)
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		result, err := blnk.GetAllTransactions(10, 100)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		result, err := ledgerforge.GetAllTransactions(10, 100)
 
 		assert.NoError(t, err)
 		assert.Len(t, result, 0)
@@ -6182,8 +6186,8 @@ func TestGetAllTransactions_Mock(t *testing.T) {
 
 		mockDS.On("GetAllTransactions", 10, 0).Return([]model.Transaction(nil), fmt.Errorf("database error"))
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		result, err := blnk.GetAllTransactions(10, 0)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		result, err := ledgerforge.GetAllTransactions(10, 0)
 
 		assert.Error(t, err)
 		assert.Nil(t, result)
@@ -6215,8 +6219,8 @@ func TestGetTransactionByRef_Mock(t *testing.T) {
 
 		mockDS.On("GetTransactionByRef", mock.Anything, reference).Return(expectedTxn, nil)
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		result, err := blnk.GetTransactionByRef(context.Background(), reference)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		result, err := ledgerforge.GetTransactionByRef(context.Background(), reference)
 
 		assert.NoError(t, err)
 		assert.Equal(t, "txn_found", result.TransactionID)
@@ -6230,8 +6234,8 @@ func TestGetTransactionByRef_Mock(t *testing.T) {
 		reference := "ref_nonexistent"
 		mockDS.On("GetTransactionByRef", mock.Anything, reference).Return(model.Transaction{}, fmt.Errorf("not found"))
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		result, err := blnk.GetTransactionByRef(context.Background(), reference)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		result, err := ledgerforge.GetTransactionByRef(context.Background(), reference)
 
 		assert.Error(t, err)
 		assert.Equal(t, model.Transaction{}, result)
@@ -6258,8 +6262,8 @@ func TestUpdateTransactionStatus_Mock(t *testing.T) {
 
 		mockDS.On("UpdateTransactionStatus", mock.Anything, txnID, newStatus).Return(nil)
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		err := blnk.UpdateTransactionStatus(context.Background(), txnID, newStatus)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		err := ledgerforge.UpdateTransactionStatus(context.Background(), txnID, newStatus)
 
 		assert.NoError(t, err)
 		mockDS.AssertExpectations(t)
@@ -6273,8 +6277,8 @@ func TestUpdateTransactionStatus_Mock(t *testing.T) {
 
 		mockDS.On("UpdateTransactionStatus", mock.Anything, txnID, newStatus).Return(fmt.Errorf("not found"))
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		err := blnk.UpdateTransactionStatus(context.Background(), txnID, newStatus)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		err := ledgerforge.UpdateTransactionStatus(context.Background(), txnID, newStatus)
 
 		assert.Error(t, err)
 		mockDS.AssertExpectations(t)
@@ -6303,8 +6307,8 @@ func TestGetRefundableTransactionsByParentID_Mock(t *testing.T) {
 
 		mockDS.On("GetRefundableTransactionsByParentID", mock.Anything, parentID, 100, int64(0)).Return(expectedTxns, nil)
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		result, err := blnk.GetRefundableTransactionsByParentID(context.Background(), parentID, 100, 0)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		result, err := ledgerforge.GetRefundableTransactionsByParentID(context.Background(), parentID, 100, 0)
 
 		assert.NoError(t, err)
 		assert.Len(t, result, 2)
@@ -6319,8 +6323,8 @@ func TestGetRefundableTransactionsByParentID_Mock(t *testing.T) {
 		parentID := "bulk_no_children"
 		mockDS.On("GetRefundableTransactionsByParentID", mock.Anything, parentID, 100, int64(0)).Return([]*model.Transaction{}, nil)
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		result, err := blnk.GetRefundableTransactionsByParentID(context.Background(), parentID, 100, 0)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		result, err := ledgerforge.GetRefundableTransactionsByParentID(context.Background(), parentID, 100, 0)
 
 		assert.NoError(t, err)
 		assert.Len(t, result, 0)
@@ -6333,8 +6337,8 @@ func TestGetRefundableTransactionsByParentID_Mock(t *testing.T) {
 		parentID := "bulk_error"
 		mockDS.On("GetRefundableTransactionsByParentID", mock.Anything, parentID, 100, int64(0)).Return(([]*model.Transaction)(nil), fmt.Errorf("db error"))
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		result, err := blnk.GetRefundableTransactionsByParentID(context.Background(), parentID, 100, 0)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		result, err := ledgerforge.GetRefundableTransactionsByParentID(context.Background(), parentID, 100, 0)
 
 		assert.Error(t, err)
 		assert.Nil(t, result)
@@ -6342,7 +6346,7 @@ func TestGetRefundableTransactionsByParentID_Mock(t *testing.T) {
 	})
 }
 
-func TestLogRollbackResult_Blnk(t *testing.T) {
+func TestLogRollbackResult_LedgerForge(t *testing.T) {
 	cnf := &config.Configuration{
 		Redis: config.RedisConfig{Dns: "localhost:6379"},
 		Queue: config.QueueConfig{
@@ -6354,14 +6358,14 @@ func TestLogRollbackResult_Blnk(t *testing.T) {
 	config.ConfigStore.Store(cnf)
 
 	mockDS := new(mocks.MockDataSource)
-	blnk := &Blnk{datasource: mockDS, config: cnf}
+	ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
 
 	t.Run("Log Success", func(t *testing.T) {
-		blnk.logRollbackResult("batch_123", "voided", nil)
+		ledgerforge.logRollbackResult("batch_123", "voided", nil)
 	})
 
 	t.Run("Log Failure", func(t *testing.T) {
-		blnk.logRollbackResult("batch_456", "voided", fmt.Errorf("rollback failed"))
+		ledgerforge.logRollbackResult("batch_456", "voided", fmt.Errorf("rollback failed"))
 	})
 }
 
@@ -6414,8 +6418,8 @@ func TestGetAccountByNumber_Mock(t *testing.T) {
 
 		mockDS.On("GetAccountByNumber", accountNumber).Return(expectedAccount, nil)
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		result, err := blnk.GetAccountByNumber(accountNumber)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		result, err := ledgerforge.GetAccountByNumber(accountNumber)
 
 		assert.NoError(t, err)
 		assert.NotNil(t, result)
@@ -6429,8 +6433,8 @@ func TestGetAccountByNumber_Mock(t *testing.T) {
 
 		mockDS.On("GetAccountByNumber", accountNumber).Return((*model.Account)(nil), fmt.Errorf("not found"))
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		result, err := blnk.GetAccountByNumber(accountNumber)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		result, err := ledgerforge.GetAccountByNumber(accountNumber)
 
 		assert.Error(t, err)
 		assert.Nil(t, result)
@@ -6438,7 +6442,7 @@ func TestGetAccountByNumber_Mock(t *testing.T) {
 	})
 }
 
-func TestConvertToStructFieldName_Blnk(t *testing.T) {
+func TestConvertToStructFieldName_LedgerForge(t *testing.T) {
 	tests := []struct {
 		input    string
 		expected string
@@ -6478,8 +6482,8 @@ func TestUpdateBalanceIdentity_Mock(t *testing.T) {
 		mockDS.On("GetBalanceByIDLite", balanceID).Return(&model.Balance{BalanceID: balanceID}, nil)
 		mockDS.On("UpdateBalanceIdentity", balanceID, identityID).Return(nil)
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		err := blnk.UpdateBalanceIdentity(balanceID, identityID)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		err := ledgerforge.UpdateBalanceIdentity(balanceID, identityID)
 
 		assert.NoError(t, err)
 		mockDS.AssertExpectations(t)
@@ -6492,8 +6496,8 @@ func TestUpdateBalanceIdentity_Mock(t *testing.T) {
 
 		mockDS.On("GetIdentityByID", identityID).Return((*model.Identity)(nil), fmt.Errorf("not found"))
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		err := blnk.UpdateBalanceIdentity(balanceID, identityID)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		err := ledgerforge.UpdateBalanceIdentity(balanceID, identityID)
 
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "identity validation failed")
@@ -6508,8 +6512,8 @@ func TestUpdateBalanceIdentity_Mock(t *testing.T) {
 		mockDS.On("GetIdentityByID", identityID).Return(&model.Identity{IdentityID: identityID}, nil)
 		mockDS.On("GetBalanceByIDLite", balanceID).Return((*model.Balance)(nil), fmt.Errorf("not found"))
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		err := blnk.UpdateBalanceIdentity(balanceID, identityID)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		err := ledgerforge.UpdateBalanceIdentity(balanceID, identityID)
 
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "balance validation failed")
@@ -6525,8 +6529,8 @@ func TestUpdateBalanceIdentity_Mock(t *testing.T) {
 		mockDS.On("GetBalanceByIDLite", balanceID).Return(&model.Balance{BalanceID: balanceID}, nil)
 		mockDS.On("UpdateBalanceIdentity", balanceID, identityID).Return(fmt.Errorf("update failed"))
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		err := blnk.UpdateBalanceIdentity(balanceID, identityID)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		err := ledgerforge.UpdateBalanceIdentity(balanceID, identityID)
 
 		assert.Error(t, err)
 		mockDS.AssertExpectations(t)
@@ -6554,8 +6558,8 @@ func TestGetInflightTransactionsByParentID_Mock(t *testing.T) {
 
 		mockDS.On("GetInflightTransactionsByParentID", mock.Anything, parentID, 100, int64(0)).Return(expectedTxns, nil)
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		result, err := blnk.GetInflightTransactionsByParentID(context.Background(), parentID, 100, 0)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		result, err := ledgerforge.GetInflightTransactionsByParentID(context.Background(), parentID, 100, 0)
 
 		assert.NoError(t, err)
 		assert.Len(t, result, 2)
@@ -6568,8 +6572,8 @@ func TestGetInflightTransactionsByParentID_Mock(t *testing.T) {
 
 		mockDS.On("GetInflightTransactionsByParentID", mock.Anything, parentID, 100, int64(0)).Return([]*model.Transaction{}, nil)
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		result, err := blnk.GetInflightTransactionsByParentID(context.Background(), parentID, 100, 0)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		result, err := ledgerforge.GetInflightTransactionsByParentID(context.Background(), parentID, 100, 0)
 
 		assert.NoError(t, err)
 		assert.Len(t, result, 0)
@@ -6599,8 +6603,8 @@ func TestGetBalanceByID_Mock(t *testing.T) {
 
 		mockDS.On("GetBalanceByID", balanceID, []string(nil), false).Return(expectedBalance, nil)
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		result, err := blnk.GetBalanceByID(context.Background(), balanceID, nil, false)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		result, err := ledgerforge.GetBalanceByID(context.Background(), balanceID, nil, false)
 
 		assert.NoError(t, err)
 		assert.NotNil(t, result)
@@ -6614,8 +6618,8 @@ func TestGetBalanceByID_Mock(t *testing.T) {
 
 		mockDS.On("GetBalanceByID", balanceID, []string(nil), false).Return((*model.Balance)(nil), fmt.Errorf("not found"))
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		result, err := blnk.GetBalanceByID(context.Background(), balanceID, nil, false)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		result, err := ledgerforge.GetBalanceByID(context.Background(), balanceID, nil, false)
 
 		assert.Error(t, err)
 		assert.Nil(t, result)
@@ -6643,8 +6647,8 @@ func TestGetAllBalances_Mock(t *testing.T) {
 
 		mockDS.On("GetAllBalances", 10, 0).Return(expectedBalances, nil)
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		result, err := blnk.GetAllBalances(context.Background(), 10, 0)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		result, err := ledgerforge.GetAllBalances(context.Background(), 10, 0)
 
 		assert.NoError(t, err)
 		assert.Len(t, result, 2)
@@ -6680,8 +6684,8 @@ func TestCreateAPIKey_Mock(t *testing.T) {
 
 		mockDS.On("CreateAPIKey", mock.Anything, name, ownerID, scopes, expiresAt).Return(expectedKey, nil)
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		result, err := blnk.CreateAPIKey(context.Background(), name, ownerID, scopes, expiresAt)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		result, err := ledgerforge.CreateAPIKey(context.Background(), name, ownerID, scopes, expiresAt)
 
 		assert.NoError(t, err)
 		assert.NotNil(t, result)
@@ -6694,8 +6698,8 @@ func TestCreateAPIKey_Mock(t *testing.T) {
 		mockDS.On("CreateAPIKey", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 			Return((*model.APIKey)(nil), fmt.Errorf("creation failed"))
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		result, err := blnk.CreateAPIKey(context.Background(), "name", "owner", []string{}, time.Now())
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		result, err := ledgerforge.CreateAPIKey(context.Background(), "name", "owner", []string{}, time.Now())
 
 		assert.Error(t, err)
 		assert.Nil(t, result)
@@ -6724,8 +6728,8 @@ func TestListAPIKeys_Mock(t *testing.T) {
 
 		mockDS.On("ListAPIKeys", mock.Anything, ownerID).Return(expectedKeys, nil)
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		result, err := blnk.ListAPIKeys(context.Background(), ownerID)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		result, err := ledgerforge.ListAPIKeys(context.Background(), ownerID)
 
 		assert.NoError(t, err)
 		assert.Len(t, result, 2)
@@ -6736,8 +6740,8 @@ func TestListAPIKeys_Mock(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
 		mockDS.On("ListAPIKeys", mock.Anything, "owner_empty").Return([]*model.APIKey{}, nil)
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		result, err := blnk.ListAPIKeys(context.Background(), "owner_empty")
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		result, err := ledgerforge.ListAPIKeys(context.Background(), "owner_empty")
 
 		assert.NoError(t, err)
 		assert.Len(t, result, 0)
@@ -6763,8 +6767,8 @@ func TestRevokeAPIKey_Mock(t *testing.T) {
 
 		mockDS.On("RevokeAPIKey", mock.Anything, keyID, ownerID).Return(nil)
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		err := blnk.RevokeAPIKey(context.Background(), keyID, ownerID)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		err := ledgerforge.RevokeAPIKey(context.Background(), keyID, ownerID)
 
 		assert.NoError(t, err)
 		mockDS.AssertExpectations(t)
@@ -6774,8 +6778,8 @@ func TestRevokeAPIKey_Mock(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
 		mockDS.On("RevokeAPIKey", mock.Anything, "nonexistent", "owner").Return(fmt.Errorf("not found"))
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		err := blnk.RevokeAPIKey(context.Background(), "nonexistent", "owner")
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		err := ledgerforge.RevokeAPIKey(context.Background(), "nonexistent", "owner")
 
 		assert.Error(t, err)
 		mockDS.AssertExpectations(t)
@@ -6804,8 +6808,8 @@ func TestGetAPIKeyByKey_Mock(t *testing.T) {
 
 		mockDS.On("GetAPIKey", mock.Anything, keyString).Return(expectedKey, nil)
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		result, err := blnk.GetAPIKeyByKey(context.Background(), keyString)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		result, err := ledgerforge.GetAPIKeyByKey(context.Background(), keyString)
 
 		assert.NoError(t, err)
 		assert.NotNil(t, result)
@@ -6817,8 +6821,8 @@ func TestGetAPIKeyByKey_Mock(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
 		mockDS.On("GetAPIKey", mock.Anything, "invalid").Return((*model.APIKey)(nil), fmt.Errorf("not found"))
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		result, err := blnk.GetAPIKeyByKey(context.Background(), "invalid")
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		result, err := ledgerforge.GetAPIKeyByKey(context.Background(), "invalid")
 
 		assert.Error(t, err)
 		assert.Nil(t, result)
@@ -6843,8 +6847,8 @@ func TestUpdateLastUsed_Mock(t *testing.T) {
 
 		mockDS.On("UpdateLastUsed", mock.Anything, keyID).Return(nil)
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		err := blnk.UpdateLastUsed(context.Background(), keyID)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		err := ledgerforge.UpdateLastUsed(context.Background(), keyID)
 
 		assert.NoError(t, err)
 		mockDS.AssertExpectations(t)
@@ -6854,8 +6858,8 @@ func TestUpdateLastUsed_Mock(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
 		mockDS.On("UpdateLastUsed", mock.Anything, "invalid").Return(fmt.Errorf("update failed"))
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		err := blnk.UpdateLastUsed(context.Background(), "invalid")
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		err := ledgerforge.UpdateLastUsed(context.Background(), "invalid")
 
 		assert.Error(t, err)
 		mockDS.AssertExpectations(t)
@@ -6883,8 +6887,8 @@ func TestGetReconciliation_Mock(t *testing.T) {
 
 		mockDS.On("GetReconciliation", mock.Anything, reconciliationID).Return(expected, nil)
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		result, err := blnk.GetReconciliation(context.Background(), reconciliationID)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		result, err := ledgerforge.GetReconciliation(context.Background(), reconciliationID)
 
 		assert.NoError(t, err)
 		assert.NotNil(t, result)
@@ -6896,8 +6900,8 @@ func TestGetReconciliation_Mock(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
 		mockDS.On("GetReconciliation", mock.Anything, "nonexistent").Return((*model.Reconciliation)(nil), fmt.Errorf("not found"))
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		result, err := blnk.GetReconciliation(context.Background(), "nonexistent")
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		result, err := ledgerforge.GetReconciliation(context.Background(), "nonexistent")
 
 		assert.Error(t, err)
 		assert.Nil(t, result)
@@ -6927,8 +6931,8 @@ func TestGetBalanceAtTime_Mock(t *testing.T) {
 
 		mockDS.On("GetBalanceAtTime", mock.Anything, balanceID, targetTime, false).Return(expected, nil)
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		result, err := blnk.GetBalanceAtTime(context.Background(), balanceID, targetTime, false)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		result, err := ledgerforge.GetBalanceAtTime(context.Background(), balanceID, targetTime, false)
 
 		assert.NoError(t, err)
 		assert.NotNil(t, result)
@@ -6941,8 +6945,8 @@ func TestGetBalanceAtTime_Mock(t *testing.T) {
 		targetTime := time.Now()
 		mockDS.On("GetBalanceAtTime", mock.Anything, "invalid", targetTime, false).Return((*model.Balance)(nil), fmt.Errorf("not found"))
 
-		blnk := &Blnk{datasource: mockDS, config: cnf}
-		result, err := blnk.GetBalanceAtTime(context.Background(), "invalid", targetTime, false)
+		ledgerforge := &LedgerForge{datasource: mockDS, config: cnf}
+		result, err := ledgerforge.GetBalanceAtTime(context.Background(), "invalid", targetTime, false)
 
 		assert.Error(t, err)
 		assert.Nil(t, result)

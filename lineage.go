@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package blnk
+package ledgerforge
 
 import (
 	"context"
@@ -25,19 +25,19 @@ import (
 	"strings"
 	"time"
 
-	redlock "github.com/blnkfinance/blnk/internal/lock"
-	"github.com/blnkfinance/blnk/internal/notification"
-	"github.com/blnkfinance/blnk/model"
+	redlock "github.com/devaccuracy/ledgerforge/internal/lock"
+	"github.com/devaccuracy/ledgerforge/internal/notification"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
 
 // LineageProviderKey is the metadata key used to identify the provider of funds in a transaction.
-const LineageProviderKey = "BLNK_LINEAGE_PROVIDER"
+const LineageProviderKey = "LEDGERFORGE_LINEAGE_PROVIDER"
 
 // LineageFundAllocation is the metadata key used to store fund allocation details in a transaction.
-const LineageFundAllocation = "BLNK_FUND_ALLOCATION"
+const LineageFundAllocation = "LEDGERFORGE_FUND_ALLOCATION"
 
 // Allocation strategies for fund lineage debit processing.
 const (
@@ -122,7 +122,7 @@ type destinationLineageInfo struct {
 // - txn *model.Transaction: The transaction being processed.
 // - sourceBalance *model.Balance: The source balance for the transaction.
 // - destinationBalance *model.Balance: The destination balance for the transaction.
-func (l *Blnk) processLineage(ctx context.Context, txn *model.Transaction, sourceBalance, destinationBalance *model.Balance) {
+func (l *LedgerForge) processLineage(ctx context.Context, txn *model.Transaction, sourceBalance, destinationBalance *model.Balance) {
 	ctx, span := tracer.Start(ctx, "ProcessLineage")
 	defer span.End()
 
@@ -173,7 +173,7 @@ func (l *Blnk) processLineage(ctx context.Context, txn *model.Transaction, sourc
 //
 // Returns:
 // - string: The provider identifier, or empty string if not set.
-func (l *Blnk) getLineageProvider(txn *model.Transaction) string {
+func (l *LedgerForge) getLineageProvider(txn *model.Transaction) string {
 	if txn.MetaData == nil {
 		return ""
 	}
@@ -197,7 +197,7 @@ func (l *Blnk) getLineageProvider(txn *model.Transaction) string {
 // Returns:
 // - string: The validated provider name (empty if invalid/should be ignored).
 // - error: An error if validation fails (database errors only, not for invalid providers).
-func (l *Blnk) validateLineageProvider(ctx context.Context, provider string, sourceBalance *model.Balance) (string, error) {
+func (l *LedgerForge) validateLineageProvider(ctx context.Context, provider string, sourceBalance *model.Balance) (string, error) {
 	if provider == "" {
 		return "", nil
 	}
@@ -233,7 +233,7 @@ func (l *Blnk) validateLineageProvider(ctx context.Context, provider string, sou
 //
 // Returns:
 // - error: An error if the credit processing fails.
-func (l *Blnk) processLineageCredit(ctx context.Context, txn *model.Transaction, destBalance *model.Balance, provider string) error {
+func (l *LedgerForge) processLineageCredit(ctx context.Context, txn *model.Transaction, destBalance *model.Balance, provider string) error {
 	ctx, span := tracer.Start(ctx, "ProcessLineageCredit")
 	defer span.End()
 
@@ -285,7 +285,7 @@ func (l *Blnk) processLineageCredit(ctx context.Context, txn *model.Transaction,
 // - *model.Balance: The shadow balance for the provider.
 // - *model.Balance: The aggregate balance for all providers.
 // - error: An error if the balances could not be retrieved or created.
-func (l *Blnk) getOrCreateLineageBalances(ctx context.Context, identityID, provider, currency string) (*model.Balance, *model.Balance, error) {
+func (l *LedgerForge) getOrCreateLineageBalances(ctx context.Context, identityID, provider, currency string) (*model.Balance, *model.Balance, error) {
 	identity, err := l.datasource.GetIdentityByID(identityID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get identity %s: %w", identityID, err)
@@ -320,7 +320,7 @@ func (l *Blnk) getOrCreateLineageBalances(ctx context.Context, identityID, provi
 //
 // Returns:
 // - error: An error if the mapping could not be created.
-func (l *Blnk) upsertCreditLineageMapping(ctx context.Context, destBalance *model.Balance, provider string, shadowBalance, aggregateBalance *model.Balance, identityID string) error {
+func (l *LedgerForge) upsertCreditLineageMapping(ctx context.Context, destBalance *model.Balance, provider string, shadowBalance, aggregateBalance *model.Balance, identityID string) error {
 	mapping := model.LineageMapping{
 		BalanceID:          destBalance.BalanceID,
 		Provider:           provider,
@@ -349,7 +349,7 @@ func (l *Blnk) upsertCreditLineageMapping(ctx context.Context, destBalance *mode
 //
 // Returns:
 // - error: An error if the shadow transaction could not be queued.
-func (l *Blnk) queueShadowCreditTransaction(ctx context.Context, txn *model.Transaction, destBalance *model.Balance, provider string, shadowBalance, aggregateBalance *model.Balance, identityID string) error {
+func (l *LedgerForge) queueShadowCreditTransaction(ctx context.Context, txn *model.Transaction, destBalance *model.Balance, provider string, shadowBalance, aggregateBalance *model.Balance, identityID string) error {
 	shadowTxn := &model.Transaction{
 		Source:        shadowBalance.BalanceID,
 		Destination:   aggregateBalance.BalanceID,
@@ -392,7 +392,7 @@ func (l *Blnk) queueShadowCreditTransaction(ctx context.Context, txn *model.Tran
 //
 // Returns:
 // - error: An error if the debit processing fails.
-func (l *Blnk) processLineageDebit(ctx context.Context, txn *model.Transaction, sourceBalance, destinationBalance *model.Balance) error {
+func (l *LedgerForge) processLineageDebit(ctx context.Context, txn *model.Transaction, sourceBalance, destinationBalance *model.Balance) error {
 	ctx, span := tracer.Start(ctx, "ProcessLineageDebit")
 	defer span.End()
 
@@ -474,7 +474,7 @@ func (l *Blnk) processLineageDebit(ctx context.Context, txn *model.Transaction, 
 // Returns:
 // - map[string]*destinationLineageInfo: Map of provider to destination lineage balances.
 // - error: An error if any balance could not be created.
-func (l *Blnk) prepareDestinationLineageBalances(ctx context.Context, mappings []model.LineageMapping, destinationBalance *model.Balance) (map[string]*destinationLineageInfo, error) {
+func (l *LedgerForge) prepareDestinationLineageBalances(ctx context.Context, mappings []model.LineageMapping, destinationBalance *model.Balance) (map[string]*destinationLineageInfo, error) {
 	result := make(map[string]*destinationLineageInfo, len(mappings))
 
 	for _, mapping := range mappings {
@@ -502,7 +502,7 @@ func (l *Blnk) prepareDestinationLineageBalances(ctx context.Context, mappings [
 // Returns:
 // - *redlock.MultiLocker: The acquired multi-lock.
 // - error: An error if the locks could not be acquired.
-func (l *Blnk) acquireLineageLocks(ctx context.Context, balanceIDs []string) (*redlock.MultiLocker, error) {
+func (l *LedgerForge) acquireLineageLocks(ctx context.Context, balanceIDs []string) (*redlock.MultiLocker, error) {
 	// Prefix all keys to avoid collision with main transaction locks
 	lockKeys := make([]string, 0, len(balanceIDs))
 	for _, id := range balanceIDs {
@@ -529,7 +529,7 @@ func (l *Blnk) acquireLineageLocks(ctx context.Context, balanceIDs []string) (*r
 // Returns:
 // - *model.Balance: The aggregate balance.
 // - error: An error if the balance could not be retrieved or created.
-func (l *Blnk) getSourceAggregateBalance(ctx context.Context, sourceBalance *model.Balance) (*model.Balance, error) {
+func (l *LedgerForge) getSourceAggregateBalance(ctx context.Context, sourceBalance *model.Balance) (*model.Balance, error) {
 	sourceIdentity, err := l.datasource.GetIdentityByID(sourceBalance.IdentityID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get source identity: %w", err)
@@ -557,7 +557,7 @@ func (l *Blnk) getSourceAggregateBalance(ctx context.Context, sourceBalance *mod
 // - destinationBalance *model.Balance: The destination balance.
 // - sourceAggBalance *model.Balance: The source aggregate balance.
 // - destLineageBalances map[string]*destinationLineageInfo: Pre-created destination lineage balances (may be nil).
-func (l *Blnk) processAllocations(ctx context.Context, txn *model.Transaction, allocations []Allocation, mappings []model.LineageMapping, sourceBalance, destinationBalance, sourceAggBalance *model.Balance, destLineageBalances map[string]*destinationLineageInfo) {
+func (l *LedgerForge) processAllocations(ctx context.Context, txn *model.Transaction, allocations []Allocation, mappings []model.LineageMapping, sourceBalance, destinationBalance, sourceAggBalance *model.Balance, destLineageBalances map[string]*destinationLineageInfo) {
 	for i, alloc := range allocations {
 		if alloc.Amount.Cmp(big.NewInt(0)) == 0 {
 			continue
@@ -593,7 +593,7 @@ func (l *Blnk) processAllocations(ctx context.Context, txn *model.Transaction, a
 //
 // Returns:
 // - error: An error if the transaction could not be queued.
-func (l *Blnk) queueReleaseTransaction(ctx context.Context, txn *model.Transaction, alloc Allocation, mapping *model.LineageMapping, sourceBalance, sourceAggBalance *model.Balance, index int) error {
+func (l *LedgerForge) queueReleaseTransaction(ctx context.Context, txn *model.Transaction, alloc Allocation, mapping *model.LineageMapping, sourceBalance, sourceAggBalance *model.Balance, index int) error {
 	releaseTxn := &model.Transaction{
 		Source:        sourceAggBalance.BalanceID,
 		Destination:   alloc.BalanceID,
@@ -632,7 +632,7 @@ func (l *Blnk) queueReleaseTransaction(ctx context.Context, txn *model.Transacti
 //
 // Returns:
 // - error: An error if destination lineage processing fails.
-func (l *Blnk) processDestinationLineage(ctx context.Context, txn *model.Transaction, alloc Allocation, mapping *model.LineageMapping, sourceBalance, destinationBalance *model.Balance, destLineageBalances map[string]*destinationLineageInfo, index int) error {
+func (l *LedgerForge) processDestinationLineage(ctx context.Context, txn *model.Transaction, alloc Allocation, mapping *model.LineageMapping, sourceBalance, destinationBalance *model.Balance, destLineageBalances map[string]*destinationLineageInfo, index int) error {
 	if destinationBalance == nil || !destinationBalance.TrackFundLineage || destinationBalance.IdentityID == "" {
 		return nil
 	}
@@ -679,7 +679,7 @@ func (l *Blnk) processDestinationLineage(ctx context.Context, txn *model.Transac
 // - *model.Balance: The destination shadow balance.
 // - *model.Balance: The destination aggregate balance.
 // - error: An error if the balances could not be retrieved or created.
-func (l *Blnk) getOrCreateDestinationLineageBalances(ctx context.Context, provider string, destinationBalance *model.Balance) (*model.Balance, *model.Balance, error) {
+func (l *LedgerForge) getOrCreateDestinationLineageBalances(ctx context.Context, provider string, destinationBalance *model.Balance) (*model.Balance, *model.Balance, error) {
 	destIdentity, err := l.datasource.GetIdentityByID(destinationBalance.IdentityID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get destination identity: %w", err)
@@ -718,7 +718,7 @@ func (l *Blnk) getOrCreateDestinationLineageBalances(ctx context.Context, provid
 //
 // Returns:
 // - error: An error if the transaction could not be queued.
-func (l *Blnk) queueReceiveTransaction(ctx context.Context, txn *model.Transaction, alloc Allocation, mapping *model.LineageMapping, sourceBalance, destinationBalance, destShadowBalance, destAggBalance *model.Balance, index int) error {
+func (l *LedgerForge) queueReceiveTransaction(ctx context.Context, txn *model.Transaction, alloc Allocation, mapping *model.LineageMapping, sourceBalance, destinationBalance, destShadowBalance, destAggBalance *model.Balance, index int) error {
 	receiveTxn := &model.Transaction{
 		Source:        destShadowBalance.BalanceID,
 		Destination:   destAggBalance.BalanceID,
@@ -750,7 +750,7 @@ func (l *Blnk) queueReceiveTransaction(ctx context.Context, txn *model.Transacti
 // - txn *model.Transaction: The transaction to update.
 // - allocations []Allocation: The calculated allocations.
 // - mappings []model.LineageMapping: The lineage mappings.
-func (l *Blnk) updateFundAllocationMetadata(ctx context.Context, txn *model.Transaction, allocations []Allocation, mappings []model.LineageMapping) {
+func (l *LedgerForge) updateFundAllocationMetadata(ctx context.Context, txn *model.Transaction, allocations []Allocation, mappings []model.LineageMapping) {
 	if len(allocations) == 0 {
 		return
 	}
@@ -777,7 +777,7 @@ func (l *Blnk) updateFundAllocationMetadata(ctx context.Context, txn *model.Tran
 //
 // Returns:
 // - []map[string]interface{}: The fund allocation list for metadata.
-func (l *Blnk) buildFundAllocationList(allocations []Allocation, mappings []model.LineageMapping, precision float64) []map[string]interface{} {
+func (l *LedgerForge) buildFundAllocationList(allocations []Allocation, mappings []model.LineageMapping, precision float64) []map[string]interface{} {
 	fundAllocation := make([]map[string]interface{}, 0, len(allocations))
 
 	for _, alloc := range allocations {
@@ -803,7 +803,7 @@ func (l *Blnk) buildFundAllocationList(allocations []Allocation, mappings []mode
 //
 // Returns:
 // - string: The generated identifier.
-func (l *Blnk) getIdentityIdentifier(identity *model.Identity) string {
+func (l *LedgerForge) getIdentityIdentifier(identity *model.Identity) string {
 	var namePart string
 
 	if identity.FirstName != "" && identity.LastName != "" {
@@ -834,7 +834,7 @@ func (l *Blnk) getIdentityIdentifier(identity *model.Identity) string {
 // Returns:
 // - []LineageSource: The available fund sources.
 // - error: An error if the sources could not be retrieved.
-func (l *Blnk) getLineageSources(ctx context.Context, mappings []model.LineageMapping) ([]LineageSource, error) {
+func (l *LedgerForge) getLineageSources(ctx context.Context, mappings []model.LineageMapping) ([]LineageSource, error) {
 	if len(mappings) == 0 {
 		return nil, nil
 	}
@@ -884,7 +884,7 @@ func (l *Blnk) getLineageSources(ctx context.Context, mappings []model.LineageMa
 //
 // Returns:
 // - []Allocation: The calculated allocations.
-func (l *Blnk) calculateAllocation(sources []LineageSource, amount *big.Int, strategy string) []Allocation {
+func (l *LedgerForge) calculateAllocation(sources []LineageSource, amount *big.Int, strategy string) []Allocation {
 	if len(sources) == 0 {
 		return nil
 	}
@@ -913,7 +913,7 @@ func (l *Blnk) calculateAllocation(sources []LineageSource, amount *big.Int, str
 //
 // Returns:
 // - []Allocation: The calculated allocations.
-func (l *Blnk) sequentialAllocation(sources []LineageSource, amount *big.Int) []Allocation {
+func (l *LedgerForge) sequentialAllocation(sources []LineageSource, amount *big.Int) []Allocation {
 	var allocations []Allocation
 
 	// Skip if amount is zero or negative
@@ -964,7 +964,7 @@ func (l *Blnk) sequentialAllocation(sources []LineageSource, amount *big.Int) []
 //
 // Returns:
 // - []Allocation: The calculated allocations.
-func (l *Blnk) proportionalAllocation(sources []LineageSource, amount *big.Int) []Allocation {
+func (l *LedgerForge) proportionalAllocation(sources []LineageSource, amount *big.Int) []Allocation {
 	var allocations []Allocation
 
 	// Skip if amount is zero or negative
@@ -1031,7 +1031,7 @@ func (l *Blnk) proportionalAllocation(sources []LineageSource, amount *big.Int) 
 //
 // Returns:
 // - *model.LineageMapping: The matching mapping, or nil if not found.
-func (l *Blnk) findMappingByShadowID(mappings []model.LineageMapping, shadowBalanceID string) *model.LineageMapping {
+func (l *LedgerForge) findMappingByShadowID(mappings []model.LineageMapping, shadowBalanceID string) *model.LineageMapping {
 	for i := range mappings {
 		if mappings[i].ShadowBalanceID == shadowBalanceID {
 			return &mappings[i]
@@ -1050,7 +1050,7 @@ func (l *Blnk) findMappingByShadowID(mappings []model.LineageMapping, shadowBala
 // Returns:
 // - *BalanceLineage: The lineage information for the balance.
 // - error: An error if the lineage could not be retrieved.
-func (l *Blnk) GetBalanceLineage(ctx context.Context, balanceID string) (*BalanceLineage, error) {
+func (l *LedgerForge) GetBalanceLineage(ctx context.Context, balanceID string) (*BalanceLineage, error) {
 	ctx, span := tracer.Start(ctx, "GetBalanceLineage")
 	defer span.End()
 
@@ -1084,7 +1084,7 @@ func (l *Blnk) GetBalanceLineage(ctx context.Context, balanceID string) (*Balanc
 // Parameters:
 // - lineage *BalanceLineage: The lineage to populate.
 // - mappings []model.LineageMapping: The lineage mappings.
-func (l *Blnk) populateLineageProviders(lineage *BalanceLineage, mappings []model.LineageMapping) {
+func (l *LedgerForge) populateLineageProviders(lineage *BalanceLineage, mappings []model.LineageMapping) {
 	for _, mapping := range mappings {
 		breakdown, err := l.calculateProviderBreakdown(mapping)
 		if err != nil {
@@ -1108,7 +1108,7 @@ func (l *Blnk) populateLineageProviders(lineage *BalanceLineage, mappings []mode
 // Returns:
 // - *ProviderBreakdown: The calculated breakdown.
 // - error: An error if the breakdown could not be calculated.
-func (l *Blnk) calculateProviderBreakdown(mapping model.LineageMapping) (*ProviderBreakdown, error) {
+func (l *LedgerForge) calculateProviderBreakdown(mapping model.LineageMapping) (*ProviderBreakdown, error) {
 	shadowBalance, err := l.datasource.GetBalanceByIDLite(mapping.ShadowBalanceID)
 	if err != nil {
 		return nil, err
@@ -1157,7 +1157,7 @@ type TransactionLineage struct {
 // Returns:
 // - *TransactionLineage: The lineage information for the transaction.
 // - error: An error if the lineage could not be retrieved.
-func (l *Blnk) GetTransactionLineage(ctx context.Context, transactionID string) (*TransactionLineage, error) {
+func (l *LedgerForge) GetTransactionLineage(ctx context.Context, transactionID string) (*TransactionLineage, error) {
 	ctx, span := tracer.Start(ctx, "GetTransactionLineage")
 	defer span.End()
 
@@ -1187,7 +1187,7 @@ func (l *Blnk) GetTransactionLineage(ctx context.Context, transactionID string) 
 //
 // Returns:
 // - []map[string]interface{}: The fund allocation data, or nil if not present.
-func (l *Blnk) extractFundAllocation(metadata map[string]interface{}) []map[string]interface{} {
+func (l *LedgerForge) extractFundAllocation(metadata map[string]interface{}) []map[string]interface{} {
 	if metadata == nil {
 		return nil
 	}
@@ -1223,7 +1223,7 @@ func (l *Blnk) extractFundAllocation(metadata map[string]interface{}) []map[stri
 //
 // Returns:
 // - error: An error if any shadow transaction failed to commit (excluding already-committed).
-func (l *Blnk) commitShadowTransactions(ctx context.Context, parentTransactionID string, amount *big.Int) error {
+func (l *LedgerForge) commitShadowTransactions(ctx context.Context, parentTransactionID string, amount *big.Int) error {
 	ctx, span := tracer.Start(ctx, "CommitShadowTransactions")
 	defer span.End()
 
@@ -1270,7 +1270,7 @@ func (l *Blnk) commitShadowTransactions(ctx context.Context, parentTransactionID
 //
 // Returns:
 // - error: An error if any shadow transaction failed to void (excluding already-processed).
-func (l *Blnk) voidShadowTransactions(ctx context.Context, parentTransactionID string) error {
+func (l *LedgerForge) voidShadowTransactions(ctx context.Context, parentTransactionID string) error {
 	ctx, span := tracer.Start(ctx, "VoidShadowTransactions")
 	defer span.End()
 
@@ -1318,7 +1318,7 @@ func (l *Blnk) voidShadowTransactions(ctx context.Context, parentTransactionID s
 //
 // Returns:
 // - error: An error if all processing attempts failed.
-func (l *Blnk) queueShadowWork(ctx context.Context, parentTransactionID string, lineageType string) error {
+func (l *LedgerForge) queueShadowWork(ctx context.Context, parentTransactionID string, lineageType string) error {
 	ctx, span := tracer.Start(ctx, "QueueShadowWork")
 	defer span.End()
 
@@ -1383,7 +1383,7 @@ func (l *Blnk) queueShadowWork(ctx context.Context, parentTransactionID string, 
 //
 // Returns:
 // - *model.LineageOutbox: The outbox entry to insert, or nil if no lineage processing needed.
-func (l *Blnk) PrepareLineageOutbox(ctx context.Context, txn *model.Transaction, sourceBalance, destinationBalance *model.Balance) *model.LineageOutbox {
+func (l *LedgerForge) PrepareLineageOutbox(ctx context.Context, txn *model.Transaction, sourceBalance, destinationBalance *model.Balance) *model.LineageOutbox {
 	_, span := tracer.Start(ctx, "PrepareLineageOutbox")
 	defer span.End()
 
@@ -1459,7 +1459,7 @@ func (l *Blnk) PrepareLineageOutbox(ctx context.Context, txn *model.Transaction,
 //
 // Returns:
 // - error: An error if processing fails.
-func (l *Blnk) ProcessLineageFromOutbox(ctx context.Context, entry model.LineageOutbox) error {
+func (l *LedgerForge) ProcessLineageFromOutbox(ctx context.Context, entry model.LineageOutbox) error {
 	ctx, span := tracer.Start(ctx, "ProcessLineageFromOutbox")
 	defer span.End()
 

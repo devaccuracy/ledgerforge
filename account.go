@@ -14,17 +14,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package blnk
+package ledgerforge
 
 import (
 	"context"
 	"fmt"
 	"net/http"
 
-	"github.com/blnkfinance/blnk/config"
-	"github.com/blnkfinance/blnk/internal/filter"
-	"github.com/blnkfinance/blnk/internal/request"
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/config"
+	"github.com/devaccuracy/ledgerforge/internal/filter"
+	"github.com/devaccuracy/ledgerforge/internal/request"
+	"github.com/devaccuracy/ledgerforge/model"
 )
 
 // applyExternalAccount applies external account details to the given account.
@@ -79,7 +79,7 @@ func applyExternalAccount(account *model.Account) error {
 //
 // Returns:
 // - error: An error if the identity could not be retrieved.
-func (l *Blnk) applyAccountName(account *model.Account) error {
+func (l *LedgerForge) applyAccountName(account *model.Account) error {
 	if account.Name == "" {
 
 		identity, err := l.GetIdentity(account.IdentityID)
@@ -104,7 +104,7 @@ func (l *Blnk) applyAccountName(account *model.Account) error {
 //
 // Returns:
 // - error: An error if the balance could not be retrieved.
-func (l *Blnk) overrideLedgerAndIdentity(account *model.Account) error {
+func (l *LedgerForge) overrideLedgerAndIdentity(account *model.Account) error {
 	balance, err := l.datasource.GetBalanceByIDLite(account.BalanceID)
 	if err != nil {
 		return err
@@ -133,7 +133,7 @@ func (l *Blnk) overrideLedgerAndIdentity(account *model.Account) error {
 // Returns:
 // - model.Account: The created Account model.
 // - error: An error if the account could not be created.
-func (l *Blnk) CreateAccount(account model.Account) (model.Account, error) {
+func (l *LedgerForge) CreateAccount(account model.Account) (model.Account, error) {
 	err := l.overrideLedgerAndIdentity(&account)
 	if err != nil {
 		return model.Account{}, err
@@ -161,7 +161,7 @@ func (l *Blnk) CreateAccount(account model.Account) (model.Account, error) {
 // Returns:
 // - *model.Account: A pointer to the Account model if found.
 // - error: An error if the account could not be retrieved.
-func (l *Blnk) GetAccount(id string, include []string) (*model.Account, error) {
+func (l *LedgerForge) GetAccount(id string, include []string) (*model.Account, error) {
 	return l.datasource.GetAccountByID(id, include)
 }
 
@@ -173,7 +173,7 @@ func (l *Blnk) GetAccount(id string, include []string) (*model.Account, error) {
 // Returns:
 // - *model.Account: A pointer to the Account model if found.
 // - error: An error if the account could not be retrieved.
-func (l *Blnk) GetAccountByNumber(id string) (*model.Account, error) {
+func (l *LedgerForge) GetAccountByNumber(id string) (*model.Account, error) {
 	return l.datasource.GetAccountByNumber(id)
 }
 
@@ -182,7 +182,7 @@ func (l *Blnk) GetAccountByNumber(id string) (*model.Account, error) {
 // Returns:
 // - []model.Account: A slice of Account models.
 // - error: An error if the accounts could not be retrieved.
-func (l *Blnk) GetAllAccounts() ([]model.Account, error) {
+func (l *LedgerForge) GetAllAccounts() ([]model.Account, error) {
 	return l.datasource.GetAllAccounts()
 }
 
@@ -197,7 +197,7 @@ func (l *Blnk) GetAllAccounts() ([]model.Account, error) {
 // Returns:
 // - []model.Account: A slice of Account models matching the filter criteria.
 // - error: An error if the accounts could not be retrieved.
-func (l *Blnk) GetAllAccountsWithFilter(ctx context.Context, filters *filter.QueryFilterSet, limit, offset int) ([]model.Account, error) {
+func (l *LedgerForge) GetAllAccountsWithFilter(ctx context.Context, filters *filter.QueryFilterSet, limit, offset int) ([]model.Account, error) {
 	return l.datasource.GetAllAccountsWithFilter(ctx, filters, limit, offset)
 }
 
@@ -214,6 +214,6 @@ func (l *Blnk) GetAllAccountsWithFilter(ctx context.Context, filters *filter.Que
 // - []model.Account: A slice of Account models matching the filter criteria.
 // - *int64: Optional total count of matching records (if opts.IncludeCount is true).
 // - error: An error if the accounts could not be retrieved.
-func (l *Blnk) GetAllAccountsWithFilterAndOptions(ctx context.Context, filters *filter.QueryFilterSet, opts *filter.QueryOptions, limit, offset int) ([]model.Account, *int64, error) {
+func (l *LedgerForge) GetAllAccountsWithFilterAndOptions(ctx context.Context, filters *filter.QueryFilterSet, opts *filter.QueryOptions, limit, offset int) ([]model.Account, *int64, error) {
 	return l.datasource.GetAllAccountsWithFilterAndOptions(ctx, filters, opts, limit, offset)
 }

@@ -24,8 +24,8 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/blnkfinance/blnk/internal/apierror"
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/internal/apierror"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -61,7 +61,7 @@ func TestCreateIdentity_Success(t *testing.T) {
 	metaDataJSON, err := json.Marshal(identity.MetaData)
 	assert.NoError(t, err)
 
-	mock.ExpectExec("INSERT INTO blnk.identity").
+	mock.ExpectExec("INSERT INTO ledgerforge.identity").
 		WithArgs(sqlmock.AnyArg(), identity.IdentityType, identity.FirstName, identity.LastName, identity.OtherNames, identity.Gender, identity.DOB, identity.EmailAddress, identity.PhoneNumber, identity.Nationality, identity.OrganizationName, identity.Category, identity.Street, identity.Country, identity.State, identity.PostCode, identity.City, sqlmock.AnyArg(), metaDataJSON).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -84,7 +84,7 @@ func TestCreateIdentity_Fail(t *testing.T) {
 		LastName:     "Doe",
 	}
 
-	mock.ExpectExec("INSERT INTO blnk.identity").
+	mock.ExpectExec("INSERT INTO ledgerforge.identity").
 		WithArgs(sqlmock.AnyArg(), identity.IdentityType, identity.FirstName, identity.LastName, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnError(fmt.Errorf("failed to insert"))
 
@@ -255,7 +255,7 @@ func TestUpdateIdentity_Success(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Match the exact column names and include meta_data
-	mock.ExpectExec("UPDATE blnk\\.identity SET").
+	mock.ExpectExec("UPDATE ledgerforge\\.identity SET").
 		WithArgs(identity.FirstName, identity.LastName, identity.EmailAddress, metaDataJSON, identity.IdentityID).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -300,7 +300,7 @@ func TestUpdateIdentity_PartialUpdate(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Use a more flexible pattern but account for meta_data
-	mock.ExpectExec("UPDATE blnk\\.identity SET").
+	mock.ExpectExec("UPDATE ledgerforge\\.identity SET").
 		WithArgs(identity.EmailAddress, identity.PhoneNumber, metaDataJSON, identity.IdentityID).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -315,7 +315,7 @@ func TestDeleteIdentity_Success(t *testing.T) {
 
 	ds := Datasource{Conn: db}
 
-	mock.ExpectExec("DELETE FROM blnk.identity").
+	mock.ExpectExec("DELETE FROM ledgerforge.identity").
 		WithArgs("idt123").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -330,7 +330,7 @@ func TestDeleteIdentity_NotFound(t *testing.T) {
 
 	ds := Datasource{Conn: db}
 
-	mock.ExpectExec("DELETE FROM blnk.identity").
+	mock.ExpectExec("DELETE FROM ledgerforge.identity").
 		WithArgs("idt123").
 		WillReturnResult(sqlmock.NewResult(1, 0))
 
@@ -408,7 +408,7 @@ func TestUpdateIdentity_QueryError(t *testing.T) {
 
 	metaDataJSON, _ := json.Marshal(identity.MetaData)
 
-	mock.ExpectExec("UPDATE blnk\\.identity SET").
+	mock.ExpectExec("UPDATE ledgerforge\\.identity SET").
 		WithArgs(identity.FirstName, identity.EmailAddress, metaDataJSON, identity.IdentityID).
 		WillReturnError(fmt.Errorf("database error"))
 
@@ -424,7 +424,7 @@ func TestDeleteIdentity_QueryError(t *testing.T) {
 
 	ds := Datasource{Conn: db}
 
-	mock.ExpectExec("DELETE FROM blnk.identity").
+	mock.ExpectExec("DELETE FROM ledgerforge.identity").
 		WithArgs("idt123").
 		WillReturnError(fmt.Errorf("database error"))
 

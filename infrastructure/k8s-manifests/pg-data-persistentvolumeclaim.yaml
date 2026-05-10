@@ -5,7 +5,7 @@ metadata:
   labels:
     io.kompose.service: pg-data
   name: pg-data
-  namespace: blnk
+  namespace: ledgerforge
 spec:
   accessModes:
     - ReadWriteOnce

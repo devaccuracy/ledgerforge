@@ -13,7 +13,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-package blnk
+package ledgerforge
 
 import (
 	"encoding/json"
@@ -22,9 +22,9 @@ import (
 
 	"github.com/brianvoe/gofakeit/v6"
 
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/model"
 
-	"github.com/blnkfinance/blnk/config"
+	"github.com/devaccuracy/ledgerforge/config"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/jarcoal/httpmock"
@@ -35,7 +35,7 @@ func TestCreateAccount(t *testing.T) {
 	datasource, mock, err := newTestDataSource()
 	assert.NoError(t, err)
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	if err != nil {
 		return
 	}
@@ -56,11 +56,11 @@ func TestCreateAccount(t *testing.T) {
 	rows := sqlmock.NewRows([]string{"balance_id", "indicator", "currency", "currency_multiplier", "ledger_id", "balance", "credit_balance", "debit_balance", "inflight_balance", "inflight_credit_balance", "inflight_debit_balance", "created_at", "version", "track_fund_lineage", "allocation_strategy", "identity_id"}).
 		AddRow(account.BalanceID, "", "NGN", 1, account.LedgerID, 100, 50, 50, 0, 0, 0, time.Now(), 0, false, "FIFO", "")
 
-	mock.ExpectQuery("SELECT .* FROM blnk.balances WHERE balance_id =").
+	mock.ExpectQuery("SELECT .* FROM ledgerforge.balances WHERE balance_id =").
 		WithArgs(account.BalanceID).
 		WillReturnRows(rows)
 
-	mock.ExpectExec("INSERT INTO blnk.accounts").
+	mock.ExpectExec("INSERT INTO ledgerforge.accounts").
 		WithArgs(sqlmock.AnyArg(), account.Name, account.Number, account.BankName, account.Currency, account.LedgerID, account.IdentityID, account.BalanceID, sqlmock.AnyArg(), metaDataJSON).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -85,16 +85,16 @@ func TestCreateAccountWithExternalGenerator(t *testing.T) {
 	datasource, mock, err := newTestDataSource()
 	assert.NoError(t, err)
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	assert.NoError(t, err)
 
 	// Mock the external account generator response
 	httpmock.RegisterResponder("GET", "http://example.com/generateAccount",
-		httpmock.NewStringResponder(200, `{"account_number": "123456789", "bank_name": "Blnk Bank"}`))
+		httpmock.NewStringResponder(200, `{"account_number": "123456789", "bank_name": "LedgerForge Bank"}`))
 
 	account := model.Account{
 		Name:       "Test Account",
-		BankName:   "Blnk Bank",
+		BankName:   "LedgerForge Bank",
 		Number:     "123456789",
 		Currency:   "NGN",
 		LedgerID:   "ledger_123",
@@ -107,18 +107,18 @@ func TestCreateAccountWithExternalGenerator(t *testing.T) {
 	rows := sqlmock.NewRows([]string{"balance_id", "indicator", "currency", "currency_multiplier", "ledger_id", "balance", "credit_balance", "debit_balance", "inflight_balance", "inflight_credit_balance", "inflight_debit_balance", "created_at", "version", "track_fund_lineage", "allocation_strategy", "identity_id"}).
 		AddRow(account.BalanceID, "", "NGN", 1, account.LedgerID, 100, 50, 50, 0, 0, 0, time.Now(), 0, false, "FIFO", "")
 
-	mock.ExpectQuery("SELECT .* FROM blnk.balances WHERE balance_id =").
+	mock.ExpectQuery("SELECT .* FROM ledgerforge.balances WHERE balance_id =").
 		WithArgs(account.BalanceID).
 		WillReturnRows(rows)
 
-	mock.ExpectExec("INSERT INTO blnk.accounts").
+	mock.ExpectExec("INSERT INTO ledgerforge.accounts").
 		WithArgs(sqlmock.AnyArg(), account.Name, account.Number, account.BankName, account.Currency, account.LedgerID, account.IdentityID, account.BalanceID, sqlmock.AnyArg(), metaDataJSON).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	result, err := d.CreateAccount(account)
 	assert.NoError(t, err)
 	assert.Equal(t, "123456789", result.Number)
-	assert.Equal(t, "Blnk Bank", result.BankName)
+	assert.Equal(t, "LedgerForge Bank", result.BankName)
 	assert.WithinDuration(t, time.Now(), result.CreatedAt, time.Second)
 
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -147,7 +147,7 @@ func TestGetAccountByID(t *testing.T) {
 	datasource, mock, err := newTestDataSource()
 	assert.NoError(t, err)
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	assert.NoError(t, err)
 
 	testID := "test-account-id"
@@ -169,7 +169,7 @@ func TestGetAccountByID(t *testing.T) {
 	// Expect transaction to begin
 	mock.ExpectBegin()
 
-	mock.ExpectQuery("SELECT .* FROM blnk.accounts WHERE account_id =").
+	mock.ExpectQuery("SELECT .* FROM ledgerforge.accounts WHERE account_id =").
 		WithArgs(testID).
 		WillReturnRows(rows)
 
@@ -207,7 +207,7 @@ func TestGetAllAccounts(t *testing.T) {
 	datasource, mock, err := newTestDataSource()
 	assert.NoError(t, err)
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	assert.NoError(t, err)
 
 	account1 := model.Account{
@@ -226,7 +226,7 @@ func TestGetAllAccounts(t *testing.T) {
 		AddRow(account1.AccountID, account1.Name, account1.Number, account1.BankName, account1.Currency, time.Now(), metaDataJSON1).
 		AddRow(account2.AccountID, account2.Name, account2.Number, account2.BankName, account1.Currency, time.Now(), metaDataJSON2)
 
-	mock.ExpectQuery("SELECT .* FROM blnk.accounts").WillReturnRows(rows)
+	mock.ExpectQuery("SELECT .* FROM ledgerforge.accounts").WillReturnRows(rows)
 
 	result, err := d.GetAllAccounts()
 	assert.NoError(t, err)

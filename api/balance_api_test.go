@@ -22,17 +22,17 @@ import (
 	"net/http"
 	"testing"
 
-	model2 "github.com/blnkfinance/blnk/api/model"
-	"github.com/blnkfinance/blnk/internal/request"
 	"github.com/brianvoe/gofakeit/v6"
+	model2 "github.com/devaccuracy/ledgerforge/api/model"
+	"github.com/devaccuracy/ledgerforge/internal/request"
 
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/model"
 
 	"github.com/stretchr/testify/assert"
 )
 
 func TestCreateBalance(t *testing.T) {
-	router, b, err := setupRouter()
+	router, b, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestCreateBalance(t *testing.T) {
 }
 
 func TestGetBalance(t *testing.T) {
-	router, b, _ := setupRouter()
+	router, b, _ := setupRouter(t)
 	newLedger, err := b.CreateLedger(model.Ledger{Name: gofakeit.Name()})
 	if err != nil {
 		return
@@ -151,7 +151,7 @@ func TestGetBalance(t *testing.T) {
 }
 
 func TestGetBalances(t *testing.T) {
-	router, b, err := setupRouter()
+	router, b, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestGetBalances(t *testing.T) {
 }
 
 func TestCreateBalanceMonitor(t *testing.T) {
-	router, b, err := setupRouter()
+	router, b, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}
@@ -259,7 +259,7 @@ func TestCreateBalanceMonitor(t *testing.T) {
 }
 
 func TestGetBalanceMonitor(t *testing.T) {
-	router, b, err := setupRouter()
+	router, b, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}
@@ -309,7 +309,7 @@ func TestGetBalanceMonitor(t *testing.T) {
 }
 
 func TestGetAllBalanceMonitors(t *testing.T) {
-	router, b, err := setupRouter()
+	router, b, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}
@@ -359,7 +359,7 @@ func TestGetAllBalanceMonitors(t *testing.T) {
 }
 
 func TestUpdateBalanceMonitor(t *testing.T) {
-	router, b, err := setupRouter()
+	router, b, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}

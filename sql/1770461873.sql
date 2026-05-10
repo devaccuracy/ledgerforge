@@ -14,11 +14,11 @@
 
 -- +migrate Up
 -- Add key_prefix column for efficient lookup with bcrypt hashing
-ALTER TABLE blnk.api_keys ADD COLUMN IF NOT EXISTS key_prefix VARCHAR(16);
+ALTER TABLE ledgerforge.api_keys ADD COLUMN IF NOT EXISTS key_prefix VARCHAR(16);
 
 -- Create index on key_prefix for efficient lookup
-CREATE INDEX IF NOT EXISTS idx_api_keys_key_prefix ON blnk.api_keys(key_prefix);
+CREATE INDEX IF NOT EXISTS idx_api_keys_key_prefix ON ledgerforge.api_keys(key_prefix);
 
 -- +migrate Down
 DROP INDEX IF EXISTS idx_api_keys_key_prefix;
-ALTER TABLE blnk.api_keys DROP COLUMN IF EXISTS key_prefix;
+ALTER TABLE ledgerforge.api_keys DROP COLUMN IF EXISTS key_prefix;

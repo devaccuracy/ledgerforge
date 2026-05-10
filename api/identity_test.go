@@ -5,14 +5,14 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/blnkfinance/blnk/internal/request"
-	"github.com/blnkfinance/blnk/model"
 	"github.com/brianvoe/gofakeit/v6"
+	"github.com/devaccuracy/ledgerforge/internal/request"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestCreateIdentity(t *testing.T) {
-	router, _, err := setupRouter()
+	router, _, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestCreateIdentity(t *testing.T) {
 }
 
 func TestGetIdentity(t *testing.T) {
-	router, b, err := setupRouter()
+	router, b, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestGetIdentity(t *testing.T) {
 }
 
 func TestUpdateIdentity(t *testing.T) {
-	router, b, err := setupRouter()
+	router, b, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestUpdateIdentity(t *testing.T) {
 }
 
 func TestGetAllIdentities(t *testing.T) {
-	router, b, err := setupRouter()
+	router, b, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}

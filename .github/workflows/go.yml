@@ -34,7 +34,7 @@ jobs:
       postgres:
         image: postgres:latest
         env:
-          POSTGRES_DB: blnk
+          POSTGRES_DB: ledgerforge
           POSTGRES_USER: postgres
           POSTGRES_HOST_AUTH_METHOD: trust
         ports:
@@ -69,8 +69,8 @@ jobs:
       - name: Migrate Database
         run: go run ./cmd migrate up
         env:
-          BLNK_DATA_SOURCE_DNS: postgres://postgres@localhost:5432/blnk?sslmode=disable
-          BLNK_REDIS_DNS: localhost:6379
+          LEDGERFORGE_DATA_SOURCE_DNS: postgres://postgres@localhost:5432/ledgerforge?sslmode=disable
+          LEDGERFORGE_REDIS_DNS: localhost:6379
 
       - name: Test
         run: go test -v ./...

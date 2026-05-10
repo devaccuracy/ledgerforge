@@ -13,19 +13,19 @@
 -- limitations under the License.
 
 -- +migrate Up
-ALTER TABLE blnk.balance_snapshots ALTER COLUMN balance TYPE NUMERIC USING balance::NUMERIC;
-ALTER TABLE blnk.balance_snapshots ALTER COLUMN credit_balance TYPE NUMERIC USING credit_balance::NUMERIC;
-ALTER TABLE blnk.balance_snapshots ALTER COLUMN debit_balance TYPE NUMERIC USING debit_balance::NUMERIC;
+ALTER TABLE ledgerforge.balance_snapshots ALTER COLUMN balance TYPE NUMERIC USING balance::NUMERIC;
+ALTER TABLE ledgerforge.balance_snapshots ALTER COLUMN credit_balance TYPE NUMERIC USING credit_balance::NUMERIC;
+ALTER TABLE ledgerforge.balance_snapshots ALTER COLUMN debit_balance TYPE NUMERIC USING debit_balance::NUMERIC;
 
-ALTER TABLE blnk.balance_snapshots ALTER COLUMN inflight_balance TYPE NUMERIC USING inflight_balance::NUMERIC;
-ALTER TABLE blnk.balance_snapshots ALTER COLUMN inflight_credit_balance TYPE NUMERIC USING inflight_credit_balance::NUMERIC;
-ALTER TABLE blnk.balance_snapshots ALTER COLUMN inflight_debit_balance TYPE NUMERIC USING inflight_debit_balance::NUMERIC;
+ALTER TABLE ledgerforge.balance_snapshots ALTER COLUMN inflight_balance TYPE NUMERIC USING inflight_balance::NUMERIC;
+ALTER TABLE ledgerforge.balance_snapshots ALTER COLUMN inflight_credit_balance TYPE NUMERIC USING inflight_credit_balance::NUMERIC;
+ALTER TABLE ledgerforge.balance_snapshots ALTER COLUMN inflight_debit_balance TYPE NUMERIC USING inflight_debit_balance::NUMERIC;
 
 -- +migrate Down
-ALTER TABLE blnk.balance_snapshots ALTER COLUMN balance TYPE BIGINT USING balance::BIGINT;
-ALTER TABLE blnk.balance_snapshots ALTER COLUMN credit_balance TYPE BIGINT USING credit_balance::BIGINT;
-ALTER TABLE blnk.balance_snapshots ALTER COLUMN debit_balance TYPE BIGINT USING debit_balance::BIGINT;
+ALTER TABLE ledgerforge.balance_snapshots ALTER COLUMN balance TYPE BIGINT USING balance::BIGINT;
+ALTER TABLE ledgerforge.balance_snapshots ALTER COLUMN credit_balance TYPE BIGINT USING credit_balance::BIGINT;
+ALTER TABLE ledgerforge.balance_snapshots ALTER COLUMN debit_balance TYPE BIGINT USING debit_balance::BIGINT;
 
-ALTER TABLE blnk.balance_snapshots ALTER COLUMN inflight_balance TYPE BIGINT USING inflight_balance::BIGINT;
-ALTER TABLE blnk.balance_snapshots ALTER COLUMN inflight_credit_balance TYPE BIGINT USING inflight_credit_balance::BIGINT;
-ALTER TABLE blnk.balance_snapshots ALTER COLUMN inflight_debit_balance TYPE BIGINT USING inflight_debit_balance::BIGINT;
+ALTER TABLE ledgerforge.balance_snapshots ALTER COLUMN inflight_balance TYPE BIGINT USING inflight_balance::BIGINT;
+ALTER TABLE ledgerforge.balance_snapshots ALTER COLUMN inflight_credit_balance TYPE BIGINT USING inflight_credit_balance::BIGINT;
+ALTER TABLE ledgerforge.balance_snapshots ALTER COLUMN inflight_debit_balance TYPE BIGINT USING inflight_debit_balance::BIGINT;

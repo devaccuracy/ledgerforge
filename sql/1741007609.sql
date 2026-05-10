@@ -13,8 +13,8 @@
 -- limitations under the License.
 
 -- +migrate Up
-ALTER TABLE blnk.transactions ADD COLUMN effective_date TIMESTAMP;
+ALTER TABLE ledgerforge.transactions ADD COLUMN effective_date TIMESTAMP;
 
 
 -- +migrate Down
-ALTER TABLE blnk.transactions DROP COLUMN effective_date;
+ALTER TABLE ledgerforge.transactions DROP COLUMN effective_date;

@@ -13,7 +13,7 @@
 -- limitations under the License.
 
 -- +migrate Up
-ALTER TABLE blnk.balances ADD CONSTRAINT unique_indicator_currency UNIQUE (indicator, currency);
+ALTER TABLE ledgerforge.balances ADD CONSTRAINT unique_indicator_currency UNIQUE (indicator, currency);
 
 -- +migrate Down
-ALTER TABLE blnk.balances DROP CONSTRAINT IF EXISTS unique_indicator_currency;
+ALTER TABLE ledgerforge.balances DROP CONSTRAINT IF EXISTS unique_indicator_currency;

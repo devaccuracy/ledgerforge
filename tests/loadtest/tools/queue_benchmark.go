@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	redis_db "github.com/blnkfinance/blnk/internal/redis-db"
+	redis_db "github.com/devaccuracy/ledgerforge/internal/redis-db"
 	"github.com/hibiken/asynq"
 )
 
@@ -178,8 +178,8 @@ func main() {
 
 func parseFlags() benchmarkConfig {
 	cfg := benchmarkConfig{}
-	flag.StringVar(&cfg.configPath, "config", "", "Optional path to blnk config file. Only the redis section is read.")
-	flag.StringVar(&cfg.redisDSN, "redis-dsn", "", "Redis DSN. Overrides BLNK_REDIS_DNS and config file.")
+	flag.StringVar(&cfg.configPath, "config", "", "Optional path to ledgerforge config file. Only the redis section is read.")
+	flag.StringVar(&cfg.redisDSN, "redis-dsn", "", "Redis DSN. Overrides LEDGERFORGE_REDIS_DNS and config file.")
 	flag.BoolVar(&cfg.redisSkipTLS, "redis-skip-tls-verify", false, "Skip TLS verification for Redis when using -redis-dsn.")
 	flag.StringVar(&cfg.outPath, "out", "tests/loadtest/queue-summary.json", "Output path for the generated summary JSON.")
 	flag.StringVar(&cfg.queueNames, "queues", "", "Comma-separated queue names to track.")
@@ -208,12 +208,12 @@ func resolveRedisSettings(cfg benchmarkConfig) (dsn string, skipTLSVerify bool, 
 		return strings.TrimSpace(cfg.redisDSN), cfg.redisSkipTLS, nil
 	}
 
-	if envDSN := strings.TrimSpace(os.Getenv("BLNK_REDIS_DNS")); envDSN != "" {
-		return envDSN, parseEnvBool("BLNK_REDIS_SKIP_TLS_VERIFY"), nil
+	if envDSN := strings.TrimSpace(os.Getenv("LEDGERFORGE_REDIS_DNS")); envDSN != "" {
+		return envDSN, parseEnvBool("LEDGERFORGE_REDIS_SKIP_TLS_VERIFY"), nil
 	}
 
 	if strings.TrimSpace(cfg.configPath) == "" {
-		return "", false, fmt.Errorf("redis DSN not found; pass -redis-dsn, set BLNK_REDIS_DNS, or use -config")
+		return "", false, fmt.Errorf("redis DSN not found; pass -redis-dsn, set LEDGERFORGE_REDIS_DNS, or use -config")
 	}
 
 	type redisSection struct {

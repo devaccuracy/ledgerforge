@@ -16,7 +16,7 @@
 
 -- +migrate StatementBegin
 -- Create the transaction journal table
-CREATE TABLE IF NOT EXISTS blnk.transaction_journal (
+CREATE TABLE IF NOT EXISTS ledgerforge.transaction_journal (
     id SERIAL PRIMARY KEY,
     transaction_id TEXT NOT NULL,
     action_type TEXT NOT NULL CHECK (action_type IN ('INSERT', 'UPDATE', 'DELETE')),
@@ -29,11 +29,11 @@ CREATE TABLE IF NOT EXISTS blnk.transaction_journal (
 );
 
 -- Create the logging function
-CREATE OR REPLACE FUNCTION blnk.log_transaction_changes()
+CREATE OR REPLACE FUNCTION ledgerforge.log_transaction_changes()
 RETURNS TRIGGER AS $$
 BEGIN
     IF (TG_OP = 'UPDATE') THEN
-        INSERT INTO blnk.transaction_journal (
+        INSERT INTO ledgerforge.transaction_journal (
             transaction_id, action_type, client_addr, backend_pid, timestamp, 
             old_data, new_data, succeeded
         ) VALUES (
@@ -47,7 +47,7 @@ BEGIN
             row_to_json(OLD)::jsonb, row_to_json(NEW)::jsonb, TRUE
         );
     ELSIF (TG_OP = 'INSERT') THEN
-        INSERT INTO blnk.transaction_journal (
+        INSERT INTO ledgerforge.transaction_journal (
             transaction_id, action_type, client_addr, backend_pid, timestamp, 
             old_data, new_data, succeeded
         ) VALUES (
@@ -61,7 +61,7 @@ BEGIN
             NULL, row_to_json(NEW)::jsonb, TRUE
         );
     ELSIF (TG_OP = 'DELETE') THEN
-        INSERT INTO blnk.transaction_journal (
+        INSERT INTO ledgerforge.transaction_journal (
             transaction_id, action_type, client_addr, backend_pid, timestamp, 
             old_data, new_data, succeeded
         ) VALUES (
@@ -82,26 +82,26 @@ $$ LANGUAGE plpgsql;
 
 -- +migrate StatementBegin
 -- Create the trigger to use the function
-DROP TRIGGER IF EXISTS log_transaction_changes_trigger ON blnk.transactions;
+DROP TRIGGER IF EXISTS log_transaction_changes_trigger ON ledgerforge.transactions;
 
 CREATE TRIGGER log_transaction_changes_trigger
-AFTER INSERT OR UPDATE OR DELETE ON blnk.transactions
-FOR EACH ROW EXECUTE FUNCTION blnk.log_transaction_changes();
+AFTER INSERT OR UPDATE OR DELETE ON ledgerforge.transactions
+FOR EACH ROW EXECUTE FUNCTION ledgerforge.log_transaction_changes();
 -- +migrate StatementEnd
 
 -- +migrate Down
 
 -- +migrate StatementBegin
 -- Remove the trigger
-DROP TRIGGER IF EXISTS log_transaction_changes_trigger ON blnk.transactions;
+DROP TRIGGER IF EXISTS log_transaction_changes_trigger ON ledgerforge.transactions;
 -- +migrate StatementEnd
 
 -- +migrate StatementBegin
 -- Remove the function
-DROP FUNCTION IF EXISTS blnk.log_transaction_changes();
+DROP FUNCTION IF EXISTS ledgerforge.log_transaction_changes();
 -- +migrate StatementEnd
 
 -- +migrate StatementBegin
 -- Remove the journal table
-DROP TABLE IF EXISTS blnk.transaction_journal;
+DROP TABLE IF EXISTS ledgerforge.transaction_journal;
 -- +migrate StatementEnd

@@ -25,16 +25,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blnkfinance/blnk"
-	model2 "github.com/blnkfinance/blnk/api/model"
-	"github.com/blnkfinance/blnk/config"
-	"github.com/blnkfinance/blnk/database"
-	redis_db "github.com/blnkfinance/blnk/internal/redis-db"
-	"github.com/blnkfinance/blnk/internal/request"
 	"github.com/brianvoe/gofakeit/v6"
+	"github.com/devaccuracy/ledgerforge"
+	model2 "github.com/devaccuracy/ledgerforge/api/model"
+	"github.com/devaccuracy/ledgerforge/config"
+	"github.com/devaccuracy/ledgerforge/database"
+	redis_db "github.com/devaccuracy/ledgerforge/internal/redis-db"
+	"github.com/devaccuracy/ledgerforge/internal/request"
 	"github.com/hibiken/asynq"
 
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/model"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -97,9 +97,9 @@ func (tl *testLogger) Fatal(args ...interface{}) {
 }
 
 // StartTestAsynqWorker sets up and starts an Asynq server for testing purposes.
-// It takes the testing object, configuration, Blnk instance, and the specific transaction queue name.
+// It takes the testing object, configuration, LedgerForge instance, and the specific transaction queue name.
 // It returns a cleanup function that should be deferred by the caller to shut down the server.
-func StartTestAsynqWorker(t *testing.T, cnf *config.Configuration, blnkInstance *blnk.Blnk, transactionQueueName string) func() {
+func StartTestAsynqWorker(t *testing.T, cnf *config.Configuration, ledgerforgeInstance *ledgerforge.LedgerForge, transactionQueueName string) func() {
 	redisOption, err := redis_db.ParseRedisURL(cnf.Redis.Dns, cnf.Redis.SkipTLSVerify)
 	require.NoError(t, err, "Failed to parse Redis URL for Asynq")
 
@@ -131,11 +131,11 @@ func StartTestAsynqWorker(t *testing.T, cnf *config.Configuration, blnkInstance 
 		}
 
 		t.Logf("TEST_WORKER: Picked up transaction %s (Ref: %s) for processing.", txn.TransactionID, txn.Reference)
-		processedTxn, err := blnkInstance.RecordTransaction(ctx, &txn) // Use blnkInstance from the outer scope
+		processedTxn, err := ledgerforgeInstance.RecordTransaction(ctx, &txn) // Use ledgerforgeInstance from the outer scope
 		if err != nil {
 			t.Logf("TEST_WORKER: Error recording transaction %s (Ref: %s): %v", txn.TransactionID, txn.Reference, err)
 			if strings.Contains(strings.ToLower(err.Error()), "insufficient funds") || strings.Contains(strings.ToLower(err.Error()), "transaction exceeds overdraft limit") {
-				_, rejectErr := blnkInstance.RejectTransaction(ctx, &txn, err.Error())
+				_, rejectErr := ledgerforgeInstance.RejectTransaction(ctx, &txn, err.Error())
 				if rejectErr != nil {
 					t.Logf("TEST_WORKER: Error rejecting transaction %s after processing error: %v", txn.TransactionID, rejectErr)
 					return fmt.Errorf("processing error: %v, rejection error: %w", err, rejectErr)
@@ -166,7 +166,7 @@ func StartTestAsynqWorker(t *testing.T, cnf *config.Configuration, blnkInstance 
 }
 
 func TestRecordTransaction(t *testing.T) {
-	router, b, err := setupRouter()
+	router, b, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}
@@ -321,7 +321,7 @@ func TestRecordTransaction(t *testing.T) {
 
 func TestRecordTransactionPrecisionValidation(t *testing.T) {
 	t.Run("accepts integer precision", func(t *testing.T) {
-		router, b, err := setupRouter()
+		router, b, err := setupRouter(t)
 		if err != nil {
 			t.Fatalf("Failed to setup router: %v", err)
 		}
@@ -364,7 +364,7 @@ func TestRecordTransactionPrecisionValidation(t *testing.T) {
 	})
 
 	t.Run("rejects fractional precision and preserves balances", func(t *testing.T) {
-		router, b, err := setupRouter()
+		router, b, err := setupRouter(t)
 		if err != nil {
 			t.Fatalf("Failed to setup router: %v", err)
 		}
@@ -426,7 +426,7 @@ func TestRecordTransactionPrecisionValidation(t *testing.T) {
 }
 
 func TestRecordTransactionWithExitingRef(t *testing.T) {
-	router, b, _ := setupRouter()
+	router, b, _ := setupRouter(t)
 	newLedger, err := b.CreateLedger(model.Ledger{Name: gofakeit.Name()})
 	if err != nil {
 		return
@@ -473,7 +473,7 @@ func TestRecordTransactionWithExitingRef(t *testing.T) {
 }
 
 func TestInflightTransaction_Commit_API(t *testing.T) {
-	router, b, err := setupRouter()
+	router, b, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}
@@ -588,7 +588,7 @@ func TestInflightTransaction_Commit_API(t *testing.T) {
 }
 
 func TestInflightTransaction_Void_API(t *testing.T) {
-	router, b, err := setupRouter()
+	router, b, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}
@@ -679,7 +679,7 @@ func TestInflightTransaction_Void_API(t *testing.T) {
 }
 
 func TestInflightTransaction_Commit_WithAmount_API(t *testing.T) {
-	router, b, err := setupRouter()
+	router, b, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}

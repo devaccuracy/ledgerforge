@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package blnk
+package ledgerforge
 
 import (
 	"context"
@@ -25,9 +25,9 @@ import (
 	"sync"
 	"time"
 
-	redlock "github.com/blnkfinance/blnk/internal/lock"
-	"github.com/blnkfinance/blnk/internal/metrics"
-	"github.com/blnkfinance/blnk/model"
+	redlock "github.com/devaccuracy/ledgerforge/internal/lock"
+	"github.com/devaccuracy/ledgerforge/internal/metrics"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -51,7 +51,7 @@ const (
 // Returns:
 // - []*model.Transaction: A slice of pointers to the retrieved Transaction models.
 // - error: An error if the transactions could not be retrieved.
-func (l *Blnk) GetInflightTransactionsByParentID(ctx context.Context, parentTransactionID string, batchSize int, offset int64) ([]*model.Transaction, error) {
+func (l *LedgerForge) GetInflightTransactionsByParentID(ctx context.Context, parentTransactionID string, batchSize int, offset int64) ([]*model.Transaction, error) {
 	ctx, span := tracer.Start(ctx, "GetInflightTransactionsByParentID")
 	defer span.End()
 
@@ -91,7 +91,7 @@ func IsInflightTransaction(transaction *model.Transaction) bool {
 // - results chan<- BatchJobResult: A channel to which the results of the processing are sent.
 // - wg *sync.WaitGroup: A wait group to synchronize the completion of the worker.
 // - amount *big.Int: The amount to be processed in the transaction.
-func (l *Blnk) CommitWorker(ctx context.Context, jobs <-chan *model.Transaction, results chan<- BatchJobResult, wg *sync.WaitGroup, amount *big.Int) {
+func (l *LedgerForge) CommitWorker(ctx context.Context, jobs <-chan *model.Transaction, results chan<- BatchJobResult, wg *sync.WaitGroup, amount *big.Int) {
 	ctx, span := tracer.Start(ctx, "CommitWorker")
 	defer span.End()
 
@@ -123,7 +123,7 @@ func (l *Blnk) CommitWorker(ctx context.Context, jobs <-chan *model.Transaction,
 // - results chan<- BatchJobResult: A channel to which the results of the processing are sent.
 // - wg *sync.WaitGroup: A wait group to synchronize the completion of the worker.
 // - amount *big.Int: The amount to be processed in the transaction.
-func (l *Blnk) VoidWorker(ctx context.Context, jobs <-chan *model.Transaction, results chan<- BatchJobResult, wg *sync.WaitGroup, amount *big.Int) {
+func (l *LedgerForge) VoidWorker(ctx context.Context, jobs <-chan *model.Transaction, results chan<- BatchJobResult, wg *sync.WaitGroup, amount *big.Int) {
 	ctx, span := tracer.Start(ctx, "VoidWorker")
 	defer span.End()
 
@@ -152,7 +152,7 @@ func (l *Blnk) VoidWorker(ctx context.Context, jobs <-chan *model.Transaction, r
 // Parameters:
 // - ctx context.Context: The context for the operation.
 // - locker *redlock.Locker: The Locker object representing the acquired lock.
-func (l *Blnk) releaseSingleLock(ctx context.Context, locker *redlock.Locker) {
+func (l *LedgerForge) releaseSingleLock(ctx context.Context, locker *redlock.Locker) {
 	ctx, span := tracer.Start(ctx, "ReleaseSingleLock")
 	defer span.End()
 
@@ -174,7 +174,7 @@ func (l *Blnk) releaseSingleLock(ctx context.Context, locker *redlock.Locker) {
 // Returns:
 // - *model.Transaction: A pointer to the committed Transaction model.
 // - error: An error if the transaction could not be committed.
-func (l *Blnk) CommitInflightTransaction(ctx context.Context, transactionID string, amount *big.Int) (*model.Transaction, error) {
+func (l *LedgerForge) CommitInflightTransaction(ctx context.Context, transactionID string, amount *big.Int) (*model.Transaction, error) {
 	ctx, span := tracer.Start(ctx, "CommitInflightTransaction")
 	defer span.End()
 
@@ -214,7 +214,7 @@ func (l *Blnk) CommitInflightTransaction(ctx context.Context, transactionID stri
 	return committedTxn, nil
 }
 
-func (l *Blnk) CommitInflightTransactionWithQueue(ctx context.Context, transactionID string, amount *big.Int) (*model.Transaction, error) {
+func (l *LedgerForge) CommitInflightTransactionWithQueue(ctx context.Context, transactionID string, amount *big.Int) (*model.Transaction, error) {
 	ctx, span := tracer.Start(ctx, "CommitInflightTransactionWithQueue")
 	defer span.End()
 
@@ -263,7 +263,7 @@ func (l *Blnk) CommitInflightTransactionWithQueue(ctx context.Context, transacti
 //
 // Returns:
 // - error: An error if the amount validation or update fails.
-func (l *Blnk) validateAndUpdateAmount(ctx context.Context, transaction *model.Transaction, amount *big.Int) error {
+func (l *LedgerForge) validateAndUpdateAmount(ctx context.Context, transaction *model.Transaction, amount *big.Int) error {
 	ctx, span := tracer.Start(ctx, "ValidateAndUpdateAmount")
 	defer span.End()
 
@@ -297,7 +297,7 @@ func (l *Blnk) validateAndUpdateAmount(ctx context.Context, transaction *model.T
 //
 // Returns:
 // - error: An error if the transaction is already fully committed.
-func (l *Blnk) checkTransactionCommitStatus(amountLeft *big.Int) error {
+func (l *LedgerForge) checkTransactionCommitStatus(amountLeft *big.Int) error {
 	if amountLeft.Cmp(big.NewInt(0)) == 0 {
 		return errors.New("cannot commit. Transaction already committed")
 	}
@@ -313,7 +313,7 @@ func (l *Blnk) checkTransactionCommitStatus(amountLeft *big.Int) error {
 //
 // Returns:
 // - error: An error if the requested amount exceeds allowed limits.
-func (l *Blnk) validateRequestedAmount(transaction *model.Transaction, amount *big.Int, amountLeft *big.Int) error {
+func (l *LedgerForge) validateRequestedAmount(transaction *model.Transaction, amount *big.Int, amountLeft *big.Int) error {
 	if amount.Cmp(big.NewInt(0)) == 0 {
 		return nil
 	}
@@ -340,7 +340,7 @@ func (l *Blnk) validateRequestedAmount(transaction *model.Transaction, amount *b
 // - transaction *model.Transaction: The transaction to update.
 // - amount float64: The amount to commit (0 means commit the full remaining amount).
 // - amountLeft *big.Int: The remaining amount that can be committed.
-func (l *Blnk) updateTransactionAmount(transaction *model.Transaction, amount *big.Int, amountLeft *big.Int) {
+func (l *LedgerForge) updateTransactionAmount(transaction *model.Transaction, amount *big.Int, amountLeft *big.Int) {
 	if amount.Cmp(big.NewInt(0)) != 0 {
 		transaction.PreciseAmount = amount
 	} else {
@@ -357,7 +357,7 @@ func (l *Blnk) updateTransactionAmount(transaction *model.Transaction, amount *b
 //
 // Returns:
 // - float64: The floating-point representation of the precise amount.
-func (l *Blnk) convertPreciseToFloat(preciseAmount *big.Int, precision float64) float64 {
+func (l *LedgerForge) convertPreciseToFloat(preciseAmount *big.Int, precision float64) float64 {
 	precisionBigInt := new(big.Float).SetFloat64(precision)
 	amountFloat := new(big.Float).SetInt(preciseAmount)
 	result, _ := new(big.Float).Quo(amountFloat, precisionBigInt).Float64()
@@ -374,7 +374,7 @@ func (l *Blnk) convertPreciseToFloat(preciseAmount *big.Int, precision float64) 
 // Returns:
 // - *model.Transaction: A pointer to the finalized Transaction model.
 // - error: An error if the transaction could not be queued.
-func (l *Blnk) finalizeCommitment(ctx context.Context, transaction *model.Transaction, withQueue bool) (*model.Transaction, error) {
+func (l *LedgerForge) finalizeCommitment(ctx context.Context, transaction *model.Transaction, withQueue bool) (*model.Transaction, error) {
 	ctx, span := tracer.Start(ctx, "FinalizeCommitment")
 	defer span.End()
 
@@ -419,7 +419,7 @@ func (l *Blnk) finalizeCommitment(ctx context.Context, transaction *model.Transa
 // Returns:
 // - *model.Transaction: A pointer to the voided Transaction model.
 // - error: An error if the transaction could not be voided.
-func (l *Blnk) VoidInflightTransaction(ctx context.Context, transactionID string) (*model.Transaction, error) {
+func (l *LedgerForge) VoidInflightTransaction(ctx context.Context, transactionID string) (*model.Transaction, error) {
 	ctx, span := tracer.Start(ctx, "VoidInflightTransaction")
 	defer span.End()
 
@@ -475,7 +475,7 @@ func (l *Blnk) VoidInflightTransaction(ctx context.Context, transactionID string
 // Returns:
 // - *model.Transaction: A pointer to the validated Transaction model.
 // - error: An error if the transaction could not be fetched or validated.
-func (l *Blnk) fetchAndValidateInflightTransaction(ctx context.Context, transactionID string) (*model.Transaction, error) {
+func (l *LedgerForge) fetchAndValidateInflightTransaction(ctx context.Context, transactionID string) (*model.Transaction, error) {
 	ctx, span := tracer.Start(ctx, "FetchAndValidateInflightTransaction")
 	defer span.End()
 
@@ -535,7 +535,7 @@ func (l *Blnk) fetchAndValidateInflightTransaction(ctx context.Context, transact
 // Returns:
 // - int64: The remaining amount for the transaction.
 // - error: An error if the committed amount could not be fetched.
-func (l *Blnk) calculateRemainingAmount(ctx context.Context, transaction *model.Transaction) (*big.Int, error) {
+func (l *LedgerForge) calculateRemainingAmount(ctx context.Context, transaction *model.Transaction) (*big.Int, error) {
 	ctx, span := tracer.Start(ctx, "CalculateRemainingAmount")
 	defer span.End()
 
@@ -562,7 +562,7 @@ func (l *Blnk) calculateRemainingAmount(ctx context.Context, transaction *model.
 // Returns:
 // - *model.Transaction: A pointer to the voided Transaction model.
 // - error: An error if the transaction could not be queued.
-func (l *Blnk) finalizeVoidTransaction(ctx context.Context, transaction *model.Transaction, amountLeft *big.Int) (*model.Transaction, error) {
+func (l *LedgerForge) finalizeVoidTransaction(ctx context.Context, transaction *model.Transaction, amountLeft *big.Int) (*model.Transaction, error) {
 	ctx, span := tracer.Start(ctx, "FinalizeVoidTransaction")
 	defer span.End()
 

@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	redlock "github.com/blnkfinance/blnk/internal/lock"
-	"github.com/blnkfinance/blnk/model"
+	redlock "github.com/devaccuracy/ledgerforge/internal/lock"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )

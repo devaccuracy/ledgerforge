@@ -1,4 +1,4 @@
-package blnk
+package ledgerforge
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/blnkfinance/blnk/internal/notification"
+	"github.com/devaccuracy/ledgerforge/internal/notification"
 )
 
 // getEntityTypeFromID determines the entity type from the ID prefix.
@@ -47,7 +47,7 @@ func getEntityTypeFromID(id string) (string, error) {
 // Returns:
 // - map[string]interface{}: The merged metadata after the update.
 // - error: An error if the update operation fails.
-func (l *Blnk) UpdateMetadata(ctx context.Context, entityID string, newMetadata map[string]interface{}) (map[string]interface{}, error) {
+func (l *LedgerForge) UpdateMetadata(ctx context.Context, entityID string, newMetadata map[string]interface{}) (map[string]interface{}, error) {
 	entityType, err := getEntityTypeFromID(entityID)
 	if err != nil {
 		return nil, err
@@ -205,7 +205,7 @@ func mergeMetadata(current, new map[string]interface{}) map[string]interface{} {
 //
 // Returns:
 // - error: An error if the update operation fails.
-func (l *Blnk) updateEntityMetadata(ctx context.Context, entityType, entityID string, metadata map[string]interface{}) error {
+func (l *LedgerForge) updateEntityMetadata(ctx context.Context, entityType, entityID string, metadata map[string]interface{}) error {
 	switch entityType {
 	case "ledgers":
 		return l.datasource.UpdateLedgerMetadata(entityID, metadata)

@@ -1,7 +1,7 @@
 -- +migrate Up
 
 -- +migrate StatementBegin
-CREATE OR REPLACE FUNCTION blnk.take_daily_balance_snapshots_batched(batch_size INTEGER DEFAULT 1000)
+CREATE OR REPLACE FUNCTION ledgerforge.take_daily_balance_snapshots_batched(batch_size INTEGER DEFAULT 1000)
     RETURNS INTEGER
     LANGUAGE plpgsql
     STRICT
@@ -13,7 +13,7 @@ DECLARE
     v_batch_count INTEGER;
 BEGIN
     -- Get the maximum ID first to know when to stop
-    SELECT MAX(id) INTO v_max_id FROM blnk.balances;
+    SELECT MAX(id) INTO v_max_id FROM ledgerforge.balances;
     
     LOOP
         WITH batch AS (
@@ -30,18 +30,18 @@ BEGIN
                 b.currency,
                 b.created_at,
                 b.meta_data
-            FROM blnk.balances b
+            FROM ledgerforge.balances b
             WHERE b.id > v_last_processed_id
             AND NOT EXISTS (
                 SELECT 1 
-                FROM blnk.balance_snapshots bs
+                FROM ledgerforge.balance_snapshots bs
                 WHERE bs.balance_id = b.balance_id
                 AND DATE_TRUNC('day', bs.snapshot_time) = DATE_TRUNC('day', NOW())
             )
             ORDER BY b.id
             LIMIT batch_size
         )
-        INSERT INTO blnk.balance_snapshots (
+        INSERT INTO ledgerforge.balance_snapshots (
             balance_id,
             ledger_id,
             balance,
@@ -70,7 +70,7 @@ BEGIN
             b.created_at,
             (
                 SELECT t.transaction_id 
-                FROM blnk.transactions t
+                FROM ledgerforge.transactions t
                 WHERE t.source = b.balance_id OR t.destination = b.balance_id
                 ORDER BY t.created_at DESC 
                 LIMIT 1
@@ -85,7 +85,7 @@ BEGIN
         SELECT MAX(id) INTO v_last_processed_id
         FROM (
             SELECT id 
-            FROM blnk.balances
+            FROM ledgerforge.balances
             WHERE id > v_last_processed_id
             ORDER BY id
             LIMIT batch_size
@@ -103,5 +103,5 @@ $$;
 -- +migrate Down
 
 -- +migrate StatementBegin
-DROP FUNCTION IF EXISTS blnk.take_daily_balance_snapshots_batched;
+DROP FUNCTION IF EXISTS ledgerforge.take_daily_balance_snapshots_batched;
 -- +migrate StatementEnd

@@ -21,16 +21,18 @@ import (
 	"database/sql"
 	"sync"
 
-	"github.com/blnkfinance/blnk/config"
-	"github.com/blnkfinance/blnk/internal/cache"
-	pgconn "github.com/blnkfinance/blnk/internal/pg-conn"
+	"github.com/devaccuracy/ledgerforge/config"
+	"github.com/devaccuracy/ledgerforge/internal/cache"
+	pgconn "github.com/devaccuracy/ledgerforge/internal/pg-conn"
 	"github.com/sirupsen/logrus"
 )
 
 // Declare a package-level variable to hold the singleton instance.
 var (
-	instance *Datasource
-	once     sync.Once
+	instance  *Datasource
+	once      sync.Once
+	connectDB = ConnectDB
+	newCache  = cache.NewCache
 )
 
 type Datasource struct {
@@ -54,7 +56,7 @@ func NewDataSource(configuration *config.Configuration) (IDataSource, error) {
 	}
 
 	// Set the default schema for this connection.
-	if _, err := con.Conn.ExecContext(context.Background(), "SET search_path TO blnk"); err != nil {
+	if _, err := con.Conn.ExecContext(context.Background(), "SET search_path TO ledgerforge"); err != nil {
 		return nil, err
 	}
 	return con, nil
@@ -64,13 +66,13 @@ func NewDataSource(configuration *config.Configuration) (IDataSource, error) {
 func GetDBConnection(configuration *config.Configuration) (*Datasource, error) {
 	var err error
 	once.Do(func() {
-		con, errConn := ConnectDB(configuration.DataSource)
+		con, errConn := connectDB(configuration.DataSource)
 		if errConn != nil {
 			err = errConn
 			return
 		}
 
-		cacheInstance, errCache := cache.NewCache()
+		cacheInstance, errCache := newCache()
 		if errCache != nil {
 			logrus.Errorf("Error creating cache: %v", errCache)
 			// Continue without cache instead of failing completely.

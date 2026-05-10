@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package blnk
+package ledgerforge
 
 import (
 	"context"
@@ -27,14 +27,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/blnkfinance/blnk/internal/apierror"
-	"github.com/blnkfinance/blnk/internal/filter"
-	blnkhooks "github.com/blnkfinance/blnk/internal/hooks"
-	"github.com/blnkfinance/blnk/internal/hotpairs"
-	redlock "github.com/blnkfinance/blnk/internal/lock"
-	"github.com/blnkfinance/blnk/internal/metrics"
-	"github.com/blnkfinance/blnk/internal/notification"
-	"github.com/blnkfinance/blnk/internal/search"
+	"github.com/devaccuracy/ledgerforge/internal/apierror"
+	"github.com/devaccuracy/ledgerforge/internal/filter"
+	ledgerforgehooks "github.com/devaccuracy/ledgerforge/internal/hooks"
+	"github.com/devaccuracy/ledgerforge/internal/hotpairs"
+	redlock "github.com/devaccuracy/ledgerforge/internal/lock"
+	"github.com/devaccuracy/ledgerforge/internal/metrics"
+	"github.com/devaccuracy/ledgerforge/internal/notification"
+	"github.com/devaccuracy/ledgerforge/internal/search"
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
@@ -43,10 +43,10 @@ import (
 	"github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel"
 
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/model"
 )
 
-var tracer = otel.Tracer("blnk.transactions")
+var tracer = otel.Tracer("ledgerforge.transactions")
 
 const (
 	StatusQueued    = "QUEUED"
@@ -146,7 +146,7 @@ type BatchJobResult struct {
 // - source *model.Balance: A pointer to the source Balance model.
 // - destination *model.Balance: A pointer to the destination Balance model.
 // - err error: An error if the balances could not be retrieved.
-func (l *Blnk) getSourceAndDestination(ctx context.Context, transaction *model.Transaction) (source *model.Balance, destination *model.Balance, err error) {
+func (l *LedgerForge) getSourceAndDestination(ctx context.Context, transaction *model.Transaction) (source *model.Balance, destination *model.Balance, err error) {
 	ctx, span := tracer.Start(ctx, "GetSourceAndDestination")
 	defer span.End()
 
@@ -220,7 +220,7 @@ func (l *Blnk) getSourceAndDestination(ctx context.Context, transaction *model.T
 // - sourceBalanceID string: The resolved source balance ID.
 // - destinationBalanceID string: The resolved destination balance ID.
 // - error: An error if the balance IDs could not be resolved.
-func (l *Blnk) resolveBalanceIDs(ctx context.Context, transaction *model.Transaction) (string, string, error) {
+func (l *LedgerForge) resolveBalanceIDs(ctx context.Context, transaction *model.Transaction) (string, string, error) {
 	ctx, span := tracer.Start(ctx, "ResolveBalanceIDs")
 	defer span.End()
 
@@ -265,7 +265,7 @@ func (l *Blnk) resolveBalanceIDs(ctx context.Context, transaction *model.Transac
 // Returns:
 // - *redlock.MultiLocker: A pointer to the acquired MultiLocker if successful.
 // - error: An error if the locks could not be acquired.
-func (l *Blnk) acquireLock(ctx context.Context, sourceBalanceID, destinationBalanceID string) (*redlock.MultiLocker, error) {
+func (l *LedgerForge) acquireLock(ctx context.Context, sourceBalanceID, destinationBalanceID string) (*redlock.MultiLocker, error) {
 	ctx, span := tracer.Start(ctx, "Acquiring Lock")
 	defer span.End()
 
@@ -294,7 +294,7 @@ func (l *Blnk) acquireLock(ctx context.Context, sourceBalanceID, destinationBala
 //
 // Returns:
 // - *model.Transaction: A pointer to the new transaction object with updated details.
-func (l *Blnk) updateTransactionDetails(ctx context.Context, transaction *model.Transaction, sourceBalance, destinationBalance *model.Balance) *model.Transaction {
+func (l *LedgerForge) updateTransactionDetails(ctx context.Context, transaction *model.Transaction, sourceBalance, destinationBalance *model.Balance) *model.Transaction {
 	_, span := tracer.Start(ctx, "Updating Transaction Details")
 	defer span.End()
 
@@ -329,7 +329,7 @@ func (l *Blnk) updateTransactionDetails(ctx context.Context, transaction *model.
 // - transaction *model.Transaction: The transaction for which to perform post-processing actions.
 // - sourceBalance *model.Balance: The source balance (can be nil for rejected transactions).
 // - destinationBalance *model.Balance: The destination balance (can be nil for rejected transactions).
-func (l *Blnk) postTransactionActions(ctx context.Context, transaction *model.Transaction, sourceBalance, destinationBalance *model.Balance) {
+func (l *LedgerForge) postTransactionActions(ctx context.Context, transaction *model.Transaction, sourceBalance, destinationBalance *model.Balance) {
 	_, span := tracer.Start(ctx, "Post Transaction Actions")
 	defer span.End()
 	go func() {
@@ -377,7 +377,7 @@ func (l *Blnk) postTransactionActions(ctx context.Context, transaction *model.Tr
 //
 // Returns:
 // - error: An error if the transaction reference has already been used or if there was an issue checking the reference.
-func (l *Blnk) validateTxn(ctx context.Context, transaction *model.Transaction) error {
+func (l *LedgerForge) validateTxn(ctx context.Context, transaction *model.Transaction) error {
 	ctx, span := tracer.Start(ctx, "Validating Transaction Reference")
 	defer span.End()
 
@@ -408,7 +408,7 @@ func (l *Blnk) validateTxn(ctx context.Context, transaction *model.Transaction) 
 //
 // Returns:
 // - error: An error if the balances could not be updated.
-func (l *Blnk) applyTransactionToBalances(ctx context.Context, balances []*model.Balance, transaction *model.Transaction) error {
+func (l *LedgerForge) applyTransactionToBalances(ctx context.Context, balances []*model.Balance, transaction *model.Transaction) error {
 	_, span := tracer.Start(ctx, "Applying Transaction to Balances")
 	defer span.End()
 
@@ -455,7 +455,7 @@ func (l *Blnk) applyTransactionToBalances(ctx context.Context, balances []*model
 // Returns:
 // - []*model.Transaction: A slice of pointers to the retrieved Transaction models.
 // - error: An error if the transactions could not be retrieved.
-func (l *Blnk) GetRefundableTransactionsByParentID(ctx context.Context, parentTransactionID string, batchSize int, offset int64) ([]*model.Transaction, error) {
+func (l *LedgerForge) GetRefundableTransactionsByParentID(ctx context.Context, parentTransactionID string, batchSize int, offset int64) ([]*model.Transaction, error) {
 	ctx, span := tracer.Start(ctx, "GetRefundableTransactionsByParentID")
 	defer span.End()
 
@@ -484,7 +484,7 @@ func (l *Blnk) GetRefundableTransactionsByParentID(ctx context.Context, parentTr
 // Returns:
 // - []*model.Transaction: A slice of pointers to the processed Transaction models.
 // - error: An error if the transactions could not be processed.
-func (l *Blnk) ProcessTransactionInBatches(ctx context.Context, parentTransactionID string, amount *big.Int, maxWorkers int, streamMode bool, gt getTxns, tw transactionWorker) ([]*model.Transaction, error) {
+func (l *LedgerForge) ProcessTransactionInBatches(ctx context.Context, parentTransactionID string, amount *big.Int, maxWorkers int, streamMode bool, gt getTxns, tw transactionWorker) ([]*model.Transaction, error) {
 	// Start a tracing span
 	ctx, span := tracer.Start(ctx, "ProcessTransactionInBatches")
 	defer span.End()
@@ -657,7 +657,7 @@ func (r transactionExecutionResult) usedCoalescing() bool {
 
 // planTransactionExecution selects the internal execution mode for a transaction based on
 // whether queued batching is allowed and whether hot-lane execution should be used.
-func (l *Blnk) planTransactionExecution(transaction *model.Transaction, allowQueuedBatch, hotLane bool) transactionExecutionPlan {
+func (l *LedgerForge) planTransactionExecution(transaction *model.Transaction, allowQueuedBatch, hotLane bool) transactionExecutionPlan {
 	if allowQueuedBatch {
 		if hotLane {
 			return transactionExecutionPlan{mode: transactionExecutionModeHotQueuedBatch, transaction: transaction}
@@ -670,7 +670,7 @@ func (l *Blnk) planTransactionExecution(transaction *model.Transaction, allowQue
 
 // executeTransactionPlan runs the selected internal execution mode and fails open from queued
 // batching back to the single-transaction path when batching does not handle the work.
-func (l *Blnk) executeTransactionPlan(ctx context.Context, plan transactionExecutionPlan) (transactionExecutionResult, error) {
+func (l *LedgerForge) executeTransactionPlan(ctx context.Context, plan transactionExecutionPlan) (transactionExecutionResult, error) {
 	switch plan.mode {
 	case transactionExecutionModeQueuedBatch:
 		handled, err := l.TryRecordQueuedTransactionBatch(ctx, plan.transaction)
@@ -719,7 +719,7 @@ func (l *Blnk) executeTransactionPlan(ctx context.Context, plan transactionExecu
 
 // processQueuedTransaction routes queued work through the shared executor so the planner can
 // choose between normal queued batching, hot-lane batching, and single-transaction fallback.
-func (l *Blnk) processQueuedTransaction(ctx context.Context, transaction *model.Transaction, hotLane bool) (transactionExecutionResult, error) {
+func (l *LedgerForge) processQueuedTransaction(ctx context.Context, transaction *model.Transaction, hotLane bool) (transactionExecutionResult, error) {
 	return l.executeTransactionPlan(ctx, l.planTransactionExecution(transaction, true, hotLane))
 }
 
@@ -732,7 +732,7 @@ func (l *Blnk) processQueuedTransaction(ctx context.Context, transaction *model.
 // - results chan<- BatchJobResult: A channel to which the results of the processing are sent.
 // - wg *sync.WaitGroup: A wait group to synchronize the completion of the worker.
 // - amount float64: The amount to be processed in the transaction.
-func (l *Blnk) RefundWorker(ctx context.Context, jobs <-chan *model.Transaction, results chan<- BatchJobResult, wg *sync.WaitGroup, amount *big.Int) {
+func (l *LedgerForge) RefundWorker(ctx context.Context, jobs <-chan *model.Transaction, results chan<- BatchJobResult, wg *sync.WaitGroup, amount *big.Int) {
 	ctx, span := tracer.Start(ctx, "RefundWorker")
 	defer span.End()
 
@@ -751,7 +751,7 @@ func (l *Blnk) RefundWorker(ctx context.Context, jobs <-chan *model.Transaction,
 
 // ProcessQueuedTransaction preserves the existing queued-worker behavior while routing the
 // decision through the shared internal transaction executor.
-func (l *Blnk) ProcessQueuedTransaction(ctx context.Context, transaction *model.Transaction, hotLane bool) (*model.Transaction, error) {
+func (l *LedgerForge) ProcessQueuedTransaction(ctx context.Context, transaction *model.Transaction, hotLane bool) (*model.Transaction, error) {
 	result, err := l.processQueuedTransaction(ctx, transaction, hotLane)
 	if err != nil {
 		return nil, err
@@ -769,7 +769,7 @@ func (l *Blnk) ProcessQueuedTransaction(ctx context.Context, transaction *model.
 // Returns:
 // - *model.Transaction: A pointer to the recorded Transaction model.
 // - error: An error if the transaction could not be recorded.
-func (l *Blnk) RecordTransaction(ctx context.Context, transaction *model.Transaction) (*model.Transaction, error) {
+func (l *LedgerForge) RecordTransaction(ctx context.Context, transaction *model.Transaction) (*model.Transaction, error) {
 	result, err := l.executeTransactionPlan(ctx, l.planTransactionExecution(transaction, false, false))
 	if err != nil {
 		return nil, err
@@ -779,7 +779,7 @@ func (l *Blnk) RecordTransaction(ctx context.Context, transaction *model.Transac
 
 // recordTransactionSingle preserves the existing direct transaction-processing semantics by
 // running the single-transaction flow under the balance lock.
-func (l *Blnk) recordTransactionSingle(ctx context.Context, transaction *model.Transaction) (*model.Transaction, error) {
+func (l *LedgerForge) recordTransactionSingle(ctx context.Context, transaction *model.Transaction) (*model.Transaction, error) {
 	ctx, span := tracer.Start(ctx, "RecordTransaction")
 	defer span.End()
 
@@ -851,17 +851,17 @@ func (l *Blnk) recordTransactionSingle(ctx context.Context, transaction *model.T
 // share the same contention shape into a single balance commit. It prefers the narrowest safe
 // scope first (pair, then source, then destination) and fails open by returning handled=false if
 // batching would be unsafe or provides no benefit.
-func (l *Blnk) TryRecordQueuedTransactionBatch(ctx context.Context, transaction *model.Transaction) (handled bool, err error) {
+func (l *LedgerForge) TryRecordQueuedTransactionBatch(ctx context.Context, transaction *model.Transaction) (handled bool, err error) {
 	return l.tryRecordQueuedTransactionBatch(ctx, transaction, false)
 }
 
-func (l *Blnk) TryRecordQueuedTransactionBatchForHotLane(ctx context.Context, transaction *model.Transaction) (handled bool, err error) {
+func (l *LedgerForge) TryRecordQueuedTransactionBatchForHotLane(ctx context.Context, transaction *model.Transaction) (handled bool, err error) {
 	return l.tryRecordQueuedTransactionBatch(ctx, transaction, true)
 }
 
 // tryRecordQueuedTransactionBatch builds and persists a coalesced queued batch when it is
 // safe and useful, otherwise it returns handled=false so callers can fail open.
-func (l *Blnk) tryRecordQueuedTransactionBatch(ctx context.Context, transaction *model.Transaction, force bool) (handled bool, err error) {
+func (l *LedgerForge) tryRecordQueuedTransactionBatch(ctx context.Context, transaction *model.Transaction, force bool) (handled bool, err error) {
 	ctx, span := tracer.Start(ctx, "TryRecordQueuedTransactionBatch")
 	defer span.End()
 
@@ -945,7 +945,7 @@ func (l *Blnk) tryRecordQueuedTransactionBatch(ctx context.Context, transaction 
 
 // persistQueuedTransactionBatch acquires the balance-set lock, prepares the batch in memory,
 // commits the final state atomically, and dispatches post-commit side effects.
-func (l *Blnk) persistQueuedTransactionBatch(ctx context.Context, transactions []*model.Transaction) error {
+func (l *LedgerForge) persistQueuedTransactionBatch(ctx context.Context, transactions []*model.Transaction) error {
 	ctx, span := tracer.Start(ctx, "RecordQueuedTransactionBatch")
 	defer span.End()
 
@@ -994,14 +994,14 @@ func validateQueuedBatchCurrencies(transactions []*model.Transaction) error {
 
 // persistQueuedTransactionBatchLocked prepares every transaction against the shared in-memory
 // balance set and persists the final balance and transaction state atomically.
-func (l *Blnk) persistQueuedTransactionBatchLocked(ctx context.Context, span trace.Span, locker *redlock.MultiLocker, balanceIDs []string, transactions []*model.Transaction) (queuedBatchPersistResult, error) {
+func (l *LedgerForge) persistQueuedTransactionBatchLocked(ctx context.Context, span trace.Span, locker *redlock.MultiLocker, balanceIDs []string, transactions []*model.Transaction) (queuedBatchPersistResult, error) {
 	defer l.releaseLock(ctx, locker)
 
 	balancesByID, orderedBalances, err := l.loadBalancesForQueuedBatch(ctx, balanceIDs)
 	if err != nil {
 		return queuedBatchPersistResult{}, fmt.Errorf("failed to load balances for coalesced batch: %w", err)
 	}
-	preHooks, err := l.listHooksForExecution(ctx, blnkhooks.PreTransaction)
+	preHooks, err := l.listHooksForExecution(ctx, ledgerforgehooks.PreTransaction)
 	if err != nil {
 		return queuedBatchPersistResult{}, fmt.Errorf("failed to list pre-transaction hooks for coalesced batch: %w", err)
 	}
@@ -1040,7 +1040,7 @@ func (l *Blnk) persistQueuedTransactionBatchLocked(ctx context.Context, span tra
 
 // queuedBatchReferenceSets prepares the prefetched and existing reference sets used by batch
 // validation when batch reference checking is enabled.
-func (l *Blnk) queuedBatchReferenceSets(ctx context.Context, transactions []*model.Transaction) (map[string]struct{}, map[string]struct{}, error) {
+func (l *LedgerForge) queuedBatchReferenceSets(ctx context.Context, transactions []*model.Transaction) (map[string]struct{}, map[string]struct{}, error) {
 	prefetchedReferences := make(map[string]struct{})
 	existingReferences := make(map[string]struct{})
 	if !l.batchReferenceCheckEnabled() {
@@ -1057,14 +1057,14 @@ func (l *Blnk) queuedBatchReferenceSets(ctx context.Context, transactions []*mod
 
 // prepareQueuedBatchTransaction performs the per-transaction work inside a coalesced batch:
 // hooks, reference validation, in-memory balance application, and persistence shaping.
-func (l *Blnk) prepareQueuedBatchTransaction(ctx context.Context, span trace.Span, txn *model.Transaction, balancesByID map[string]*model.Balance, preHooks []*blnkhooks.Hook, prefetchedReferences, existingReferences, batchReferences map[string]struct{}) (queuedBatchPostCommitWork, error) {
+func (l *LedgerForge) prepareQueuedBatchTransaction(ctx context.Context, span trace.Span, txn *model.Transaction, balancesByID map[string]*model.Balance, preHooks []*ledgerforgehooks.Hook, prefetchedReferences, existingReferences, batchReferences map[string]struct{}) (queuedBatchPostCommitWork, error) {
 	sourceBalance, destinationBalance, err := coalescingBalancesForTransaction(balancesByID, txn)
 	if err != nil {
 		return queuedBatchPostCommitWork{}, err
 	}
 
 	if l.Hooks != nil {
-		if err := l.Hooks.ExecuteHooks(ctx, preHooks, blnkhooks.PreTransaction, txn.TransactionID, txn); err != nil {
+		if err := l.Hooks.ExecuteHooks(ctx, preHooks, ledgerforgehooks.PreTransaction, txn.TransactionID, txn); err != nil {
 			span.RecordError(err)
 			return queuedBatchPostCommitWork{}, fmt.Errorf("batch pre-transaction hook failed: %w", err)
 		}
@@ -1089,8 +1089,8 @@ func (l *Blnk) prepareQueuedBatchTransaction(ctx context.Context, span trace.Spa
 
 // runQueuedBatchPostCommitWork dispatches the post-commit work for a coalesced batch after
 // the balance-set lock has been released.
-func (l *Blnk) runQueuedBatchPostCommitWork(ctx context.Context, span trace.Span, result queuedBatchPersistResult) {
-	postHooks, err := l.listHooksForExecution(ctx, blnkhooks.PostTransaction)
+func (l *LedgerForge) runQueuedBatchPostCommitWork(ctx context.Context, span trace.Span, result queuedBatchPersistResult) {
+	postHooks, err := l.listHooksForExecution(ctx, ledgerforgehooks.PostTransaction)
 	if err != nil {
 		logrus.WithError(err).Warn("failed to list post-transaction hooks for coalesced batch; falling back to per-transaction lookup")
 		l.runTransactionPostCommitWork(ctx, span, result.orderedBalances, result.postCommitWork)
@@ -1102,13 +1102,13 @@ func (l *Blnk) runQueuedBatchPostCommitWork(ctx context.Context, span trace.Span
 
 // runTransactionPostCommitWork executes monitor checks, post-hooks, and post-transaction
 // actions for already-persisted work items outside the locked persistence path.
-func (l *Blnk) runTransactionPostCommitWork(ctx context.Context, span trace.Span, orderedBalances []*model.Balance, postCommitWork []queuedBatchPostCommitWork) {
+func (l *LedgerForge) runTransactionPostCommitWork(ctx context.Context, span trace.Span, orderedBalances []*model.Balance, postCommitWork []queuedBatchPostCommitWork) {
 	l.runTransactionPostCommitWorkWithHooks(ctx, span, orderedBalances, postCommitWork, nil)
 }
 
 // runTransactionPostCommitWorkWithHooks executes monitor checks, post-hooks, and
 // post-transaction actions for persisted work items, optionally reusing a preloaded hook set.
-func (l *Blnk) runTransactionPostCommitWorkWithHooks(ctx context.Context, span trace.Span, orderedBalances []*model.Balance, postCommitWork []queuedBatchPostCommitWork, postHooks []*blnkhooks.Hook) {
+func (l *LedgerForge) runTransactionPostCommitWorkWithHooks(ctx context.Context, span trace.Span, orderedBalances []*model.Balance, postCommitWork []queuedBatchPostCommitWork, postHooks []*ledgerforgehooks.Hook) {
 	for _, balance := range orderedBalances {
 		go l.checkBalanceMonitors(ctx, balance)
 	}
@@ -1117,7 +1117,7 @@ func (l *Blnk) runTransactionPostCommitWorkWithHooks(ctx context.Context, span t
 		if l.Hooks != nil {
 			var err error
 			if postHooks != nil {
-				err = l.Hooks.ExecuteHooks(ctx, postHooks, blnkhooks.PostTransaction, work.transaction.TransactionID, work.transaction)
+				err = l.Hooks.ExecuteHooks(ctx, postHooks, ledgerforgehooks.PostTransaction, work.transaction.TransactionID, work.transaction)
 			} else {
 				err = l.Hooks.ExecutePostHooks(ctx, work.transaction.TransactionID, work.transaction)
 			}
@@ -1131,8 +1131,8 @@ func (l *Blnk) runTransactionPostCommitWorkWithHooks(ctx context.Context, span t
 }
 
 // listHooksForExecution returns the current hook set for the requested type, or nil when
-// hook execution is not configured for the current Blnk instance.
-func (l *Blnk) listHooksForExecution(ctx context.Context, hookType blnkhooks.HookType) ([]*blnkhooks.Hook, error) {
+// hook execution is not configured for the current LedgerForge instance.
+func (l *LedgerForge) listHooksForExecution(ctx context.Context, hookType ledgerforgehooks.HookType) ([]*ledgerforgehooks.Hook, error) {
 	if l.Hooks == nil {
 		return nil, nil
 	}
@@ -1152,7 +1152,7 @@ func (l *Blnk) listHooksForExecution(ctx context.Context, hookType blnkhooks.Hoo
 // Returns:
 // - *model.Transaction: A pointer to the Transaction model returned by the function.
 // - error: An error if the locks could not be acquired or if the function execution fails.
-func (l *Blnk) executeWithLock(ctx context.Context, transaction *model.Transaction, fn func(context.Context) (*model.Transaction, error)) (*model.Transaction, error) {
+func (l *LedgerForge) executeWithLock(ctx context.Context, transaction *model.Transaction, fn func(context.Context) (*model.Transaction, error)) (*model.Transaction, error) {
 	ctx, span := tracer.Start(ctx, "ExecuteWithLock")
 	defer span.End()
 
@@ -1196,7 +1196,7 @@ func (l *Blnk) executeWithLock(ctx context.Context, transaction *model.Transacti
 // - *model.Balance: A pointer to the source Balance model.
 // - *model.Balance: A pointer to the destination Balance model.
 // - error: An error if the transaction validation or balance retrieval fails.
-func (l *Blnk) validateAndPrepareTransaction(ctx context.Context, transaction *model.Transaction) (*model.Transaction, *model.Balance, *model.Balance, error) {
+func (l *LedgerForge) validateAndPrepareTransaction(ctx context.Context, transaction *model.Transaction) (*model.Transaction, *model.Balance, *model.Balance, error) {
 	ctx, span := tracer.Start(ctx, "ValidateAndPrepareTransaction")
 	defer span.End()
 
@@ -1239,7 +1239,7 @@ func (l *Blnk) validateAndPrepareTransaction(ctx context.Context, transaction *m
 //
 // Returns:
 // - error: An error if the transaction could not be applied to the balances.
-func (l *Blnk) processBalances(ctx context.Context, transaction *model.Transaction, sourceBalance, destinationBalance *model.Balance) error {
+func (l *LedgerForge) processBalances(ctx context.Context, transaction *model.Transaction, sourceBalance, destinationBalance *model.Balance) error {
 	ctx, span := tracer.Start(ctx, "ProcessBalances")
 	defer span.End()
 
@@ -1255,7 +1255,7 @@ func (l *Blnk) processBalances(ctx context.Context, transaction *model.Transacti
 
 // buildTransactionExecutionWork converts an in-memory-applied transaction into the shared
 // persistence and post-commit work shape used by both single and batched execution paths.
-func (l *Blnk) buildTransactionExecutionWork(ctx context.Context, transaction *model.Transaction, sourceBalance, destinationBalance *model.Balance) (queuedBatchPostCommitWork, bool) {
+func (l *LedgerForge) buildTransactionExecutionWork(ctx context.Context, transaction *model.Transaction, sourceBalance, destinationBalance *model.Balance) (queuedBatchPostCommitWork, bool) {
 	transaction = l.updateTransactionDetails(ctx, transaction, sourceBalance, destinationBalance)
 	if transaction.PreciseAmount != nil && transaction.PreciseAmount.Cmp(big.NewInt(0)) == 0 {
 		return queuedBatchPostCommitWork{
@@ -1275,7 +1275,7 @@ func (l *Blnk) buildTransactionExecutionWork(ctx context.Context, transaction *m
 
 // persistSingleTransactionExecutionWork atomically persists one prepared transaction, its
 // updated balances, and any lineage outbox using the shared execution work shape.
-func (l *Blnk) persistSingleTransactionExecutionWork(ctx context.Context, work queuedBatchPostCommitWork) (queuedBatchPostCommitWork, error) {
+func (l *LedgerForge) persistSingleTransactionExecutionWork(ctx context.Context, work queuedBatchPostCommitWork) (queuedBatchPostCommitWork, error) {
 	ctx, span := tracer.Start(ctx, "PersistSingleTransactionExecutionWork")
 	defer span.End()
 
@@ -1294,7 +1294,7 @@ func (l *Blnk) persistSingleTransactionExecutionWork(ctx context.Context, work q
 	return work, nil
 }
 
-func (l *Blnk) prepareTransactionOutbox(ctx context.Context, transaction *model.Transaction, sourceBalance, destinationBalance *model.Balance) *model.LineageOutbox {
+func (l *LedgerForge) prepareTransactionOutbox(ctx context.Context, transaction *model.Transaction, sourceBalance, destinationBalance *model.Balance) *model.LineageOutbox {
 	if transaction.Status != StatusApplied && transaction.Status != StatusInflight {
 		return nil
 	}
@@ -1308,7 +1308,7 @@ func (l *Blnk) prepareTransactionOutbox(ctx context.Context, transaction *model.
 	return l.PrepareLineageOutbox(ctx, transaction, sourceBalance, destinationBalance)
 }
 
-func (l *Blnk) queuedCoalescingBatchSize(force bool) int {
+func (l *LedgerForge) queuedCoalescingBatchSize(force bool) int {
 	if !force && !l.Config().Transaction.EnableCoalescing {
 		return 0
 	}
@@ -1324,7 +1324,7 @@ func (l *Blnk) queuedCoalescingBatchSize(force bool) int {
 	}
 }
 
-func (l *Blnk) buildQueuedCoalescingBatch(ctx context.Context, transaction *model.Transaction, batchSize int) ([]*model.Transaction, queuedCoalescingScope, error) {
+func (l *LedgerForge) buildQueuedCoalescingBatch(ctx context.Context, transaction *model.Transaction, batchSize int) ([]*model.Transaction, queuedCoalescingScope, error) {
 	for _, scope := range []queuedCoalescingScope{
 		queuedCoalescingScopePair,
 		queuedCoalescingScopeSource,
@@ -1342,7 +1342,7 @@ func (l *Blnk) buildQueuedCoalescingBatch(ctx context.Context, transaction *mode
 	return nil, "", nil
 }
 
-func (l *Blnk) buildQueuedCoalescingBatchForScope(ctx context.Context, leader *model.Transaction, scope queuedCoalescingScope, batchSize int) ([]*model.Transaction, error) {
+func (l *LedgerForge) buildQueuedCoalescingBatchForScope(ctx context.Context, leader *model.Transaction, scope queuedCoalescingScope, batchSize int) ([]*model.Transaction, error) {
 	siblings, err := l.loadQueuedTransactionsForCoalescingScope(ctx, leader, scope, batchSize-1)
 	if err != nil {
 		return nil, err
@@ -1369,7 +1369,7 @@ func (l *Blnk) buildQueuedCoalescingBatchForScope(ctx context.Context, leader *m
 	return batch, nil
 }
 
-func (l *Blnk) loadQueuedTransactionsForCoalescingScope(ctx context.Context, leader *model.Transaction, scope queuedCoalescingScope, limit int) ([]*model.Transaction, error) {
+func (l *LedgerForge) loadQueuedTransactionsForCoalescingScope(ctx context.Context, leader *model.Transaction, scope queuedCoalescingScope, limit int) ([]*model.Transaction, error) {
 	switch scope {
 	case queuedCoalescingScopePair:
 		return l.datasource.GetQueuedTransactionsForCoalescing(
@@ -1426,7 +1426,7 @@ func collectQueuedCoalescingBalanceIDs(transactions []*model.Transaction) []stri
 	return ids
 }
 
-func (l *Blnk) acquireBalanceSetLock(ctx context.Context, balanceIDs []string) (*redlock.MultiLocker, error) {
+func (l *LedgerForge) acquireBalanceSetLock(ctx context.Context, balanceIDs []string) (*redlock.MultiLocker, error) {
 	ctx, span := tracer.Start(ctx, "Acquiring Balance Set Lock")
 	defer span.End()
 
@@ -1442,7 +1442,7 @@ func (l *Blnk) acquireBalanceSetLock(ctx context.Context, balanceIDs []string) (
 	return locker, nil
 }
 
-func (l *Blnk) acquireTransactionLocker(ctx context.Context, locker *redlock.MultiLocker) error {
+func (l *LedgerForge) acquireTransactionLocker(ctx context.Context, locker *redlock.MultiLocker) error {
 	lockCfg := l.Config().Transaction
 	if lockCfg.LockWaitTimeout > 0 {
 		return locker.WaitLock(ctx, lockCfg.LockDuration, lockCfg.LockWaitTimeout)
@@ -1450,7 +1450,7 @@ func (l *Blnk) acquireTransactionLocker(ctx context.Context, locker *redlock.Mul
 	return locker.Lock(ctx, lockCfg.LockDuration)
 }
 
-func (l *Blnk) loadBalancesForQueuedBatch(ctx context.Context, balanceIDs []string) (map[string]*model.Balance, []*model.Balance, error) {
+func (l *LedgerForge) loadBalancesForQueuedBatch(ctx context.Context, balanceIDs []string) (map[string]*model.Balance, []*model.Balance, error) {
 	balancesByID := make(map[string]*model.Balance, len(balanceIDs))
 
 	if l.Config().Transaction.EnableQueuedChecks {
@@ -1497,7 +1497,7 @@ func coalescingBalancesForTransaction(balancesByID map[string]*model.Balance, tx
 	return sourceBalance, destinationBalance, nil
 }
 
-func (l *Blnk) getQueuedBatchExistingReferences(ctx context.Context, transactions []*model.Transaction) (map[string]struct{}, map[string]struct{}, error) {
+func (l *LedgerForge) getQueuedBatchExistingReferences(ctx context.Context, transactions []*model.Transaction) (map[string]struct{}, map[string]struct{}, error) {
 	references := make([]string, 0, len(transactions))
 	prefetched := make(map[string]struct{}, len(transactions))
 	for _, txn := range transactions {
@@ -1518,7 +1518,7 @@ func (l *Blnk) getQueuedBatchExistingReferences(ctx context.Context, transaction
 	return prefetched, existing, nil
 }
 
-func (l *Blnk) validateQueuedBatchTransactionReference(ctx context.Context, transaction *model.Transaction, prefetchedReferences, existingReferences, batchReferences map[string]struct{}) error {
+func (l *LedgerForge) validateQueuedBatchTransactionReference(ctx context.Context, transaction *model.Transaction, prefetchedReferences, existingReferences, batchReferences map[string]struct{}) error {
 	if transaction == nil {
 		return fmt.Errorf("nil transaction")
 	}
@@ -1555,11 +1555,11 @@ func (l *Blnk) validateQueuedBatchTransactionReference(ctx context.Context, tran
 	return nil
 }
 
-func (l *Blnk) batchReferenceCheckEnabled() bool {
+func (l *LedgerForge) batchReferenceCheckEnabled() bool {
 	return !l.Config().Transaction.DisableBatchReferenceCheck
 }
 
-func (l *Blnk) canCoalesceQueuedTransaction(transaction *model.Transaction) (bool, string) {
+func (l *LedgerForge) canCoalesceQueuedTransaction(transaction *model.Transaction) (bool, string) {
 	if transaction == nil {
 		return false, "nil_transaction"
 	}
@@ -1589,7 +1589,7 @@ func (l *Blnk) canCoalesceQueuedTransaction(transaction *model.Transaction) (boo
 	return true, ""
 }
 
-func (l *Blnk) canCoalesceQueuedOriginal(transaction *model.Transaction) (bool, string) {
+func (l *LedgerForge) canCoalesceQueuedOriginal(transaction *model.Transaction) (bool, string) {
 	if transaction == nil {
 		return false, "nil_transaction"
 	}
@@ -1638,7 +1638,7 @@ func restoreTransactionFlagsFromMetadata(transaction *model.Transaction) {
 // Parameters:
 // - ctx context.Context: The context for the operation.
 // - locker *redlock.MultiLocker: The MultiLocker object representing the acquired locks.
-func (l *Blnk) releaseLock(ctx context.Context, locker *redlock.MultiLocker) {
+func (l *LedgerForge) releaseLock(ctx context.Context, locker *redlock.MultiLocker) {
 	ctx, span := tracer.Start(ctx, "ReleaseLock")
 	defer span.End()
 
@@ -1660,7 +1660,7 @@ func (l *Blnk) releaseLock(ctx context.Context, locker *redlock.MultiLocker) {
 //
 // Returns:
 // - error: A formatted error message combining the provided message and the original error.
-func (l *Blnk) logAndRecordError(span trace.Span, msg string, err error) error {
+func (l *LedgerForge) logAndRecordError(span trace.Span, msg string, err error) error {
 	span.RecordError(err)
 	logrus.WithError(err).Error(msg)
 	return fmt.Errorf("%s: %w", msg, err)
@@ -1677,7 +1677,7 @@ func (l *Blnk) logAndRecordError(span trace.Span, msg string, err error) error {
 // Returns:
 // - *model.Transaction: A pointer to the rejected Transaction model.
 // - error: An error if the transaction could not be recorded.
-func (l *Blnk) RejectTransaction(ctx context.Context, transaction *model.Transaction, reason string) (*model.Transaction, error) {
+func (l *LedgerForge) RejectTransaction(ctx context.Context, transaction *model.Transaction, reason string) (*model.Transaction, error) {
 	ctx, span := tracer.Start(ctx, "RejectTransaction")
 	defer span.End()
 
@@ -1688,7 +1688,7 @@ func (l *Blnk) RejectTransaction(ctx context.Context, transaction *model.Transac
 	if transaction.MetaData == nil {
 		transaction.MetaData = make(map[string]interface{})
 	}
-	transaction.MetaData["blnk_rejection_reason"] = reason
+	transaction.MetaData["ledgerforge_rejection_reason"] = reason
 
 	// Persist the transaction with the updated status and metadata
 	transaction, err := l.datasource.RecordTransaction(ctx, transaction)
@@ -1745,7 +1745,7 @@ func categorizeRejectionReason(reason string) string {
 
 // prepareTransactionForQueue prepares a transaction for queueing by setting status, metadata,
 // and resolving source/destination balances.
-func (l *Blnk) prepareTransactionForQueue(ctx context.Context, transaction *model.Transaction) (*model.Transaction, error) {
+func (l *LedgerForge) prepareTransactionForQueue(ctx context.Context, transaction *model.Transaction) (*model.Transaction, error) {
 	ctx, span := tracer.Start(ctx, "PrepareTransactionForQueue")
 	defer span.End()
 
@@ -1781,7 +1781,7 @@ func (l *Blnk) prepareTransactionForQueue(ctx context.Context, transaction *mode
 // Returns:
 // - *model.Transaction: A pointer to the queued Transaction model.
 // - error: An error if the transaction could not be queued.
-func (l *Blnk) QueueTransaction(ctx context.Context, transaction *model.Transaction) (*model.Transaction, error) {
+func (l *LedgerForge) QueueTransaction(ctx context.Context, transaction *model.Transaction) (*model.Transaction, error) {
 	ctx, span := tracer.Start(ctx, "QueueTransaction")
 	defer span.End()
 
@@ -1848,7 +1848,7 @@ func (l *Blnk) QueueTransaction(ctx context.Context, transaction *model.Transact
 	return transaction, nil
 }
 
-func processTransactionAsync(ctx context.Context, l *Blnk, transaction *model.Transaction, originalRef string, originalTxnID string, transactions []*model.Transaction) {
+func processTransactionAsync(ctx context.Context, l *LedgerForge, transaction *model.Transaction, originalRef string, originalTxnID string, transactions []*model.Transaction) {
 	go func() {
 		if err := asyncTxnSemaphore.Acquire(ctx, 1); err != nil {
 			logrus.WithError(err).Error("failed to acquire async txn semaphore")
@@ -1882,7 +1882,7 @@ func processTransactionAsync(ctx context.Context, l *Blnk, transaction *model.Tr
 // Returns:
 // - []*model.Transaction: A slice of split transactions, or empty if no split is needed.
 // - error: An error if the transaction splitting fails.
-func (l *Blnk) handleSplitTransactions(ctx context.Context, transaction *model.Transaction) ([]*model.Transaction, error) {
+func (l *LedgerForge) handleSplitTransactions(ctx context.Context, transaction *model.Transaction) ([]*model.Transaction, error) {
 	ctx, span := tracer.Start(ctx, "HandleSplitTransactions")
 	defer span.End()
 
@@ -1906,7 +1906,7 @@ func (l *Blnk) handleSplitTransactions(ctx context.Context, transaction *model.T
 // Returns:
 // - []*model.Transaction: A slice of processed transactions ready for queueing.
 // - error: An error if the processing fails.
-func (l *Blnk) processTxns(ctx context.Context, originalTxn *model.Transaction, splitTxns []*model.Transaction, originalTxnID, originalRef string) ([]*model.Transaction, error) {
+func (l *LedgerForge) processTxns(ctx context.Context, originalTxn *model.Transaction, splitTxns []*model.Transaction, originalTxnID, originalRef string) ([]*model.Transaction, error) {
 	if originalTxn.SkipQueue {
 		if len(splitTxns) == 0 {
 			recorded, err := l.RecordTransaction(ctx, originalTxn)
@@ -1946,7 +1946,7 @@ func (l *Blnk) processTxns(ctx context.Context, originalTxn *model.Transaction, 
 // Returns:
 // - []*model.Transaction: A slice containing the processed transaction ready for queueing.
 // - error: An error if the transaction processing fails.
-func (l *Blnk) processSingleTransaction(ctx context.Context, transaction *model.Transaction, originalRef string) ([]*model.Transaction, error) {
+func (l *LedgerForge) processSingleTransaction(ctx context.Context, transaction *model.Transaction, originalRef string) ([]*model.Transaction, error) {
 	if len(transaction.Sources) == 0 && len(transaction.Destinations) == 0 {
 		preparedTxn, err := l.prepareTransactionForQueue(ctx, transaction)
 		if err != nil {
@@ -1976,7 +1976,7 @@ func (l *Blnk) processSingleTransaction(ctx context.Context, transaction *model.
 // Returns:
 // - []*model.Transaction: A slice of processed transactions ready for queueing.
 // - error: An error if any transaction processing fails.
-func (l *Blnk) processSplitTransactions(ctx context.Context, transactions []*model.Transaction, originalTxnID, originalRef string) ([]*model.Transaction, error) {
+func (l *LedgerForge) processSplitTransactions(ctx context.Context, transactions []*model.Transaction, originalTxnID, originalRef string) ([]*model.Transaction, error) {
 	queueTransactions := make([]*model.Transaction, len(transactions))
 	updateSplitTransactions(transactions, originalTxnID, originalRef)
 
@@ -2121,7 +2121,7 @@ func enqueueTransactions(ctx context.Context, queue *Queue, originalTransaction 
 // Returns:
 // - *model.Transaction: A pointer to the retrieved Transaction model.
 // - error: An error if the transaction could not be retrieved.
-func (l *Blnk) GetTransaction(ctx context.Context, TransactionID string) (*model.Transaction, error) {
+func (l *LedgerForge) GetTransaction(ctx context.Context, TransactionID string) (*model.Transaction, error) {
 	ctx, span := tracer.Start(ctx, "GetTransaction")
 	defer span.End()
 
@@ -2142,7 +2142,7 @@ func (l *Blnk) GetTransaction(ctx context.Context, TransactionID string) (*model
 // Returns:
 // - []model.Transaction: A slice of all retrieved Transaction models.
 // - error: An error if the transactions could not be retrieved.
-func (l *Blnk) GetAllTransactions(limit, offset int) ([]model.Transaction, error) {
+func (l *LedgerForge) GetAllTransactions(limit, offset int) ([]model.Transaction, error) {
 	ctx, span := tracer.Start(context.Background(), "GetAllTransactions")
 	defer span.End()
 
@@ -2169,7 +2169,7 @@ func (l *Blnk) GetAllTransactions(limit, offset int) ([]model.Transaction, error
 // Returns:
 // - []model.Transaction: A slice of Transaction models matching the filter criteria.
 // - error: An error if the transactions could not be retrieved.
-func (l *Blnk) GetAllTransactionsWithFilter(ctx context.Context, filters *filter.QueryFilterSet, limit, offset int) ([]model.Transaction, error) {
+func (l *LedgerForge) GetAllTransactionsWithFilter(ctx context.Context, filters *filter.QueryFilterSet, limit, offset int) ([]model.Transaction, error) {
 	ctx, span := tracer.Start(ctx, "GetAllTransactionsWithFilter")
 	defer span.End()
 
@@ -2184,7 +2184,7 @@ func (l *Blnk) GetAllTransactionsWithFilter(ctx context.Context, filters *filter
 }
 
 // GetAllTransactionsWithFilterAndOptions retrieves transactions with advanced filters, sorting, and optional count.
-func (l *Blnk) GetAllTransactionsWithFilterAndOptions(ctx context.Context, filters *filter.QueryFilterSet, opts *filter.QueryOptions, limit, offset int) ([]model.Transaction, *int64, error) {
+func (l *LedgerForge) GetAllTransactionsWithFilterAndOptions(ctx context.Context, filters *filter.QueryFilterSet, opts *filter.QueryOptions, limit, offset int) ([]model.Transaction, *int64, error) {
 	ctx, span := tracer.Start(ctx, "GetAllTransactionsWithFilterAndOptions")
 	defer span.End()
 
@@ -2208,7 +2208,7 @@ func (l *Blnk) GetAllTransactionsWithFilterAndOptions(ctx context.Context, filte
 // Returns:
 // - model.Transaction: The retrieved Transaction model.
 // - error: An error if the transaction could not be retrieved.
-func (l *Blnk) GetTransactionByRef(ctx context.Context, reference string) (model.Transaction, error) {
+func (l *LedgerForge) GetTransactionByRef(ctx context.Context, reference string) (model.Transaction, error) {
 	ctx, span := tracer.Start(ctx, "GetTransactionByRef")
 	defer span.End()
 
@@ -2233,7 +2233,7 @@ func (l *Blnk) GetTransactionByRef(ctx context.Context, reference string) (model
 //
 // Returns:
 // - error: An error if the transaction status could not be updated.
-func (l *Blnk) UpdateTransactionStatus(ctx context.Context, id string, status string) error {
+func (l *LedgerForge) UpdateTransactionStatus(ctx context.Context, id string, status string) error {
 	ctx, span := tracer.Start(ctx, "UpdateTransactionStatus")
 	defer span.End()
 
@@ -2250,7 +2250,7 @@ func (l *Blnk) UpdateTransactionStatus(ctx context.Context, id string, status st
 
 // getOriginalTransactionForRefund retrieves the original transaction to be refunded,
 // checking both the database and the queue if necessary.
-func (l *Blnk) getOriginalTransactionForRefund(ctx context.Context, transactionID string) (*model.Transaction, error) {
+func (l *LedgerForge) getOriginalTransactionForRefund(ctx context.Context, transactionID string) (*model.Transaction, error) {
 	ctx, span := tracer.Start(ctx, "getOriginalTransactionForRefund")
 	defer span.End()
 
@@ -2282,7 +2282,7 @@ func (l *Blnk) getOriginalTransactionForRefund(ctx context.Context, transactionI
 }
 
 // validateTransactionForRefund checks if the given transaction is eligible for a refund.
-func (l *Blnk) validateTransactionForRefund(ctx context.Context, originalTxn *model.Transaction) error {
+func (l *LedgerForge) validateTransactionForRefund(ctx context.Context, originalTxn *model.Transaction) error {
 	ctx, span := tracer.Start(ctx, "validateTransactionForRefund")
 	defer span.End()
 
@@ -2343,7 +2343,7 @@ func prepareRefundTransaction(originalTxn *model.Transaction, skipQueue bool) *m
 // Returns:
 // - *model.Transaction: A pointer to the refunded Transaction model.
 // - error: An error if the transaction could not be refunded.
-func (l *Blnk) RefundTransaction(ctx context.Context, transactionID string, skipQueue bool) (*model.Transaction, error) {
+func (l *LedgerForge) RefundTransaction(ctx context.Context, transactionID string, skipQueue bool) (*model.Transaction, error) {
 	ctx, span := tracer.Start(ctx, "RefundTransaction")
 	defer span.End()
 
@@ -2375,7 +2375,7 @@ func (l *Blnk) RefundTransaction(ctx context.Context, transactionID string, skip
 }
 
 // processBulkTransactions prepares and queues all transactions in a batch with the given batch ID
-func (l *Blnk) processBulkTransactions(ctx context.Context, transactions []*model.Transaction, batchID string, inflight bool, skipQueue bool) error {
+func (l *LedgerForge) processBulkTransactions(ctx context.Context, transactions []*model.Transaction, batchID string, inflight bool, skipQueue bool) error {
 	for i, txn := range transactions {
 		// Set transaction properties
 		txn.Inflight = inflight
@@ -2400,7 +2400,7 @@ func (l *Blnk) processBulkTransactions(ctx context.Context, transactions []*mode
 
 // rollbackBatchTransactions performs a rollback of transactions in a batch
 // Returns the action performed (voided/refunded) and any error that occurred
-func (l *Blnk) rollbackBatchTransactions(ctx context.Context, batchID string, isInflight bool) (string, error) {
+func (l *LedgerForge) rollbackBatchTransactions(ctx context.Context, batchID string, isInflight bool) (string, error) {
 	var action string
 	var rollbackErr error
 
@@ -2415,7 +2415,7 @@ func (l *Blnk) rollbackBatchTransactions(ctx context.Context, batchID string, is
 }
 
 // voidInflightBatchTransactions voids all inflight transactions in a batch
-func (l *Blnk) voidInflightBatchTransactions(ctx context.Context, batchID string) (string, error) {
+func (l *LedgerForge) voidInflightBatchTransactions(ctx context.Context, batchID string) (string, error) {
 	_, err := l.ProcessTransactionInBatches(
 		ctx,
 		batchID,
@@ -2429,7 +2429,7 @@ func (l *Blnk) voidInflightBatchTransactions(ctx context.Context, batchID string
 }
 
 // refundNonInflightBatchTransactions refunds all non-inflight transactions in a batch
-func (l *Blnk) refundNonInflightBatchTransactions(ctx context.Context, batchID string) (string, error) {
+func (l *LedgerForge) refundNonInflightBatchTransactions(ctx context.Context, batchID string) (string, error) {
 	_, err := l.ProcessTransactionInBatches(
 		ctx,
 		batchID,
@@ -2443,7 +2443,7 @@ func (l *Blnk) refundNonInflightBatchTransactions(ctx context.Context, batchID s
 }
 
 // logRollbackResult logs the outcome of a rollback operation
-func (l *Blnk) logRollbackResult(batchID string, action string, err error) {
+func (l *LedgerForge) logRollbackResult(batchID string, action string, err error) {
 	if err != nil {
 		logrus.WithError(err).WithField("batch_id", batchID).Error("failed to rollback batch transactions")
 	} else {
@@ -2455,7 +2455,7 @@ func (l *Blnk) logRollbackResult(batchID string, action string, err error) {
 }
 
 // sendBulkTransactionWebhook sends a webhook notification for a bulk transaction result
-func (l *Blnk) sendBulkTransactionWebhook(batchID, status, errorMsg string, transactionCount int) {
+func (l *LedgerForge) sendBulkTransactionWebhook(batchID, status, errorMsg string, transactionCount int) {
 	// Create payload with or without error info depending on status
 	payload := map[string]interface{}{
 		"batch_id":  batchID,
@@ -2484,7 +2484,7 @@ func (l *Blnk) sendBulkTransactionWebhook(batchID, status, errorMsg string, tran
 
 // handleAsyncBulkTransactionFailure handles failures in asynchronous processing
 // and builds a detailed error message including rollback status
-func (l *Blnk) handleAsyncBulkTransactionFailure(ctx context.Context, err error, batchID string, isAtomic bool, isInflight bool) {
+func (l *LedgerForge) handleAsyncBulkTransactionFailure(ctx context.Context, err error, batchID string, isAtomic bool, isInflight bool) {
 	logrus.WithError(err).WithField("batch_id", batchID).Error("async bulk transaction error")
 
 	var errorMessage string
@@ -2515,8 +2515,8 @@ func (l *Blnk) handleAsyncBulkTransactionFailure(ctx context.Context, err error,
 // If atomic is true: Any failure will cause all transactions to be rolled back (or voided if inflight).
 // If atomic is false: Failures will stop processing but previous transactions remain unaffected.
 // If run_async is true: Processing happens in background with webhook notifications.
-func (l *Blnk) CreateBulkTransactions(ctx context.Context, req *model.BulkTransactionRequest) (*model.BulkTransactionResult, error) {
-	ctx, span := tracer.Start(ctx, "Blnk.CreateBulkTransactions")
+func (l *LedgerForge) CreateBulkTransactions(ctx context.Context, req *model.BulkTransactionRequest) (*model.BulkTransactionResult, error) {
+	ctx, span := tracer.Start(ctx, "LedgerForge.CreateBulkTransactions")
 	defer span.End()
 
 	// Generate batch ID (parent transaction ID)

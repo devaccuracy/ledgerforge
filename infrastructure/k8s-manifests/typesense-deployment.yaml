@@ -8,7 +8,7 @@ metadata:
   labels:
     io.kompose.service: typesense
   name: typesense
-  namespace: blnk
+  namespace: ledgerforge
 spec:
   replicas: 1
   selector:
@@ -29,7 +29,7 @@ spec:
         - args:
             - --data-dir
             - /data
-            - --api-key=blnk-api-key
+            - --api-key=ledgerforge-api-key
             - --listen-port
             - "8108"
           image: typesense/typesense:29.0

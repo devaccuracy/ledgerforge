@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blnkfinance/blnk/config"
+	"github.com/devaccuracy/ledgerforge/config"
 	_ "github.com/lib/pq" // Import the postgres driver
 	"github.com/stretchr/testify/assert"
 )
@@ -42,7 +42,7 @@ func TestBackupManager_BackupToDisk_InvalidDSN(t *testing.T) {
 		DataSource: config.DataSourceConfig{
 			Dns: "invalid-dsn",
 		},
-		BackupDir: "/tmp/blnk-backup-test",
+		BackupDir: "/tmp/ledgerforge-backup-test",
 	}
 
 	bm := &BackupManager{
@@ -62,7 +62,7 @@ func TestBackupManager_BackupToDisk_UnreachableDB(t *testing.T) {
 		DataSource: config.DataSourceConfig{
 			Dns: "postgres://user:password@localhost:9999/nonexistent?sslmode=disable",
 		},
-		BackupDir: "/tmp/blnk-backup-test",
+		BackupDir: "/tmp/ledgerforge-backup-test",
 	}
 
 	bm := &BackupManager{
@@ -83,7 +83,7 @@ func TestBackupManager_BackupToS3_FailsOnBackup(t *testing.T) {
 		DataSource: config.DataSourceConfig{
 			Dns: "invalid-dsn",
 		},
-		BackupDir: "/tmp/blnk-backup-test",
+		BackupDir: "/tmp/ledgerforge-backup-test",
 	}
 
 	bm := &BackupManager{
@@ -103,7 +103,7 @@ func TestBackupManager_BackupToDisk_ContextCancellation(t *testing.T) {
 		DataSource: config.DataSourceConfig{
 			Dns: "postgres://user:password@localhost:5432/testdb?sslmode=disable",
 		},
-		BackupDir: "/tmp/blnk-backup-test",
+		BackupDir: "/tmp/ledgerforge-backup-test",
 	}
 
 	bm := &BackupManager{

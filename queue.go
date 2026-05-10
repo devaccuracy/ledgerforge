@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package blnk
+package ledgerforge
 
 import (
 	"context"
@@ -23,15 +23,15 @@ import (
 	"hash/fnv"
 	"time"
 
-	"github.com/blnkfinance/blnk/config"
-	"github.com/blnkfinance/blnk/internal/hotpairs"
-	"github.com/blnkfinance/blnk/internal/metrics"
-	redis_db "github.com/blnkfinance/blnk/internal/redis-db"
+	"github.com/devaccuracy/ledgerforge/config"
+	"github.com/devaccuracy/ledgerforge/internal/hotpairs"
+	"github.com/devaccuracy/ledgerforge/internal/metrics"
+	redis_db "github.com/devaccuracy/ledgerforge/internal/redis-db"
 	"github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
 
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/hibiken/asynq"
 )
 

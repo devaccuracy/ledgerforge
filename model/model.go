@@ -274,7 +274,7 @@ func fetchTransactionPrecisionFromDB(db *sql.DB, transactionID string) (float64,
 	// First try to find precision by transaction_id
 	query := `
 		SELECT precision
-		FROM blnk.transactions
+		FROM ledgerforge.transactions
 		WHERE transaction_id = $1
 		OR parent_transaction = $1
 		LIMIT 1`

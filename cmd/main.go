@@ -21,24 +21,24 @@ import (
 	"log"
 	"os"
 
-	"github.com/blnkfinance/blnk"
-	"github.com/blnkfinance/blnk/config"
-	"github.com/blnkfinance/blnk/database"
-	"github.com/blnkfinance/blnk/internal/notification"
+	"github.com/devaccuracy/ledgerforge"
+	"github.com/devaccuracy/ledgerforge/config"
+	"github.com/devaccuracy/ledgerforge/database"
+	"github.com/devaccuracy/ledgerforge/internal/notification"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
 
-// Blnk represents the CLI application, encapsulating the root Cobra command.
-type Blnk struct {
+// LedgerForge represents the CLI application, encapsulating the root Cobra command.
+type LedgerForge struct {
 	cmd *cobra.Command // Root command for the CLI application
 }
 
-// blnkInstance holds the Blnk instance and its configuration.
+// ledgerforgeInstance holds the LedgerForge instance and its configuration.
 // This is used to store the runtime instance and configuration globally within the application.
-type blnkInstance struct {
-	blnk *blnk.Blnk            // Blnk object initialized from configuration
-	cnf  *config.Configuration // Configuration object holding runtime settings
+type ledgerforgeInstance struct {
+	ledgerforge *ledgerforge.LedgerForge // LedgerForge object initialized from configuration
+	cnf         *config.Configuration    // Configuration object holding runtime settings
 }
 
 // recoverPanic handles any panics during program execution and logs the error using Logrus.
@@ -49,12 +49,12 @@ func recoverPanic() {
 	}
 }
 
-// preRun sets up the configuration and initializes the Blnk instance before running any command.
-// It ensures that the configuration is loaded, and the Blnk instance is initialized properly.
-func preRun(app *blnkInstance) func(cmd *cobra.Command, args []string) error {
+// preRun sets up the configuration and initializes the LedgerForge instance before running any command.
+// It ensures that the configuration is loaded, and the LedgerForge instance is initialized properly.
+func preRun(app *ledgerforgeInstance, configFile *string) func(cmd *cobra.Command, args []string) error {
 	return func(cmd *cobra.Command, args []string) error {
 		// Initialize configuration from the specified configuration file.
-		err := config.InitConfig("blnk.json")
+		err := config.InitConfig(*configFile)
 		if err != nil {
 			log.Fatal("error loading config", err)
 		}
@@ -65,69 +65,69 @@ func preRun(app *blnkInstance) func(cmd *cobra.Command, args []string) error {
 			return err
 		}
 
-		// Initialize the Blnk instance using the fetched configuration.
-		newBlnk, err := setupBlnk(cnf)
+		// Initialize the LedgerForge instance using the fetched configuration.
+		newLedgerForge, err := setupLedgerForge(cnf)
 		if err != nil {
 			notification.NotifyError(err) // Notify via the internal notification system
 			log.Fatal(err)                // Log the fatal error
 		}
 
-		// Assign the new Blnk instance and configuration to the app struct.
-		app.blnk = newBlnk
+		// Assign the new LedgerForge instance and configuration to the app struct.
+		app.ledgerforge = newLedgerForge
 		app.cnf = cnf
 
 		return nil
 	}
 }
 
-// setupBlnk creates and initializes a new Blnk instance based on the provided configuration.
+// setupLedgerForge creates and initializes a new LedgerForge instance based on the provided configuration.
 // It connects to the data source (such as a database) using the configuration settings.
-func setupBlnk(cfg *config.Configuration) (*blnk.Blnk, error) {
+func setupLedgerForge(cfg *config.Configuration) (*ledgerforge.LedgerForge, error) {
 	// Initialize a new data source from the configuration.
 	db, err := database.NewDataSource(cfg)
 	if err != nil {
-		return &blnk.Blnk{}, fmt.Errorf("error getting datasource: %v", err)
+		return &ledgerforge.LedgerForge{}, fmt.Errorf("error getting datasource: %v", err)
 	}
 
-	// Create a new Blnk instance using the initialized data source.
-	newBlnk, err := blnk.NewBlnk(db)
+	// Create a new LedgerForge instance using the initialized data source.
+	newLedgerForge, err := ledgerforge.NewLedgerForge(db)
 	if err != nil {
 		logrus.Error(err) // Log the error using Logrus
-		return &blnk.Blnk{}, fmt.Errorf("error creating blnk: %v", err)
+		return &ledgerforge.LedgerForge{}, fmt.Errorf("error creating ledgerforge: %v", err)
 	}
-	return newBlnk, nil
+	return newLedgerForge, nil
 }
 
-// NewCLI creates the command-line interface (CLI) for the Blnk application.
+// NewCLI creates the command-line interface (CLI) for the LedgerForge application.
 // It sets up the root command and subcommands like serverCommands, workerCommands, and migrateCommands.
-func NewCLI() *Blnk {
-	var configFile string // Configuration file path (defaults to ./blnk.json)
-	b := &blnkInstance{}  // Instance of Blnk to be passed into commands
+func NewCLI() *LedgerForge {
+	var configFile string       // Configuration file path (defaults to ./ledgerforge.json)
+	b := &ledgerforgeInstance{} // Instance of LedgerForge to be passed into commands
 
 	// Define the root command with usage and description.
 	rootCmd := &cobra.Command{
-		Use:   "blnk",
+		Use:   "ledgerforge",
 		Short: "Open source ledger",                       // Brief description for the CLI tool
 		Run:   func(cmd *cobra.Command, args []string) {}, // Main function for the root command
 	}
 
 	// Add a persistent flag to the root command for specifying the config file.
-	rootCmd.PersistentFlags().StringVar(&configFile, "config", "./blnk.json", "Configuration file for wallet lite")
+	rootCmd.PersistentFlags().StringVar(&configFile, "config", "./ledgerforge.json", "Configuration file for LedgerForge")
 
 	// Set the persistent pre-run hook to initialize the app and config before executing any command.
-	rootCmd.PersistentPreRunE = preRun(b)
+	rootCmd.PersistentPreRunE = preRun(b, &configFile)
 
 	// Add various subcommands to the root command.
 	rootCmd.AddCommand(serverCommands(b))  // Command for starting the server
 	rootCmd.AddCommand(workerCommands(b))  // Command for worker processes
 	rootCmd.AddCommand(migrateCommands(b)) // Command for database/schema migrations
 
-	return &Blnk{cmd: rootCmd}
+	return &LedgerForge{cmd: rootCmd}
 }
 
 // executeCLI runs the root command, handling any errors that occur during execution.
 // It serves as the main entry point for the CLI application.
-func (w Blnk) executeCLI() {
+func (w LedgerForge) executeCLI() {
 	if err := w.cmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err) // Print any errors that occur
 		os.Exit(1)                   // Exit the program with an error status

@@ -30,16 +30,16 @@ import (
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel"
 
-	"github.com/blnkfinance/blnk"
-	"github.com/blnkfinance/blnk/api/middleware"
-	"github.com/blnkfinance/blnk/config"
-	"github.com/blnkfinance/blnk/internal/hotpairs"
-	"github.com/blnkfinance/blnk/internal/metrics"
-	"github.com/blnkfinance/blnk/internal/notification"
-	redis_db "github.com/blnkfinance/blnk/internal/redis-db"
-	"github.com/blnkfinance/blnk/internal/search"
-	trace "github.com/blnkfinance/blnk/internal/traces"
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge"
+	"github.com/devaccuracy/ledgerforge/api/middleware"
+	"github.com/devaccuracy/ledgerforge/config"
+	"github.com/devaccuracy/ledgerforge/internal/hotpairs"
+	"github.com/devaccuracy/ledgerforge/internal/metrics"
+	"github.com/devaccuracy/ledgerforge/internal/notification"
+	redis_db "github.com/devaccuracy/ledgerforge/internal/redis-db"
+	"github.com/devaccuracy/ledgerforge/internal/search"
+	trace "github.com/devaccuracy/ledgerforge/internal/traces"
+	"github.com/devaccuracy/ledgerforge/model"
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
 
@@ -57,8 +57,8 @@ type indexData struct {
 // processTransaction processes a transaction received from the Redis queue.
 // If a transaction fails due to "insufficient funds", it is rejected, and a webhook is sent.
 // Otherwise, it retries the transaction in case of other failures.
-func (b *blnkInstance) processTransaction(ctx context.Context, t *asynq.Task) error {
-	ctx, span := otel.Tracer("blnk.transactions.worker").Start(ctx, "Process Transaction From Redis Queue")
+func (b *ledgerforgeInstance) processTransaction(ctx context.Context, t *asynq.Task) error {
+	ctx, span := otel.Tracer("ledgerforge.transactions.worker").Start(ctx, "Process Transaction From Redis Queue")
 	defer span.End()
 
 	startTime := time.Now()
@@ -69,16 +69,16 @@ func (b *blnkInstance) processTransaction(ctx context.Context, t *asynq.Task) er
 		return err
 	}
 
-	exists, err := b.blnk.GetDataSource().TransactionExistsByRef(ctx, txn.Reference)
+	exists, err := b.ledgerforge.GetDataSource().TransactionExistsByRef(ctx, txn.Reference)
 	if err != nil {
 		logrus.WithError(err).Warnf("failed pre-checking transaction reference %s", txn.Reference)
 	} else if exists {
 		return nil
 	}
 
-	handled, err := b.blnk.TryRecordQueuedTransactionBatch(ctx, &txn)
+	handled, err := b.ledgerforge.TryRecordQueuedTransactionBatch(ctx, &txn)
 	if b.cnf.Queue.EnableHotLane && t.Type() == b.cnf.Queue.HotQueueName {
-		handled, err = b.blnk.TryRecordQueuedTransactionBatchForHotLane(ctx, &txn)
+		handled, err = b.ledgerforge.TryRecordQueuedTransactionBatchForHotLane(ctx, &txn)
 	}
 	if err != nil {
 		logrus.WithError(err).Warnf("coalesced processing attempt failed for transaction %s", txn.TransactionID)
@@ -89,7 +89,7 @@ func (b *blnkInstance) processTransaction(ctx context.Context, t *asynq.Task) er
 		)
 		return nil
 	}
-	_, err = b.blnk.ProcessQueuedTransaction(ctx, &txn, b.cnf.Queue.EnableHotLane && t.Type() == b.cnf.Queue.HotQueueName)
+	_, err = b.ledgerforge.ProcessQueuedTransaction(ctx, &txn, b.cnf.Queue.EnableHotLane && t.Type() == b.cnf.Queue.HotQueueName)
 	if err != nil {
 		// Handle reference already used error
 		if strings.Contains(strings.ToLower(err.Error()), "reference") && strings.Contains(strings.ToLower(err.Error()), "already been used") {
@@ -157,13 +157,13 @@ func (b *blnkInstance) processTransaction(ctx context.Context, t *asynq.Task) er
 	return nil
 }
 
-func handleTransactionRejection(ctx context.Context, b *blnkInstance, txn *model.Transaction, err error) error {
-	_, rejectErr := b.blnk.RejectTransaction(ctx, txn, err.Error())
+func handleTransactionRejection(ctx context.Context, b *ledgerforgeInstance, txn *model.Transaction, err error) error {
+	_, rejectErr := b.ledgerforge.RejectTransaction(ctx, txn, err.Error())
 	if rejectErr != nil {
 		return rejectErr
 	}
 
-	webhookErr := b.blnk.SendWebhook(blnk.NewWebhook{
+	webhookErr := b.ledgerforge.SendWebhook(ledgerforge.NewWebhook{
 		Event:   "transaction.rejected",
 		Payload: *txn,
 	})
@@ -187,7 +187,7 @@ func shouldRejectLockContentionImmediately(cfg *config.Configuration, err error)
 // indexData indexes data into TypeSense for searchability.
 // It fetches the collection name and payload from the task, ensures the collections exist,
 // and sends the payload to the appropriate TypeSense collection for indexing.
-func (b *blnkInstance) indexData(ctx context.Context, t *asynq.Task) error {
+func (b *ledgerforgeInstance) indexData(ctx context.Context, t *asynq.Task) error {
 	if b.cnf.TypeSense.Dns == "" {
 		return nil
 	}
@@ -225,7 +225,7 @@ func (b *blnkInstance) indexData(ctx context.Context, t *asynq.Task) error {
 // indexBatchData indexes a batch of items into TypeSense in dependency order.
 // It first indexes all dependencies (e.g., balances), then indexes the primary item (e.g., transaction).
 // This ensures referential integrity in the search index.
-func (b *blnkInstance) indexBatchData(ctx context.Context, t *asynq.Task) error {
+func (b *ledgerforgeInstance) indexBatchData(ctx context.Context, t *asynq.Task) error {
 	if b.cnf.TypeSense.Dns == "" {
 		return nil
 	}
@@ -259,7 +259,7 @@ func (b *blnkInstance) indexBatchData(ctx context.Context, t *asynq.Task) error 
 
 // processInflightExpiry handles the expiry of inflight transactions.
 // It voids the transaction by its ID and logs the action.
-func (b *blnkInstance) processInflightExpiry(cxt context.Context, t *asynq.Task) error {
+func (b *ledgerforgeInstance) processInflightExpiry(cxt context.Context, t *asynq.Task) error {
 	var txnID string
 	// Unmarshal the transaction ID from the task payload.
 	if err := json.Unmarshal(t.Payload(), &txnID); err != nil {
@@ -268,7 +268,7 @@ func (b *blnkInstance) processInflightExpiry(cxt context.Context, t *asynq.Task)
 	}
 
 	// Void the inflight transaction by its ID.
-	_, err := b.blnk.VoidInflightTransaction(cxt, txnID)
+	_, err := b.ledgerforge.VoidInflightTransaction(cxt, txnID)
 	if err != nil {
 		return err
 	}
@@ -389,7 +389,7 @@ func initializeHotWorkerServer(conf *config.Configuration, queues map[string]int
 	), nil
 }
 
-func initializeTaskHandlers(b *blnkInstance, mux *asynq.ServeMux) {
+func initializeTaskHandlers(b *ledgerforgeInstance, mux *asynq.ServeMux) {
 	cfg, err := config.Fetch()
 	if err != nil {
 		logrus.Errorf("Error fetching config, using defaults: %v", err)
@@ -406,25 +406,25 @@ func initializeTaskHandlers(b *blnkInstance, mux *asynq.ServeMux) {
 	mux.HandleFunc(cfg.Queue.InflightExpiryQueue, b.processInflightExpiry)
 }
 
-func initializeWebhookTaskHandlers(b *blnkInstance, mux *asynq.ServeMux) {
+func initializeWebhookTaskHandlers(b *ledgerforgeInstance, mux *asynq.ServeMux) {
 	cfg, err := config.Fetch()
 	if err != nil {
 		logrus.Errorf("Error fetching config, using defaults: %v", err)
 		return
 	}
 
-	mux.HandleFunc(cfg.Queue.WebhookQueue, b.blnk.ProcessWebhook)
-	mux.HandleFunc("new:hook_execution", b.blnk.Hooks.ProcessHookTask)
+	mux.HandleFunc(cfg.Queue.WebhookQueue, b.ledgerforge.ProcessWebhook)
+	mux.HandleFunc("new:hook_execution", b.ledgerforge.Hooks.ProcessHookTask)
 	mux.HandleFunc(cfg.Queue.IndexQueue, b.indexData)
 	mux.HandleFunc("new:index:batch", b.indexBatchData)
 }
 
 // workerCommands defines the "workers" command to start worker processes.
 // The workers listen to various queues such as transaction processing, indexing, and inflight expiry.
-func workerCommands(b *blnkInstance) *cobra.Command {
+func workerCommands(b *ledgerforgeInstance) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "workers",
-		Short: "start blnk workers",
+		Short: "start ledgerforge workers",
 		Run: func(cmd *cobra.Command, args []string) {
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
@@ -470,7 +470,7 @@ func workerCommands(b *blnkInstance) *cobra.Command {
 				logrus.Fatalf("could not start webhook worker server: %v", err)
 			}
 
-			recoveryProcessor := blnk.NewQueuedTransactionRecoveryProcessor(b.blnk)
+			recoveryProcessor := ledgerforge.NewQueuedTransactionRecoveryProcessor(b.ledgerforge)
 			recoveryProcessor.Start(ctx)
 
 			logrus.Info("Workers started.")
@@ -503,7 +503,7 @@ func workerCommands(b *blnkInstance) *cobra.Command {
 	return cmd
 }
 
-func setupWorkerServers(b *blnkInstance, conf *config.Configuration) (*asynq.Server, *asynq.Server, *asynq.Server, *asynq.ServeMux, *asynq.ServeMux, error) {
+func setupWorkerServers(b *ledgerforgeInstance, conf *config.Configuration) (*asynq.Server, *asynq.Server, *asynq.Server, *asynq.ServeMux, *asynq.ServeMux, error) {
 	queues := initializeQueues()
 	hotQueues := initializeHotQueues()
 	webhookQueues := initializeWebhookQueues()

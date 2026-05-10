@@ -5,7 +5,7 @@ metadata:
   labels:
     io.kompose.service: typesense-data
   name: typesense-data
-  namespace: blnk
+  namespace: ledgerforge
 spec:
   accessModes:
     - ReadWriteOnce

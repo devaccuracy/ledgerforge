@@ -23,9 +23,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/blnkfinance/blnk/internal/apierror"
-	"github.com/blnkfinance/blnk/internal/filter"
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/internal/apierror"
+	"github.com/devaccuracy/ledgerforge/internal/filter"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/lib/pq"
 )
 
@@ -51,7 +51,7 @@ func (d Datasource) CreateLedger(ledger model.Ledger) (model.Ledger, error) {
 
 	// Insert the ledger into the database
 	_, err = d.Conn.ExecContext(context.Background(), `
-		INSERT INTO blnk.ledgers (meta_data, name, ledger_id)
+		INSERT INTO ledgerforge.ledgers (meta_data, name, ledger_id)
 		VALUES ($1, $2, $3)
 	`, metaDataJSON, ledger.Name, ledger.LedgerID)
 	// Handle database errors, specifically unique constraint violations
@@ -89,7 +89,7 @@ func (d Datasource) GetAllLedgers(limit, offset int) ([]model.Ledger, error) {
 	// Execute a paginated query to select ledgers from the database
 	query := `
 		SELECT ledger_id, name, created_at, meta_data
-		FROM blnk.ledgers
+		FROM ledgerforge.ledgers
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2
 	`
@@ -143,7 +143,7 @@ func (d Datasource) GetLedgerByID(id string) (*model.Ledger, error) {
 	// Query the database to find the ledger by its ID
 	row := d.Conn.QueryRowContext(context.Background(), `
 		SELECT ledger_id, name, created_at, meta_data
-		FROM blnk.ledgers
+		FROM ledgerforge.ledgers
 		WHERE ledger_id = $1
 	`, id)
 
@@ -185,8 +185,8 @@ func (d Datasource) UpdateLedger(id, name string) (*model.Ledger, error) {
 
 	// Update the ledger name
 	_, err = d.Conn.ExecContext(context.Background(), `
-		UPDATE blnk.ledgers 
-		SET name = $1 
+		UPDATE ledgerforge.ledgers
+		SET name = $1
 		WHERE ledger_id = $2
 	`, name, id)
 	if err != nil {
@@ -265,7 +265,7 @@ func (d Datasource) GetAllLedgersWithFilterAndOptions(ctx context.Context, filte
 	// Build base query
 	baseQuery := fmt.Sprintf(`
 		SELECT %s
-		FROM blnk.ledgers
+		FROM ledgerforge.ledgers
 	`, selectFields)
 
 	var args []interface{}

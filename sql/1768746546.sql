@@ -15,11 +15,11 @@
 -- +migrate Up
 
 -- Add fund lineage tracking columns to balances table
-ALTER TABLE blnk.balances ADD COLUMN IF NOT EXISTS track_fund_lineage BOOLEAN NOT NULL DEFAULT FALSE;
-ALTER TABLE blnk.balances ADD COLUMN IF NOT EXISTS allocation_strategy TEXT NOT NULL DEFAULT 'FIFO';
+ALTER TABLE ledgerforge.balances ADD COLUMN IF NOT EXISTS track_fund_lineage BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE ledgerforge.balances ADD COLUMN IF NOT EXISTS allocation_strategy TEXT NOT NULL DEFAULT 'FIFO';
 
 -- Create lineage_mappings table to track relationships between main balances and shadow balances
-CREATE TABLE IF NOT EXISTS blnk.lineage_mappings (
+CREATE TABLE IF NOT EXISTS ledgerforge.lineage_mappings (
     id SERIAL PRIMARY KEY,
     balance_id TEXT NOT NULL,
     provider TEXT NOT NULL,
@@ -31,20 +31,20 @@ CREATE TABLE IF NOT EXISTS blnk.lineage_mappings (
 );
 
 -- Create indexes for efficient lookups
-CREATE INDEX IF NOT EXISTS idx_lineage_mappings_balance_id ON blnk.lineage_mappings(balance_id);
-CREATE INDEX IF NOT EXISTS idx_lineage_mappings_shadow_balance_id ON blnk.lineage_mappings(shadow_balance_id);
-CREATE INDEX IF NOT EXISTS idx_lineage_mappings_provider ON blnk.lineage_mappings(provider);
+CREATE INDEX IF NOT EXISTS idx_lineage_mappings_balance_id ON ledgerforge.lineage_mappings(balance_id);
+CREATE INDEX IF NOT EXISTS idx_lineage_mappings_shadow_balance_id ON ledgerforge.lineage_mappings(shadow_balance_id);
+CREATE INDEX IF NOT EXISTS idx_lineage_mappings_provider ON ledgerforge.lineage_mappings(provider);
 
 -- +migrate Down
 
 -- Drop indexes
-DROP INDEX IF EXISTS blnk.idx_lineage_mappings_balance_id;
-DROP INDEX IF EXISTS blnk.idx_lineage_mappings_shadow_balance_id;
-DROP INDEX IF EXISTS blnk.idx_lineage_mappings_provider;
+DROP INDEX IF EXISTS ledgerforge.idx_lineage_mappings_balance_id;
+DROP INDEX IF EXISTS ledgerforge.idx_lineage_mappings_shadow_balance_id;
+DROP INDEX IF EXISTS ledgerforge.idx_lineage_mappings_provider;
 
 -- Drop lineage_mappings table
-DROP TABLE IF EXISTS blnk.lineage_mappings;
+DROP TABLE IF EXISTS ledgerforge.lineage_mappings;
 
 -- Remove columns from balances table
-ALTER TABLE blnk.balances DROP COLUMN IF EXISTS track_fund_lineage;
-ALTER TABLE blnk.balances DROP COLUMN IF EXISTS allocation_strategy;
+ALTER TABLE ledgerforge.balances DROP COLUMN IF EXISTS track_fund_lineage;
+ALTER TABLE ledgerforge.balances DROP COLUMN IF EXISTS allocation_strategy;

@@ -19,7 +19,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 )
@@ -46,7 +46,7 @@ func (a Api) UploadExternalData(c *gin.Context) {
 
 	fileName := header.Filename
 
-	uploadID, total, err := a.blnk.UploadExternalData(c.Request.Context(), source, file, fileName)
+	uploadID, total, err := a.ledgerforge.UploadExternalData(c.Request.Context(), source, file, fileName)
 	if err != nil {
 		logrus.Error(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process upload"})
@@ -84,7 +84,7 @@ func (a Api) StartReconciliation(c *gin.Context) {
 		return
 	}
 
-	reconciliationID, err := a.blnk.StartReconciliation(c.Request.Context(), req.UploadID, req.Strategy, req.GroupingCriteria, req.MatchingRuleIDs, req.DryRun)
+	reconciliationID, err := a.ledgerforge.StartReconciliation(c.Request.Context(), req.UploadID, req.Strategy, req.GroupingCriteria, req.MatchingRuleIDs, req.DryRun)
 	if err != nil {
 		logrus.Error(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start reconciliation"})
@@ -127,7 +127,7 @@ func (a Api) InstantReconciliation(c *gin.Context) {
 		return
 	}
 
-	reconciliationID, err := a.blnk.StartInstantReconciliation(
+	reconciliationID, err := a.ledgerforge.StartInstantReconciliation(
 		c.Request.Context(),
 		req.ExternalTransactions,
 		req.Strategy,
@@ -161,7 +161,7 @@ func (a Api) GetReconciliation(c *gin.Context) {
 		return
 	}
 
-	reconciliation, err := a.blnk.GetReconciliation(c.Request.Context(), reconciliationID)
+	reconciliation, err := a.ledgerforge.GetReconciliation(c.Request.Context(), reconciliationID)
 	if err != nil {
 		logrus.Error(err)
 
@@ -195,7 +195,7 @@ func (a Api) CreateMatchingRule(c *gin.Context) {
 		return
 	}
 
-	createdRule, err := a.blnk.CreateMatchingRule(c.Request.Context(), rule)
+	createdRule, err := a.ledgerforge.CreateMatchingRule(c.Request.Context(), rule)
 	if err != nil {
 		logrus.Error(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create matching rule"})
@@ -229,7 +229,7 @@ func (a Api) UpdateMatchingRule(c *gin.Context) {
 	}
 
 	rule.RuleID = ruleID
-	updatedRule, err := a.blnk.UpdateMatchingRule(c.Request.Context(), rule)
+	updatedRule, err := a.ledgerforge.UpdateMatchingRule(c.Request.Context(), rule)
 	if err != nil {
 		logrus.Error(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update matching rule"})
@@ -256,7 +256,7 @@ func (a Api) DeleteMatchingRule(c *gin.Context) {
 		return
 	}
 
-	err := a.blnk.DeleteMatchingRule(c.Request.Context(), ruleID)
+	err := a.ledgerforge.DeleteMatchingRule(c.Request.Context(), ruleID)
 	if err != nil {
 		logrus.Error(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete matching rule"})

@@ -22,14 +22,14 @@ import (
 	"io"
 	"strings"
 
-	"github.com/blnkfinance/blnk"
-	"github.com/blnkfinance/blnk/config"
+	"github.com/devaccuracy/ledgerforge"
+	"github.com/devaccuracy/ledgerforge/config"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 )
 
 const (
-	KeyHeader = "X-Blnk-Key"
+	KeyHeader = "X-LedgerForge-Key"
 )
 
 // pathToResource maps URL paths to their corresponding resource types.
@@ -50,20 +50,20 @@ var pathToResource = map[string]Resource{
 }
 
 // AuthMiddleware handles authentication and authorization for API routes.
-// It supports both master key and API key authentication using the X-Blnk-Key header.
+// It supports both master key and API key authentication using the X-LedgerForge-Key header.
 type AuthMiddleware struct {
-	service *blnk.Blnk
+	service *ledgerforge.LedgerForge
 }
 
 // NewAuthMiddleware creates a new instance of AuthMiddleware.
 //
 // Parameters:
-// - blnk: The Blnk service used to validate API keys.
+// - ledgerforge: The LedgerForge service used to validate API keys.
 //
 // Returns:
 // - *AuthMiddleware: A new instance of the authentication middleware.
-func NewAuthMiddleware(blnk *blnk.Blnk) *AuthMiddleware {
-	return &AuthMiddleware{service: blnk}
+func NewAuthMiddleware(ledgerforge *ledgerforge.LedgerForge) *AuthMiddleware {
+	return &AuthMiddleware{service: ledgerforge}
 }
 
 // getResourceFromPath determines the resource type from the URL path.
@@ -146,7 +146,7 @@ func injectAPIKeyToMetadata(c *gin.Context, apiKeyID string) error {
 	}
 
 	// Add the API key ID to meta_data
-	metaData["BLNK_GENERATED_BY"] = apiKeyID
+	metaData["LEDGERFORGE_GENERATED_BY"] = apiKeyID
 
 	// Update the meta_data in the body
 	bodyMap["meta_data"] = metaData
@@ -167,7 +167,7 @@ func injectAPIKeyToMetadata(c *gin.Context, apiKeyID string) error {
 }
 
 // Authenticate returns a middleware function that handles authentication and authorization for all routes.
-// It checks for the X-Blnk-Key header and validates it against either the master key or API keys.
+// It checks for the X-LedgerForge-Key header and validates it against either the master key or API keys.
 // For API keys, it verifies the key's validity and checks permissions based on the resource and HTTP method.
 // For POST requests with API keys, it injects the API key ID into the metadata of the request body.
 //
@@ -192,7 +192,7 @@ func (m *AuthMiddleware) Authenticate() gin.HandlerFunc {
 			return
 		}
 
-		// Skip X-Blnk-Key auth for metrics endpoint, it uses its own bearer token auth
+		// Skip X-LedgerForge-Key auth for metrics endpoint, it uses its own bearer token auth
 		if c.Request != nil && c.Request.URL != nil && c.Request.URL.Path == "/metrics" {
 			c.Next()
 			return
@@ -208,7 +208,7 @@ func (m *AuthMiddleware) Authenticate() gin.HandlerFunc {
 
 		key := extractKey(c)
 		if key == "" {
-			c.JSON(401, gin.H{"error": "Authentication required. Use X-Blnk-Key header"})
+			c.JSON(401, gin.H{"error": "Authentication required. Use X-LedgerForge-Key header"})
 			c.Abort()
 			return
 		}
@@ -275,7 +275,7 @@ func (m *AuthMiddleware) Authenticate() gin.HandlerFunc {
 	}
 }
 
-// extractKey retrieves the authentication key from the X-Blnk-Key header.
+// extractKey retrieves the authentication key from the X-LedgerForge-Key header.
 //
 // Parameters:
 // - c: The Gin context containing the request headers.

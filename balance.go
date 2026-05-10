@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package blnk
+package ledgerforge
 
 import (
 	"context"
@@ -22,11 +22,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/blnkfinance/blnk/config"
-	"github.com/blnkfinance/blnk/internal/filter"
-	"github.com/blnkfinance/blnk/internal/metrics"
-	"github.com/blnkfinance/blnk/internal/notification"
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/config"
+	"github.com/devaccuracy/ledgerforge/internal/filter"
+	"github.com/devaccuracy/ledgerforge/internal/metrics"
+	"github.com/devaccuracy/ledgerforge/internal/notification"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -35,7 +35,7 @@ import (
 
 // balanceTracer is an OpenTelemetry tracer for tracking balance-related transactions.
 var (
-	balanceTracer = otel.Tracer("blnk.transactions")
+	balanceTracer = otel.Tracer("ledgerforge.transactions")
 )
 
 // NewBalanceTracker creates a new BalanceTracker instance.
@@ -57,7 +57,7 @@ func NewBalanceTracker() *model.BalanceTracker {
 // Parameters:
 // - ctx context.Context: The context for the operation.
 // - updatedBalance *model.Balance: A pointer to the updated Balance model.
-func (l *Blnk) checkBalanceMonitors(ctx context.Context, updatedBalance *model.Balance) {
+func (l *LedgerForge) checkBalanceMonitors(ctx context.Context, updatedBalance *model.Balance) {
 	_, span := balanceTracer.Start(ctx, "CheckBalanceMonitors")
 	defer span.End()
 
@@ -97,7 +97,7 @@ func (l *Blnk) checkBalanceMonitors(ctx context.Context, updatedBalance *model.B
 // Returns:
 // - []model.BalanceMonitor: A slice of monitors for the balance.
 // - error: An error if the monitors could not be retrieved.
-func (l *Blnk) getBalanceMonitorsCached(ctx context.Context, balanceID string) ([]model.BalanceMonitor, error) {
+func (l *LedgerForge) getBalanceMonitorsCached(ctx context.Context, balanceID string) ([]model.BalanceMonitor, error) {
 	cacheKey := "monitors:" + balanceID
 
 	var monitors []model.BalanceMonitor
@@ -132,7 +132,7 @@ func (l *Blnk) getBalanceMonitorsCached(ctx context.Context, balanceID string) (
 // Returns:
 // - *model.Balance: A pointer to the Balance model.
 // - error: An error if the balance could not be retrieved or created.
-func (l *Blnk) getOrCreateBalanceByIndicator(ctx context.Context, indicator, currency string) (*model.Balance, error) {
+func (l *LedgerForge) getOrCreateBalanceByIndicator(ctx context.Context, indicator, currency string) (*model.Balance, error) {
 	ctx, span := balanceTracer.Start(ctx, "GetOrCreateBalanceByIndicator")
 	defer span.End()
 
@@ -195,7 +195,7 @@ func (l *Blnk) getOrCreateBalanceByIndicator(ctx context.Context, indicator, cur
 // Parameters:
 // - ctx context.Context: The context for the operation.
 // - balance *model.Balance: A pointer to the newly created Balance model.
-func (l *Blnk) postBalanceActions(ctx context.Context, balance *model.Balance) {
+func (l *LedgerForge) postBalanceActions(ctx context.Context, balance *model.Balance) {
 	_, span := balanceTracer.Start(ctx, "PostBalanceActions")
 	defer span.End()
 
@@ -227,7 +227,7 @@ func (l *Blnk) postBalanceActions(ctx context.Context, balance *model.Balance) {
 // Returns:
 // - model.Balance: The created Balance model.
 // - error: An error if the balance could not be created.
-func (l *Blnk) CreateBalance(ctx context.Context, balance model.Balance) (model.Balance, error) {
+func (l *LedgerForge) CreateBalance(ctx context.Context, balance model.Balance) (model.Balance, error) {
 	ctx, span := balanceTracer.Start(ctx, "CreateBalance")
 	defer span.End()
 
@@ -253,7 +253,7 @@ func (l *Blnk) CreateBalance(ctx context.Context, balance model.Balance) (model.
 // Returns:
 // - *model.Balance: A pointer to the Balance model if found.
 // - error: An error if the balance could not be retrieved.
-func (l *Blnk) GetBalanceByID(ctx context.Context, id string, include []string, withQueued bool) (*model.Balance, error) {
+func (l *LedgerForge) GetBalanceByID(ctx context.Context, id string, include []string, withQueued bool) (*model.Balance, error) {
 	_, span := balanceTracer.Start(ctx, "GetBalanceByID")
 	defer span.End()
 
@@ -275,7 +275,7 @@ func (l *Blnk) GetBalanceByID(ctx context.Context, id string, include []string, 
 // Returns:
 // - []model.Balance: A slice of Balance models.
 // - error: An error if the balances could not be retrieved.
-func (l *Blnk) GetAllBalances(ctx context.Context, limit, offset int) ([]model.Balance, error) {
+func (l *LedgerForge) GetAllBalances(ctx context.Context, limit, offset int) ([]model.Balance, error) {
 	_, span := balanceTracer.Start(ctx, "GetAllBalances")
 	defer span.End()
 
@@ -300,7 +300,7 @@ func (l *Blnk) GetAllBalances(ctx context.Context, limit, offset int) ([]model.B
 // Returns:
 // - []model.Balance: A slice of Balance models matching the filter criteria.
 // - error: An error if the balances could not be retrieved.
-func (l *Blnk) GetAllBalancesWithFilter(ctx context.Context, filters *filter.QueryFilterSet, limit, offset int) ([]model.Balance, error) {
+func (l *LedgerForge) GetAllBalancesWithFilter(ctx context.Context, filters *filter.QueryFilterSet, limit, offset int) ([]model.Balance, error) {
 	_, span := balanceTracer.Start(ctx, "GetAllBalancesWithFilter")
 	defer span.End()
 
@@ -314,7 +314,7 @@ func (l *Blnk) GetAllBalancesWithFilter(ctx context.Context, filters *filter.Que
 }
 
 // GetAllBalancesWithFilterAndOptions retrieves balances with advanced filters, sorting, and optional count.
-func (l *Blnk) GetAllBalancesWithFilterAndOptions(ctx context.Context, filters *filter.QueryFilterSet, opts *filter.QueryOptions, limit, offset int) ([]model.Balance, *int64, error) {
+func (l *LedgerForge) GetAllBalancesWithFilterAndOptions(ctx context.Context, filters *filter.QueryFilterSet, opts *filter.QueryOptions, limit, offset int) ([]model.Balance, *int64, error) {
 	_, span := balanceTracer.Start(ctx, "GetAllBalancesWithFilterAndOptions")
 	defer span.End()
 
@@ -338,7 +338,7 @@ func (l *Blnk) GetAllBalancesWithFilterAndOptions(ctx context.Context, filters *
 // Returns:
 // - model.BalanceMonitor: The created BalanceMonitor model.
 // - error: An error if the monitor could not be created.
-func (l *Blnk) CreateMonitor(ctx context.Context, monitor model.BalanceMonitor) (model.BalanceMonitor, error) {
+func (l *LedgerForge) CreateMonitor(ctx context.Context, monitor model.BalanceMonitor) (model.BalanceMonitor, error) {
 	_, span := balanceTracer.Start(ctx, "CreateMonitor")
 	defer span.End()
 
@@ -367,7 +367,7 @@ func (l *Blnk) CreateMonitor(ctx context.Context, monitor model.BalanceMonitor) 
 // Returns:
 // - *model.BalanceMonitor: A pointer to the BalanceMonitor model if found.
 // - error: An error if the monitor could not be retrieved.
-func (l *Blnk) GetMonitorByID(ctx context.Context, id string) (*model.BalanceMonitor, error) {
+func (l *LedgerForge) GetMonitorByID(ctx context.Context, id string) (*model.BalanceMonitor, error) {
 	_, span := balanceTracer.Start(ctx, "GetMonitorByID")
 	defer span.End()
 
@@ -389,7 +389,7 @@ func (l *Blnk) GetMonitorByID(ctx context.Context, id string) (*model.BalanceMon
 // Returns:
 // - []model.BalanceMonitor: A slice of BalanceMonitor models.
 // - error: An error if the monitors could not be retrieved.
-func (l *Blnk) GetAllMonitors(ctx context.Context) ([]model.BalanceMonitor, error) {
+func (l *LedgerForge) GetAllMonitors(ctx context.Context) ([]model.BalanceMonitor, error) {
 	_, span := balanceTracer.Start(ctx, "GetAllMonitors")
 	defer span.End()
 
@@ -412,7 +412,7 @@ func (l *Blnk) GetAllMonitors(ctx context.Context) ([]model.BalanceMonitor, erro
 // Returns:
 // - []model.BalanceMonitor: A slice of BalanceMonitor models.
 // - error: An error if the monitors could not be retrieved.
-func (l *Blnk) GetBalanceMonitors(ctx context.Context, balanceID string) ([]model.BalanceMonitor, error) {
+func (l *LedgerForge) GetBalanceMonitors(ctx context.Context, balanceID string) ([]model.BalanceMonitor, error) {
 	_, span := balanceTracer.Start(ctx, "GetBalanceMonitors")
 	defer span.End()
 
@@ -434,7 +434,7 @@ func (l *Blnk) GetBalanceMonitors(ctx context.Context, balanceID string) ([]mode
 //
 // Returns:
 // - error: An error if the monitor could not be updated.
-func (l *Blnk) UpdateMonitor(ctx context.Context, monitor *model.BalanceMonitor) error {
+func (l *LedgerForge) UpdateMonitor(ctx context.Context, monitor *model.BalanceMonitor) error {
 	_, span := balanceTracer.Start(ctx, "UpdateMonitor")
 	defer span.End()
 
@@ -459,7 +459,7 @@ func (l *Blnk) UpdateMonitor(ctx context.Context, monitor *model.BalanceMonitor)
 //
 // Returns:
 // - error: An error if the monitor could not be deleted.
-func (l *Blnk) DeleteMonitor(ctx context.Context, id string) error {
+func (l *LedgerForge) DeleteMonitor(ctx context.Context, id string) error {
 	_, span := balanceTracer.Start(ctx, "DeleteMonitor")
 	defer span.End()
 
@@ -492,7 +492,7 @@ func (l *Blnk) DeleteMonitor(ctx context.Context, id string) error {
 // Returns:
 // - int: The total number of snapshots created
 // - error: An error if the snapshot creation fails
-func (l *Blnk) TakeBalanceSnapshots(ctx context.Context, batchSize int) {
+func (l *LedgerForge) TakeBalanceSnapshots(ctx context.Context, batchSize int) {
 	go func() {
 		startTime := time.Now()
 
@@ -560,7 +560,7 @@ func (l *Blnk) TakeBalanceSnapshots(ctx context.Context, batchSize int) {
 // Returns:
 // - *model.Balance: A pointer to the Balance model representing the state at the given time.
 // - error: An error if the historical balance state could not be retrieved.
-func (l *Blnk) GetBalanceAtTime(ctx context.Context, balanceID string, targetTime time.Time, fromSource bool) (*model.Balance, error) {
+func (l *LedgerForge) GetBalanceAtTime(ctx context.Context, balanceID string, targetTime time.Time, fromSource bool) (*model.Balance, error) {
 	_, span := balanceTracer.Start(ctx, "GetBalanceAtTime")
 	defer span.End()
 
@@ -612,7 +612,7 @@ func (l *Blnk) GetBalanceAtTime(ctx context.Context, balanceID string, targetTim
 // Returns:
 // - *model.Balance: A pointer to the Balance model if found.
 // - error: An error if the balance could not be retrieved.
-func (l *Blnk) GetBalanceByIndicator(ctx context.Context, indicator, currency string) (*model.Balance, error) {
+func (l *LedgerForge) GetBalanceByIndicator(ctx context.Context, indicator, currency string) (*model.Balance, error) {
 	_, span := balanceTracer.Start(ctx, "GetBalanceByIndicator")
 	defer span.End()
 
@@ -640,7 +640,7 @@ func (l *Blnk) GetBalanceByIndicator(ctx context.Context, indicator, currency st
 //
 // Returns:
 // - error: An error is returned if either the balance or identity records are not found or the update fails.
-func (l *Blnk) UpdateBalanceIdentity(balanceID, identityID string) error {
+func (l *LedgerForge) UpdateBalanceIdentity(balanceID, identityID string) error {
 	// Ensure the referenced identity exists
 	_, err := l.datasource.GetIdentityByID(identityID)
 	if err != nil {

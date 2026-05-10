@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest an idea for Blnk Ledger
+about: Suggest an idea for LedgerForge Ledger
 title: ''
 labels: enhancement, Feature request
 assignees: ''

@@ -22,13 +22,13 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/blnkfinance/blnk/internal/hooks"
-	"github.com/blnkfinance/blnk/internal/request"
+	"github.com/devaccuracy/ledgerforge/internal/hooks"
+	"github.com/devaccuracy/ledgerforge/internal/request"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestRegisterHook(t *testing.T) {
-	router, _, err := setupRouter()
+	router, _, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestRegisterHook(t *testing.T) {
 }
 
 func TestUpdateHook(t *testing.T) {
-	router, _, err := setupRouter()
+	router, _, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestUpdateHook(t *testing.T) {
 }
 
 func TestGetHook(t *testing.T) {
-	router, _, err := setupRouter()
+	router, _, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestGetHook(t *testing.T) {
 }
 
 func TestListHooks(t *testing.T) {
-	router, _, err := setupRouter()
+	router, _, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestListHooks(t *testing.T) {
 }
 
 func TestDeleteHook(t *testing.T) {
-	router, _, err := setupRouter()
+	router, _, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}

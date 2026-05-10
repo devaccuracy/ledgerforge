@@ -178,15 +178,15 @@ func (m *Manager) setState(ctx context.Context, pairKey string, state State) err
 }
 
 func (m *Manager) stateKey(pairKey string) string {
-	return fmt.Sprintf("blnk:hot_pairs:state:%s", pairKey)
+	return fmt.Sprintf("ledgerforge:hot_pairs:state:%s", pairKey)
 }
 
 func (m *Manager) activityKey(pairKey string) string {
-	return fmt.Sprintf("blnk:hot_pairs:activity:%s", pairKey)
+	return fmt.Sprintf("ledgerforge:hot_pairs:activity:%s", pairKey)
 }
 
 func (m *Manager) contentionKey(pairKey string) string {
-	return fmt.Sprintf("blnk:hot_pairs:contention:%s", pairKey)
+	return fmt.Sprintf("ledgerforge:hot_pairs:contention:%s", pairKey)
 }
 
 func (m *Manager) stateTTL() time.Duration {

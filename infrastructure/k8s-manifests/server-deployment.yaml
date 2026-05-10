@@ -8,7 +8,7 @@ metadata:
   labels:
     io.kompose.service: server
   name: server
-  namespace: blnk
+  namespace: ledgerforge
 spec:
   replicas: 1
   selector:
@@ -27,7 +27,7 @@ spec:
     spec:
       containers:
         - args:
-            - blnk migrate up --config /blnk.json && blnk start --config /blnk.json
+            - ledgerforge migrate up --config /ledgerforge.json && ledgerforge start --config /ledgerforge.json
           command:
             - /bin/sh
             - -c
@@ -36,7 +36,7 @@ spec:
               value: http://jaeger:4318/v1/traces
             - name: TZ
               value: Etc/UTC
-          image: jerryenebeli/blnk:0.13.3
+          image: ghcr.io/devaccuracy/ledgerforge:main
           name: server
           ports:
             - containerPort: 5001
@@ -44,12 +44,12 @@ spec:
             - containerPort: 443
           resources: {}
           volumeMounts:
-            - name: blnk-config
-              mountPath: /blnk.json
-              subPath: blnk.json
+            - name: ledgerforge-config
+              mountPath: /ledgerforge.json
+              subPath: ledgerforge.json
       restartPolicy: Always
       volumes:
-        - name: blnk-config
+        - name: ledgerforge-config
           configMap:
-            name: blnk-config
-status: {} 
+            name: ledgerforge-config
+status: {}

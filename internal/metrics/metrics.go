@@ -7,7 +7,7 @@ import (
 )
 
 // meter is the package-level OTel meter used to create all instruments.
-var meter = otel.Meter("blnk")
+var meter = otel.Meter("ledgerforge")
 
 func init() {
 	if err := Init(); err != nil {
@@ -67,7 +67,7 @@ var WorkerRetriesTotal metric.Int64Counter
 func Init() error {
 	var err error
 
-	TransactionTotal, err = meter.Int64Counter("blnk.transaction.total",
+	TransactionTotal, err = meter.Int64Counter("ledgerforge.transaction.total",
 		metric.WithDescription("Total number of transactions by status and currency"),
 		metric.WithUnit("{transaction}"),
 	)
@@ -75,7 +75,7 @@ func Init() error {
 		return err
 	}
 
-	TransactionDuration, err = meter.Float64Histogram("blnk.transaction.duration",
+	TransactionDuration, err = meter.Float64Histogram("ledgerforge.transaction.duration",
 		metric.WithDescription("Duration of RecordTransaction processing"),
 		metric.WithUnit("s"),
 	)
@@ -83,7 +83,7 @@ func Init() error {
 		return err
 	}
 
-	TransactionRejectedTotal, err = meter.Int64Counter("blnk.transaction.rejected.total",
+	TransactionRejectedTotal, err = meter.Int64Counter("ledgerforge.transaction.rejected.total",
 		metric.WithDescription("Total number of rejected transactions by reason"),
 		metric.WithUnit("{transaction}"),
 	)
@@ -91,7 +91,7 @@ func Init() error {
 		return err
 	}
 
-	QueueEnqueuedTotal, err = meter.Int64Counter("blnk.queue.enqueued.total",
+	QueueEnqueuedTotal, err = meter.Int64Counter("ledgerforge.queue.enqueued.total",
 		metric.WithDescription("Total number of transactions enqueued for processing"),
 		metric.WithUnit("{transaction}"),
 	)
@@ -99,7 +99,7 @@ func Init() error {
 		return err
 	}
 
-	QueueProcessingDuration, err = meter.Float64Histogram("blnk.queue.processing.duration",
+	QueueProcessingDuration, err = meter.Float64Histogram("ledgerforge.queue.processing.duration",
 		metric.WithDescription("Duration of worker transaction processing"),
 		metric.WithUnit("s"),
 	)
@@ -107,7 +107,7 @@ func Init() error {
 		return err
 	}
 
-	BalanceCreatedTotal, err = meter.Int64Counter("blnk.balance.created.total",
+	BalanceCreatedTotal, err = meter.Int64Counter("ledgerforge.balance.created.total",
 		metric.WithDescription("Total number of balances created"),
 		metric.WithUnit("{balance}"),
 	)
@@ -115,7 +115,7 @@ func Init() error {
 		return err
 	}
 
-	InflightCommitTotal, err = meter.Int64Counter("blnk.inflight.commit.total",
+	InflightCommitTotal, err = meter.Int64Counter("ledgerforge.inflight.commit.total",
 		metric.WithDescription("Total number of inflight transactions committed"),
 		metric.WithUnit("{transaction}"),
 	)
@@ -123,7 +123,7 @@ func Init() error {
 		return err
 	}
 
-	InflightVoidTotal, err = meter.Int64Counter("blnk.inflight.void.total",
+	InflightVoidTotal, err = meter.Int64Counter("ledgerforge.inflight.void.total",
 		metric.WithDescription("Total number of inflight transactions voided"),
 		metric.WithUnit("{transaction}"),
 	)
@@ -131,7 +131,7 @@ func Init() error {
 		return err
 	}
 
-	TransactionBatchSize, err = meter.Int64Histogram("blnk.transaction.batch.size",
+	TransactionBatchSize, err = meter.Int64Histogram("ledgerforge.transaction.batch.size",
 		metric.WithDescription("Number of transactions in a coalesced batch"),
 		metric.WithUnit("{transaction}"),
 	)
@@ -139,7 +139,7 @@ func Init() error {
 		return err
 	}
 
-	TransactionBatchTotal, err = meter.Int64Counter("blnk.transaction.batch.total",
+	TransactionBatchTotal, err = meter.Int64Counter("ledgerforge.transaction.batch.total",
 		metric.WithDescription("Total number of batch coalescing attempts by result"),
 		metric.WithUnit("{batch}"),
 	)
@@ -147,7 +147,7 @@ func Init() error {
 		return err
 	}
 
-	HotpairsContentionTotal, err = meter.Int64Counter("blnk.hotpairs.contention.total",
+	HotpairsContentionTotal, err = meter.Int64Counter("ledgerforge.hotpairs.contention.total",
 		metric.WithDescription("Total number of lock contention events"),
 		metric.WithUnit("{event}"),
 	)
@@ -155,7 +155,7 @@ func Init() error {
 		return err
 	}
 
-	HotpairsLaneRoutedTotal, err = meter.Int64Counter("blnk.hotpairs.lane.routed.total",
+	HotpairsLaneRoutedTotal, err = meter.Int64Counter("ledgerforge.hotpairs.lane.routed.total",
 		metric.WithDescription("Total number of transactions routed to queue lanes"),
 		metric.WithUnit("{transaction}"),
 	)
@@ -163,7 +163,7 @@ func Init() error {
 		return err
 	}
 
-	WorkerRetriesTotal, err = meter.Int64Counter("blnk.worker.retries.total",
+	WorkerRetriesTotal, err = meter.Int64Counter("ledgerforge.worker.retries.total",
 		metric.WithDescription("Total number of worker retry events by reason"),
 		metric.WithUnit("{retry}"),
 	)

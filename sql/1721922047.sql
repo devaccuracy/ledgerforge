@@ -13,10 +13,10 @@
 -- limitations under the License.
 
 -- +migrate Up
-CREATE SCHEMA IF NOT EXISTS blnk;
+CREATE SCHEMA IF NOT EXISTS ledgerforge;
 
 -- Create reconciliations table
-CREATE TABLE IF NOT EXISTS blnk.reconciliations (
+CREATE TABLE IF NOT EXISTS ledgerforge.reconciliations (
     id SERIAL PRIMARY KEY,
     reconciliation_id TEXT NOT NULL,
     upload_id TEXT NOT NULL,
@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS blnk.reconciliations (
 );
 
 -- Create matches table
-CREATE TABLE IF NOT EXISTS blnk.matches (
+CREATE TABLE IF NOT EXISTS ledgerforge.matches (
     id SERIAL PRIMARY KEY,
     external_transaction_id TEXT NOT NULL,
     internal_transaction_id TEXT NOT NULL,
@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS blnk.matches (
 );
 
 -- Create unmatched table
-CREATE TABLE IF NOT EXISTS blnk.unmatched (
+CREATE TABLE IF NOT EXISTS ledgerforge.unmatched (
     id SERIAL PRIMARY KEY,
     external_transaction_id TEXT NOT NULL,
     reconciliation_id TEXT NOT NULL,
@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS blnk.unmatched (
 );
 
 -- Create external_transactions table
-CREATE TABLE IF NOT EXISTS blnk.external_transactions (
+CREATE TABLE IF NOT EXISTS ledgerforge.external_transactions (
     id TEXT PRIMARY KEY,
     amount NUMERIC(12, 2) NOT NULL,
     reference VARCHAR(255) NOT NULL,
@@ -58,14 +58,14 @@ CREATE TABLE IF NOT EXISTS blnk.external_transactions (
 );
 
 -- Create reconciliation_progress table
-CREATE TABLE IF NOT EXISTS blnk.reconciliation_progress (
+CREATE TABLE IF NOT EXISTS ledgerforge.reconciliation_progress (
     processed_count BIGINT,
     reconciliation_id TEXT UNIQUE,
     last_processed_external_txn_id TEXT
 );
 
 -- Create matching_rules table
-CREATE TABLE IF NOT EXISTS blnk.matching_rules (
+CREATE TABLE IF NOT EXISTS ledgerforge.matching_rules (
     id SERIAL PRIMARY KEY,
     rule_id TEXT NOT NULL,
     created_at TIMESTAMP NOT NULL,
@@ -76,16 +76,16 @@ CREATE TABLE IF NOT EXISTS blnk.matching_rules (
 );
 
 -- Create indexes
-CREATE INDEX idx_reconciliations_upload_id ON blnk.reconciliations (upload_id);
-CREATE INDEX idx_external_transactions_upload_id ON blnk.external_transactions (upload_id);
-CREATE INDEX idx_reconciliations_progress_id ON blnk.reconciliation_progress (reconciliation_id);
+CREATE INDEX idx_reconciliations_upload_id ON ledgerforge.reconciliations (upload_id);
+CREATE INDEX idx_external_transactions_upload_id ON ledgerforge.external_transactions (upload_id);
+CREATE INDEX idx_reconciliations_progress_id ON ledgerforge.reconciliation_progress (reconciliation_id);
 
 -- +migrate Down
-DROP INDEX IF EXISTS blnk.idx_reconciliations_upload_id;
-DROP INDEX IF EXISTS blnk.idx_external_transactions_upload_id;
-DROP INDEX IF EXISTS blnk.idx_reconciliations_progress_id;
-DROP TABLE IF EXISTS blnk.matching_rules CASCADE;
-DROP TABLE IF EXISTS blnk.external_transactions CASCADE;
-DROP TABLE IF EXISTS blnk.matches CASCADE;
-DROP TABLE IF EXISTS blnk.reconciliations CASCADE;
-DROP TABLE IF EXISTS blnk.reconciliation_progress CASCADE;
+DROP INDEX IF EXISTS ledgerforge.idx_reconciliations_upload_id;
+DROP INDEX IF EXISTS ledgerforge.idx_external_transactions_upload_id;
+DROP INDEX IF EXISTS ledgerforge.idx_reconciliations_progress_id;
+DROP TABLE IF EXISTS ledgerforge.matching_rules CASCADE;
+DROP TABLE IF EXISTS ledgerforge.external_transactions CASCADE;
+DROP TABLE IF EXISTS ledgerforge.matches CASCADE;
+DROP TABLE IF EXISTS ledgerforge.reconciliations CASCADE;
+DROP TABLE IF EXISTS ledgerforge.reconciliation_progress CASCADE;

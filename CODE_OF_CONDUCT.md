@@ -1,5 +1,5 @@
 
-# Blnk Open Source Project Code of Conduct
+# LedgerForge Open Source Project Code of Conduct
 
 ## Our Pledge
 

@@ -32,7 +32,7 @@ import (
 const (
 	DEFAULT_PORT            = "5001"
 	DEFAULT_CLEANUP_SEC     = 10800 // 3 hours in seconds
-	DEFAULT_TYPESENSE_KEY   = "blnk-api-key"
+	DEFAULT_TYPESENSE_KEY   = "ledgerforge-api-key"
 	DEFAULT_MONITORING_PORT = "5004"
 )
 
@@ -91,33 +91,33 @@ var (
 var ConfigStore atomic.Value
 
 type ServerConfig struct {
-	SSL                bool   `json:"ssl" envconfig:"BLNK_SERVER_SSL"`
-	CertStoragePath    string `json:"cert_storage_path" envconfig:"BLNK_CERT_STORAGE_PATH"`
-	Secure             bool   `json:"secure" envconfig:"BLNK_SERVER_SECURE"`
-	SecretKey          string `json:"secret_key" envconfig:"BLNK_SERVER_SECRET_KEY"`
-	Domain             string `json:"domain" envconfig:"BLNK_SERVER_SSL_DOMAIN"`
-	Email              string `json:"ssl_email" envconfig:"BLNK_SERVER_SSL_EMAIL"`
-	Port               string `json:"port" envconfig:"BLNK_SERVER_PORT"`
-	MetricsBearerToken string `json:"metrics_bearer_token" envconfig:"BLNK_METRICS_BEARER_TOKEN"`
+	SSL                bool   `json:"ssl" envconfig:"LEDGERFORGE_SERVER_SSL"`
+	CertStoragePath    string `json:"cert_storage_path" envconfig:"LEDGERFORGE_CERT_STORAGE_PATH"`
+	Secure             bool   `json:"secure" envconfig:"LEDGERFORGE_SERVER_SECURE"`
+	SecretKey          string `json:"secret_key" envconfig:"LEDGERFORGE_SERVER_SECRET_KEY"`
+	Domain             string `json:"domain" envconfig:"LEDGERFORGE_SERVER_SSL_DOMAIN"`
+	Email              string `json:"ssl_email" envconfig:"LEDGERFORGE_SERVER_SSL_EMAIL"`
+	Port               string `json:"port" envconfig:"LEDGERFORGE_SERVER_PORT"`
+	MetricsBearerToken string `json:"metrics_bearer_token" envconfig:"LEDGERFORGE_METRICS_BEARER_TOKEN"`
 }
 
 type DataSourceConfig struct {
-	Dns             string        `json:"dns" envconfig:"BLNK_DATA_SOURCE_DNS"`
-	MaxOpenConns    int           `json:"max_open_conns" envconfig:"BLNK_DATABASE_MAX_OPEN_CONNS"`
-	MaxIdleConns    int           `json:"max_idle_conns" envconfig:"BLNK_DATABASE_MAX_IDLE_CONNS"`
-	ConnMaxLifetime time.Duration `json:"conn_max_lifetime" envconfig:"BLNK_DATABASE_CONN_MAX_LIFETIME"`
-	ConnMaxIdleTime time.Duration `json:"conn_max_idle_time" envconfig:"BLNK_DATABASE_CONN_MAX_IDLE_TIME"`
+	Dns             string        `json:"dns" envconfig:"LEDGERFORGE_DATA_SOURCE_DNS"`
+	MaxOpenConns    int           `json:"max_open_conns" envconfig:"LEDGERFORGE_DATABASE_MAX_OPEN_CONNS"`
+	MaxIdleConns    int           `json:"max_idle_conns" envconfig:"LEDGERFORGE_DATABASE_MAX_IDLE_CONNS"`
+	ConnMaxLifetime time.Duration `json:"conn_max_lifetime" envconfig:"LEDGERFORGE_DATABASE_CONN_MAX_LIFETIME"`
+	ConnMaxIdleTime time.Duration `json:"conn_max_idle_time" envconfig:"LEDGERFORGE_DATABASE_CONN_MAX_IDLE_TIME"`
 }
 
 type RedisConfig struct {
-	Dns           string `json:"dns" envconfig:"BLNK_REDIS_DNS"`
-	SkipTLSVerify bool   `json:"skip_tls_verify" envconfig:"BLNK_REDIS_SKIP_TLS_VERIFY"`
-	PoolSize      int    `json:"pool_size" envconfig:"BLNK_REDIS_POOL_SIZE"`
-	MinIdleConns  int    `json:"min_idle_conns" envconfig:"BLNK_REDIS_MIN_IDLE_CONNS"`
+	Dns           string `json:"dns" envconfig:"LEDGERFORGE_REDIS_DNS"`
+	SkipTLSVerify bool   `json:"skip_tls_verify" envconfig:"LEDGERFORGE_REDIS_SKIP_TLS_VERIFY"`
+	PoolSize      int    `json:"pool_size" envconfig:"LEDGERFORGE_REDIS_POOL_SIZE"`
+	MinIdleConns  int    `json:"min_idle_conns" envconfig:"LEDGERFORGE_REDIS_MIN_IDLE_CONNS"`
 }
 
 type TypeSenseConfig struct {
-	Dns string `json:"dns" envconfig:"BLNK_TYPESENSE_DNS"`
+	Dns string `json:"dns" envconfig:"LEDGERFORGE_TYPESENSE_DNS"`
 }
 
 type AccountGenerationHttpService struct {
@@ -133,18 +133,18 @@ type AccountNumberGenerationConfig struct {
 }
 
 type RateLimitConfig struct {
-	RequestsPerSecond  *float64 `json:"requests_per_second" envconfig:"BLNK_RATE_LIMIT_RPS"`
-	Burst              *int     `json:"burst" envconfig:"BLNK_RATE_LIMIT_BURST"`
-	CleanupIntervalSec *int     `json:"cleanup_interval_sec" envconfig:"BLNK_RATE_LIMIT_CLEANUP_INTERVAL_SEC"`
+	RequestsPerSecond  *float64 `json:"requests_per_second" envconfig:"LEDGERFORGE_RATE_LIMIT_RPS"`
+	Burst              *int     `json:"burst" envconfig:"LEDGERFORGE_RATE_LIMIT_BURST"`
+	CleanupIntervalSec *int     `json:"cleanup_interval_sec" envconfig:"LEDGERFORGE_RATE_LIMIT_CLEANUP_INTERVAL_SEC"`
 }
 
 type SlackWebhook struct {
-	WebhookUrl string `json:"webhook_url" envconfig:"BLNK_SLACK_WEBHOOK_URL"`
+	WebhookUrl string `json:"webhook_url" envconfig:"LEDGERFORGE_SLACK_WEBHOOK_URL"`
 }
 
 type WebhookConfig struct {
-	Url     string            `json:"url" envconfig:"BLNK_WEBHOOK_URL"`
-	Headers map[string]string `json:"headers" envconfig:"BLNK_WEBHOOK_HEADERS"`
+	Url     string            `json:"url" envconfig:"LEDGERFORGE_WEBHOOK_URL"`
+	Headers map[string]string `json:"headers" envconfig:"LEDGERFORGE_WEBHOOK_HEADERS"`
 }
 
 type Notification struct {
@@ -153,63 +153,65 @@ type Notification struct {
 }
 
 type TransactionConfig struct {
-	BatchSize                  int           `json:"batch_size" envconfig:"BLNK_TRANSACTION_BATCH_SIZE"`
-	MaxQueueSize               int           `json:"max_queue_size" envconfig:"BLNK_TRANSACTION_MAX_QUEUE_SIZE"`
-	MaxWorkers                 int           `json:"max_workers" envconfig:"BLNK_TRANSACTION_MAX_WORKERS"`
-	LockDuration               time.Duration `json:"lock_duration" envconfig:"BLNK_TRANSACTION_LOCK_DURATION"`
-	LockWaitTimeout            time.Duration `json:"lock_wait_timeout" envconfig:"BLNK_TRANSACTION_LOCK_WAIT_TIMEOUT"`
-	IndexQueuePrefix           string        `json:"index_queue_prefix" envconfig:"BLNK_TRANSACTION_INDEX_QUEUE_PREFIX"`
-	EnableCoalescing           bool          `json:"enable_coalescing" envconfig:"BLNK_TRANSACTION_ENABLE_COALESCING"`
-	EnableQueuedChecks         bool          `json:"enable_queued_checks" envconfig:"BLNK_TRANSACTION_ENABLE_QUEUED_CHECKS"`
-	DisableBatchReferenceCheck bool          `json:"disable_batch_reference_check" envconfig:"BLNK_TRANSACTION_DISABLE_BATCH_REFERENCE_CHECK"`
+	BatchSize                  int           `json:"batch_size" envconfig:"LEDGERFORGE_TRANSACTION_BATCH_SIZE"`
+	MaxQueueSize               int           `json:"max_queue_size" envconfig:"LEDGERFORGE_TRANSACTION_MAX_QUEUE_SIZE"`
+	MaxWorkers                 int           `json:"max_workers" envconfig:"LEDGERFORGE_TRANSACTION_MAX_WORKERS"`
+	LockDuration               time.Duration `json:"lock_duration" envconfig:"LEDGERFORGE_TRANSACTION_LOCK_DURATION"`
+	LockWaitTimeout            time.Duration `json:"lock_wait_timeout" envconfig:"LEDGERFORGE_TRANSACTION_LOCK_WAIT_TIMEOUT"`
+	IndexQueuePrefix           string        `json:"index_queue_prefix" envconfig:"LEDGERFORGE_TRANSACTION_INDEX_QUEUE_PREFIX"`
+	EnableCoalescing           bool          `json:"enable_coalescing" envconfig:"LEDGERFORGE_TRANSACTION_ENABLE_COALESCING"`
+	EnableQueuedChecks         bool          `json:"enable_queued_checks" envconfig:"LEDGERFORGE_TRANSACTION_ENABLE_QUEUED_CHECKS"`
+	DisableBatchReferenceCheck bool          `json:"disable_batch_reference_check" envconfig:"LEDGERFORGE_TRANSACTION_DISABLE_BATCH_REFERENCE_CHECK"`
 }
 
 type ReconciliationConfig struct {
-	DefaultStrategy  string        `json:"default_strategy" envconfig:"BLNK_RECONCILIATION_DEFAULT_STRATEGY"`
-	ProgressInterval int           `json:"progress_interval" envconfig:"BLNK_RECONCILIATION_PROGRESS_INTERVAL"`
-	MaxRetries       int           `json:"max_retries" envconfig:"BLNK_RECONCILIATION_MAX_RETRIES"`
-	RetryDelay       time.Duration `json:"retry_delay" envconfig:"BLNK_RECONCILIATION_RETRY_DELAY"`
+	DefaultStrategy  string        `json:"default_strategy" envconfig:"LEDGERFORGE_RECONCILIATION_DEFAULT_STRATEGY"`
+	ProgressInterval int           `json:"progress_interval" envconfig:"LEDGERFORGE_RECONCILIATION_PROGRESS_INTERVAL"`
+	MaxRetries       int           `json:"max_retries" envconfig:"LEDGERFORGE_RECONCILIATION_MAX_RETRIES"`
+	RetryDelay       time.Duration `json:"retry_delay" envconfig:"LEDGERFORGE_RECONCILIATION_RETRY_DELAY"`
 }
 
 type QueueConfig struct {
-	TransactionQueue                string        `json:"transaction_queue" envconfig:"BLNK_QUEUE_TRANSACTION"`
-	WebhookQueue                    string        `json:"webhook_queue" envconfig:"BLNK_QUEUE_WEBHOOK"`
-	IndexQueue                      string        `json:"index_queue" envconfig:"BLNK_QUEUE_INDEX"`
-	InflightExpiryQueue             string        `json:"inflight_expiry_queue" envconfig:"BLNK_QUEUE_INFLIGHT_EXPIRY"`
-	InflightCommitQueue             string        `json:"inflight_commit_queue" envconfig:"BLNK_QUEUE_INFLIGHT_COMMIT"`
-	NumberOfQueues                  int           `json:"number_of_queues" envconfig:"BLNK_QUEUE_NUMBER_OF_QUEUES"`
-	EnableHotLane                   bool          `json:"enable_hot_lane" envconfig:"BLNK_QUEUE_ENABLE_HOT_LANE"`
-	HotQueueName                    string        `json:"hot_queue_name" envconfig:"BLNK_QUEUE_HOT_QUEUE_NAME"`
-	HotQueueConcurrency             int           `json:"hot_queue_concurrency" envconfig:"BLNK_QUEUE_HOT_QUEUE_CONCURRENCY"`
-	HotPairTTL                      time.Duration `json:"hot_pair_ttl" envconfig:"BLNK_QUEUE_HOT_PAIR_TTL"`
-	HotPairLockContentionThreshold  int           `json:"hot_pair_lock_contention_threshold" envconfig:"BLNK_QUEUE_HOT_PAIR_LOCK_CONTENTION_THRESHOLD"`
-	RejectLockContentionImmediately bool          `json:"reject_lock_contention_immediately" envconfig:"BLNK_QUEUE_REJECT_LOCK_CONTENTION_IMMEDIATELY"`
-	InsufficientFundRetries         bool          `json:"insufficient_fund_retries" envconfig:"BLNK_QUEUE_INSUFFICIENT_FUND_RETRIES"`
-	MaxRetryAttempts                int           `json:"max_retry_attempts" envconfig:"BLNK_QUEUE_MAX_RETRY_ATTEMPTS"`
-	MonitoringPort                  string        `json:"monitoring_port" envconfig:"BLNK_QUEUE_MONITORING_PORT"`
-	WebhookConcurrency              int           `json:"webhook_concurrency" envconfig:"BLNK_QUEUE_WEBHOOK_CONCURRENCY"`
-	TransactionWorkerConcurrency    int           `json:"transaction_worker_concurrency" envconfig:"BLNK_QUEUE_TRANSACTION_WORKER_CONCURRENCY"`
+	TransactionQueue                string        `json:"transaction_queue" envconfig:"LEDGERFORGE_QUEUE_TRANSACTION"`
+	WebhookQueue                    string        `json:"webhook_queue" envconfig:"LEDGERFORGE_QUEUE_WEBHOOK"`
+	IndexQueue                      string        `json:"index_queue" envconfig:"LEDGERFORGE_QUEUE_INDEX"`
+	InflightExpiryQueue             string        `json:"inflight_expiry_queue" envconfig:"LEDGERFORGE_QUEUE_INFLIGHT_EXPIRY"`
+	InflightCommitQueue             string        `json:"inflight_commit_queue" envconfig:"LEDGERFORGE_QUEUE_INFLIGHT_COMMIT"`
+	NumberOfQueues                  int           `json:"number_of_queues" envconfig:"LEDGERFORGE_QUEUE_NUMBER_OF_QUEUES"`
+	EnableHotLane                   bool          `json:"enable_hot_lane" envconfig:"LEDGERFORGE_QUEUE_ENABLE_HOT_LANE"`
+	HotQueueName                    string        `json:"hot_queue_name" envconfig:"LEDGERFORGE_QUEUE_HOT_QUEUE_NAME"`
+	HotQueueConcurrency             int           `json:"hot_queue_concurrency" envconfig:"LEDGERFORGE_QUEUE_HOT_QUEUE_CONCURRENCY"`
+	HotPairTTL                      time.Duration `json:"hot_pair_ttl" envconfig:"LEDGERFORGE_QUEUE_HOT_PAIR_TTL"`
+	HotPairLockContentionThreshold  int           `json:"hot_pair_lock_contention_threshold" envconfig:"LEDGERFORGE_QUEUE_HOT_PAIR_LOCK_CONTENTION_THRESHOLD"`
+	RejectLockContentionImmediately bool          `json:"reject_lock_contention_immediately" envconfig:"LEDGERFORGE_QUEUE_REJECT_LOCK_CONTENTION_IMMEDIATELY"`
+	InsufficientFundRetries         bool          `json:"insufficient_fund_retries" envconfig:"LEDGERFORGE_QUEUE_INSUFFICIENT_FUND_RETRIES"`
+	MaxRetryAttempts                int           `json:"max_retry_attempts" envconfig:"LEDGERFORGE_QUEUE_MAX_RETRY_ATTEMPTS"`
+	MonitoringPort                  string        `json:"monitoring_port" envconfig:"LEDGERFORGE_QUEUE_MONITORING_PORT"`
+	WebhookConcurrency              int           `json:"webhook_concurrency" envconfig:"LEDGERFORGE_QUEUE_WEBHOOK_CONCURRENCY"`
+	TransactionWorkerConcurrency    int           `json:"transaction_worker_concurrency" envconfig:"LEDGERFORGE_QUEUE_TRANSACTION_WORKER_CONCURRENCY"`
 }
 
 type Configuration struct {
-	ProjectName             string                        `json:"project_name" envconfig:"BLNK_PROJECT_NAME"`
-	BackupDir               string                        `json:"backup_dir" envconfig:"BLNK_BACKUP_DIR"`
-	AwsAccessKeyId          string                        `json:"aws_access_key_id" envconfig:"BLNK_AWS_ACCESS_KEY_ID"`
-	S3Endpoint              string                        `json:"s3_endpoint" envconfig:"BLNK_S3_ENDPOINT"`
-	AwsSecretAccessKey      string                        `json:"aws_secret_access_key" envconfig:"BLNK_AWS_SECRET_ACCESS_KEY"`
-	S3BucketName            string                        `json:"s3_bucket_name" envconfig:"BLNK_S3_BUCKET_NAME"`
-	S3Region                string                        `json:"s3_region" envconfig:"BLNK_S3_REGION"`
+	ProjectName             string                        `json:"project_name" envconfig:"LEDGERFORGE_PROJECT_NAME"`
+	BackupDir               string                        `json:"backup_dir" envconfig:"LEDGERFORGE_BACKUP_DIR"`
+	AwsAccessKeyId          string                        `json:"aws_access_key_id" envconfig:"LEDGERFORGE_AWS_ACCESS_KEY_ID"`
+	S3Endpoint              string                        `json:"s3_endpoint" envconfig:"LEDGERFORGE_S3_ENDPOINT"`
+	AwsSecretAccessKey      string                        `json:"aws_secret_access_key" envconfig:"LEDGERFORGE_AWS_SECRET_ACCESS_KEY"`
+	S3BucketName            string                        `json:"s3_bucket_name" envconfig:"LEDGERFORGE_S3_BUCKET_NAME"`
+	S3Region                string                        `json:"s3_region" envconfig:"LEDGERFORGE_S3_REGION"`
 	Server                  ServerConfig                  `json:"server"`
 	DataSource              DataSourceConfig              `json:"data_source"`
 	Redis                   RedisConfig                   `json:"redis"`
 	TypeSense               TypeSenseConfig               `json:"typesense"`
-	TypeSenseKey            string                        `json:"type_sense_key" envconfig:"BLNK_TYPESENSE_KEY"`
-	TokenizationSecret      string                        `json:"tokenization_secret" envconfig:"BLNK_TOKENIZATION_SECRET"`
+	TypeSenseKey            string                        `json:"type_sense_key" envconfig:"LEDGERFORGE_TYPESENSE_KEY"`
+	TokenizationSecret      string                        `json:"tokenization_secret" envconfig:"LEDGERFORGE_TOKENIZATION_SECRET"`
 	AccountNumberGeneration AccountNumberGenerationConfig `json:"account_number_generation"`
 	Notification            Notification                  `json:"notification"`
 	RateLimit               RateLimitConfig               `json:"rate_limit"`
-	EnableTelemetry         bool                          `json:"enable_telemetry" envconfig:"BLNK_ENABLE_TELEMETRY"`
-	EnableObservability     bool                          `json:"enable_observability" envconfig:"BLNK_ENABLE_OBSERVABILITY"`
+	EnableTelemetry         bool                          `json:"enable_telemetry" envconfig:"LEDGERFORGE_ENABLE_TELEMETRY"`
+	TelemetryKey            string                        `json:"telemetry_key" envconfig:"LEDGERFORGE_TELEMETRY_KEY"`
+	TelemetryEndpoint       string                        `json:"telemetry_endpoint" envconfig:"LEDGERFORGE_TELEMETRY_ENDPOINT"`
+	EnableObservability     bool                          `json:"enable_observability" envconfig:"LEDGERFORGE_ENABLE_OBSERVABILITY"`
 	Transaction             TransactionConfig             `json:"transaction"`
 	Reconciliation          ReconciliationConfig          `json:"reconciliation"`
 	Queue                   QueueConfig                   `json:"queue"`
@@ -233,7 +235,7 @@ func loadConfigFromFile(file string) error {
 	}
 
 	// override config from environment variables
-	err = envconfig.Process("blnk", &cnf)
+	err = envconfig.Process("ledgerforge", &cnf)
 	if err != nil {
 		return err
 	}
@@ -256,7 +258,7 @@ func Fetch() (*Configuration, error) {
 	config := ConfigStore.Load()
 	c, ok := config.(*Configuration)
 	if !ok {
-		return nil, errors.New("config not loaded from file. Create a json file called blnk.json with your config ")
+		return nil, errors.New("config not loaded from file. Create a json file called ledgerforge.json with your config ")
 	}
 	return c, nil
 }
@@ -293,7 +295,7 @@ func (cnf *Configuration) validateRequiredFields() error {
 func (cnf *Configuration) setDefaultValues() {
 	// Project defaults
 	if cnf.ProjectName == "" {
-		cnf.ProjectName = "Blnk Server"
+		cnf.ProjectName = "LedgerForge Server"
 		logrus.Warn("project name is empty, setting default name")
 	}
 

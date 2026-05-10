@@ -22,12 +22,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/blnkfinance/blnk/internal/request"
+	"github.com/devaccuracy/ledgerforge/internal/request"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestUpdateMetadata(t *testing.T) {
-	router, _, err := setupRouter()
+	router, _, err := setupRouter(t)
 	if err != nil {
 		t.Fatalf("Failed to setup router: %v", err)
 	}

@@ -2,14 +2,14 @@ global:
   scrape_interval: 15s
 
 scrape_configs:
-  - job_name: 'blnk-server'
-    # Uncomment to authenticate when metrics_bearer_token is configured in blnk.json:
+  - job_name: 'ledgerforge-server'
+    # Uncomment to authenticate when metrics_bearer_token is configured in ledgerforge.json:
     # authorization:
     #   type: Bearer
     #   credentials: '<your-metrics-bearer-token>'
     static_configs:
       - targets: ['server:5001']
-  - job_name: 'blnk-worker'
+  - job_name: 'ledgerforge-worker'
     # authorization:
     #   type: Bearer
     #   credentials: '<your-metrics-bearer-token>'

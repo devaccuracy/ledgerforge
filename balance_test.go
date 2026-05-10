@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package blnk
+package ledgerforge
 
 import (
 	"context"
@@ -27,14 +27,14 @@ import (
 
 	"github.com/brianvoe/gofakeit/v6"
 
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/model"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/blnkfinance/blnk/config"
-	"github.com/blnkfinance/blnk/database"
+	"github.com/devaccuracy/ledgerforge/config"
+	"github.com/devaccuracy/ledgerforge/database"
 )
 
 type BigIntString struct {
@@ -154,15 +154,15 @@ func TestCreateBalance(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 	balance := model.Balance{Balance: big.NewInt(100), CreditBalance: big.NewInt(50), DebitBalance: big.NewInt(50), Currency: "USD", LedgerID: "test-id", IdentityID: "test-id"}
 
 	// Convert metadata to JSON for mocking
 	metaDataJSON, _ := json.Marshal(balance.MetaData)
-	mock.ExpectExec("INSERT INTO blnk.balances").
+	mock.ExpectExec("INSERT INTO ledgerforge.balances").
 		WithArgs(sqlmock.AnyArg(), balance.Balance.String(), balance.CreditBalance.String(), balance.DebitBalance.String(), balance.Currency, balance.CurrencyMultiplier, balance.LedgerID, balance.IdentityID, sqlmock.AnyArg(), sqlmock.AnyArg(), metaDataJSON, false, "FIFO").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -181,16 +181,16 @@ func TestGetBalanceByID(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 	balanceID := gofakeit.UUID()
 
 	mock.ExpectBegin()
 
 	// Adjust the expected SQL to match the actual SQL output.
-	expectedSQL := `SELECT b\.balance_id, b\.balance, b\.credit_balance, b\.debit_balance, b\.currency, b\.currency_multiplier, b\.ledger_id, COALESCE\(b\.identity_id, ''\) as identity_id, b\.created_at, b\.meta_data, b\.inflight_balance, b\.inflight_credit_balance, b\.inflight_debit_balance, b\.version, b\.indicator, b\.track_fund_lineage, COALESCE\(b\.allocation_strategy, 'FIFO'\) as allocation_strategy FROM \( SELECT \* FROM blnk\.balances WHERE balance_id = \$1 \) AS b`
+	expectedSQL := `SELECT b\.balance_id, b\.balance, b\.credit_balance, b\.debit_balance, b\.currency, b\.currency_multiplier, b\.ledger_id, COALESCE\(b\.identity_id, ''\) as identity_id, b\.created_at, b\.meta_data, b\.inflight_balance, b\.inflight_credit_balance, b\.inflight_debit_balance, b\.version, b\.indicator, b\.track_fund_lineage, COALESCE\(b\.allocation_strategy, 'FIFO'\) as allocation_strategy FROM \( SELECT \* FROM ledgerforge\.balances WHERE balance_id = \$1 \) AS b`
 	rows := sqlmock.NewRows([]string{"balance_id", "balance", "credit_balance", "debit_balance", "currency", "currency_multiplier", "ledger_id", "identity_id", "created_at", "meta_data", "inflight_balance", "inflight_credit_balance", "inflight_debit_balance", "version", "indicator", "track_fund_lineage", "allocation_strategy"}).
 		AddRow(balanceID,
 			BigIntString{big.NewInt(100)},
@@ -232,9 +232,9 @@ func TestGetAllBalances(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 
 	// The column order must match the actual SQL generated.
@@ -247,7 +247,7 @@ func TestGetAllBalances(t *testing.T) {
 			time.Now(), `{"key":"value"}`,
 		)
 
-	mock.ExpectQuery(`SELECT balance_id, indicator, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, currency, currency_multiplier, ledger_id, COALESCE\(identity_id, ''\) as identity_id, created_at, meta_data FROM blnk.balances ORDER BY created_at DESC LIMIT \$1 OFFSET \$2`).
+	mock.ExpectQuery(`SELECT balance_id, indicator, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, currency, currency_multiplier, ledger_id, COALESCE\(identity_id, ''\) as identity_id, created_at, meta_data FROM ledgerforge.balances ORDER BY created_at DESC LIMIT \$1 OFFSET \$2`).
 		WithArgs(1, 1).
 		WillReturnRows(rows)
 
@@ -267,9 +267,9 @@ func TestUpdateBalance(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 	balance := &model.Balance{
 		BalanceID:          "test-balance",
@@ -287,7 +287,7 @@ func TestUpdateBalance(t *testing.T) {
 	metaDataJSON, _ := json.Marshal(balance.MetaData)
 
 	mock.ExpectExec(regexp.QuoteMeta(`
-        UPDATE blnk.balances
+        UPDATE ledgerforge.balances
         SET balance = $2, credit_balance = $3, debit_balance = $4, currency = $5, currency_multiplier = $6, ledger_id = $7, created_at = $8, meta_data = $9
         WHERE balance_id = $1`)).WithArgs(balance.BalanceID, balance.Balance.String(), balance.CreditBalance.String(), balance.DebitBalance.String(), balance.Currency, balance.CurrencyMultiplier, balance.LedgerID, balance.CreatedAt, metaDataJSON).WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -305,9 +305,9 @@ func TestUpdateBalances(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 	sourceBalance := &model.Balance{BalanceID: "source-balance", Balance: big.NewInt(100), CreditBalance: big.NewInt(50), DebitBalance: big.NewInt(50), Currency: "USD"}
 	destinationBalance := &model.Balance{BalanceID: "destination-balance", Balance: big.NewInt(150), CreditBalance: big.NewInt(75), DebitBalance: big.NewInt(75), Currency: "USD"}
@@ -316,12 +316,12 @@ func TestUpdateBalances(t *testing.T) {
 	mock.ExpectBegin()
 
 	// Expect the first update (for sourceBalance)
-	mock.ExpectExec("UPDATE blnk.balances").WithArgs(
+	mock.ExpectExec("UPDATE ledgerforge.balances").WithArgs(
 		sourceBalance.BalanceID, sourceBalance.Balance.String(), sourceBalance.CreditBalance.String(), sourceBalance.DebitBalance.String(), sourceBalance.InflightBalance.String(), sourceBalance.InflightCreditBalance.String(), sourceBalance.InflightDebitBalance.String(), sourceBalance.Currency, sourceBalance.CurrencyMultiplier, sourceBalance.LedgerID, sourceBalance.CreatedAt, sourceBalance.Version,
 	).WillReturnResult(sqlmock.NewResult(1, 1))
 
 	// Expect the second update (for destinationBalance)
-	mock.ExpectExec("UPDATE blnk.balances").WithArgs(
+	mock.ExpectExec("UPDATE ledgerforge.balances").WithArgs(
 		destinationBalance.BalanceID, destinationBalance.Balance.String(), destinationBalance.CreditBalance.String(), destinationBalance.DebitBalance.String(), destinationBalance.InflightBalance.String(), destinationBalance.InflightCreditBalance.String(), destinationBalance.InflightDebitBalance.String(), destinationBalance.Currency, destinationBalance.CurrencyMultiplier, destinationBalance.LedgerID, destinationBalance.CreatedAt, destinationBalance.Version,
 	).WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -342,13 +342,13 @@ func TestCreateMonitor(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 	monitor := model.BalanceMonitor{BalanceID: "test-balance", Description: "Test Monitor", CallBackURL: gofakeit.URL(), Condition: model.AlertCondition{Field: "field", Operator: "operator", Value: 1000, Precision: 100, PreciseValue: big.NewInt(100000)}}
 
-	mock.ExpectExec("INSERT INTO blnk.balance_monitors").WithArgs(sqlmock.AnyArg(), monitor.BalanceID, monitor.Condition.Field, monitor.Condition.Operator, monitor.Condition.Value, monitor.Condition.Precision, monitor.Condition.PreciseValue.String(), monitor.Description, monitor.CallBackURL, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO ledgerforge.balance_monitors").WithArgs(sqlmock.AnyArg(), monitor.BalanceID, monitor.Condition.Field, monitor.Condition.Operator, monitor.Condition.Value, monitor.Condition.Precision, monitor.Condition.PreciseValue.String(), monitor.Description, monitor.CallBackURL, sqlmock.AnyArg()).WillReturnResult(sqlmock.NewResult(1, 1))
 
 	result, err := d.CreateMonitor(context.Background(), monitor)
 
@@ -366,16 +366,16 @@ func TestGetMonitorByID(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 	monitorID := "test-monitor"
 
 	rows := sqlmock.NewRows([]string{"monitor_id", "balance_id", "field", "operator", "value", "precision", "precise_value", "description", "call_back_url", "created_at"}).
 		AddRow(monitorID, gofakeit.UUID(), "field", "operator", 1000, 100, 100000, "Test Monitor", gofakeit.URL(), time.Now())
 
-	mock.ExpectQuery("SELECT .* FROM blnk.balance_monitors WHERE monitor_id =").WithArgs(monitorID).WillReturnRows(rows)
+	mock.ExpectQuery("SELECT .* FROM ledgerforge.balance_monitors WHERE monitor_id =").WithArgs(monitorID).WillReturnRows(rows)
 
 	result, err := d.GetMonitorByID(context.Background(), monitorID)
 
@@ -393,14 +393,14 @@ func TestGetAllMonitors(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 	rows := sqlmock.NewRows([]string{"monitor_id", "balance_id", "field", "operator", "value", "description", "call_back_url", "created_at"}).
 		AddRow("test-monitor", gofakeit.UUID(), "field", "operator", 100, "Test Monitor", gofakeit.URL(), time.Now())
 
-	mock.ExpectQuery("SELECT .* FROM blnk.balance_monitors").WillReturnRows(rows)
+	mock.ExpectQuery("SELECT .* FROM ledgerforge.balance_monitors").WillReturnRows(rows)
 
 	result, err := d.GetAllMonitors(context.Background())
 
@@ -418,15 +418,15 @@ func TestGetBalanceMonitors(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 	balanceID := gofakeit.UUID()
 	rows := sqlmock.NewRows([]string{"monitor_id", "balance_id", "field", "operator", "value", "description", "call_back_url", "created_at", "precision", "precise_value"}).
 		AddRow("test-monitor", balanceID, "field", "operator", 100, "Test Monitor", gofakeit.URL(), time.Now(), 100, 100000)
 
-	mock.ExpectQuery("SELECT .* FROM blnk.balance_monitors WHERE balance_id =").WithArgs(balanceID).WillReturnRows(rows)
+	mock.ExpectQuery("SELECT .* FROM ledgerforge.balance_monitors WHERE balance_id =").WithArgs(balanceID).WillReturnRows(rows)
 
 	result, err := d.GetBalanceMonitors(context.Background(), balanceID)
 
@@ -444,13 +444,13 @@ func TestUpdateMonitor(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 	monitor := &model.BalanceMonitor{MonitorID: "test-monitor", BalanceID: "test-balance", Description: "Updated Monitor"}
 
-	mock.ExpectExec("UPDATE blnk.balance_monitors").WithArgs(monitor.MonitorID, monitor.BalanceID, monitor.Condition.Field, monitor.Condition.Operator, monitor.Condition.Value, monitor.Description, monitor.CallBackURL).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("UPDATE ledgerforge.balance_monitors").WithArgs(monitor.MonitorID, monitor.BalanceID, monitor.Condition.Field, monitor.Condition.Operator, monitor.Condition.Value, monitor.Description, monitor.CallBackURL).WillReturnResult(sqlmock.NewResult(1, 1))
 
 	err = d.UpdateMonitor(context.Background(), monitor)
 
@@ -467,19 +467,19 @@ func TestDeleteMonitor(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 	monitorID := "test-monitor"
 	balanceID := "test-balance"
 
 	rows := sqlmock.NewRows([]string{"monitor_id", "balance_id", "field", "operator", "value", "precision", "precise_value", "description", "call_back_url", "created_at"}).
 		AddRow(monitorID, balanceID, "balance", ">", 100.0, 100.0, int64(10000), "test", "http://test.com", time.Now())
-	mock.ExpectQuery("SELECT monitor_id, balance_id, field, operator, value, precision, precise_value, description, call_back_url, created_at FROM blnk.balance_monitors WHERE monitor_id =").
+	mock.ExpectQuery("SELECT monitor_id, balance_id, field, operator, value, precision, precise_value, description, call_back_url, created_at FROM ledgerforge.balance_monitors WHERE monitor_id =").
 		WithArgs(monitorID).WillReturnRows(rows)
 
-	mock.ExpectExec("DELETE FROM blnk.balance_monitors WHERE monitor_id =").WithArgs(monitorID).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("DELETE FROM ledgerforge.balance_monitors WHERE monitor_id =").WithArgs(monitorID).WillReturnResult(sqlmock.NewResult(1, 1))
 
 	err = d.DeleteMonitor(context.Background(), monitorID)
 
@@ -502,7 +502,7 @@ func TestGetBalanceByIndicator(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -525,8 +525,8 @@ func TestGetBalanceByIndicator(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	// Generate unique indicator and currency
 	indicator := "@" + model.GenerateUUIDWithSuffix("test")
@@ -540,14 +540,14 @@ func TestGetBalanceByIndicator(t *testing.T) {
 		LedgerID:  ledgerID,
 	}
 
-	createdBalance, err := blnk.CreateBalance(ctx, balanceToCreate)
+	createdBalance, err := ledgerforge.CreateBalance(ctx, balanceToCreate)
 	require.NoError(t, err, "Failed to create balance")
 	require.NotEmpty(t, createdBalance.BalanceID, "Created balance should have an ID")
 	require.Equal(t, indicator, createdBalance.Indicator, "Created balance indicator mismatch")
 	require.Equal(t, currency, createdBalance.Currency, "Created balance currency mismatch")
 
 	// 2. Get the balance by indicator
-	retrievedBalance, err := blnk.GetBalanceByIndicator(ctx, indicator, currency)
+	retrievedBalance, err := ledgerforge.GetBalanceByIndicator(ctx, indicator, currency)
 	require.NoError(t, err, "Failed to get balance by indicator")
 	require.NotNil(t, retrievedBalance, "Retrieved balance should not be nil")
 

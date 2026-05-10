@@ -3,8 +3,8 @@ package api
 import (
 	"net/http"
 
-	"github.com/blnkfinance/blnk/api/model"
-	"github.com/blnkfinance/blnk/database"
+	"github.com/devaccuracy/ledgerforge/api/model"
+	"github.com/devaccuracy/ledgerforge/database"
 	"github.com/gin-gonic/gin"
 )
 
@@ -23,7 +23,7 @@ func (a Api) CreateAPIKey(c *gin.Context) {
 		return
 	}
 
-	apiKey, err := a.blnk.CreateAPIKey(c.Request.Context(), req.Name, req.Owner, req.Scopes, req.ExpiresAt)
+	apiKey, err := a.ledgerforge.CreateAPIKey(c.Request.Context(), req.Name, req.Owner, req.Scopes, req.ExpiresAt)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -47,7 +47,7 @@ func (a Api) ListAPIKeys(c *gin.Context) {
 		return
 	}
 
-	keys, err := a.blnk.ListAPIKeys(c.Request.Context(), owner)
+	keys, err := a.ledgerforge.ListAPIKeys(c.Request.Context(), owner)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -73,7 +73,7 @@ func (a Api) RevokeAPIKey(c *gin.Context) {
 		return
 	}
 
-	if err := a.blnk.RevokeAPIKey(c.Request.Context(), id, owner); err != nil {
+	if err := a.ledgerforge.RevokeAPIKey(c.Request.Context(), id, owner); err != nil {
 		switch err {
 		case database.ErrAPIKeyNotFound:
 			c.JSON(http.StatusNotFound, gin.H{"error": "API key not found"})

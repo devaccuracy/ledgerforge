@@ -14,7 +14,7 @@
 
 -- +migrate Up
 -- Backfill effective_date with created_at for existing transactions where it is NULL
-UPDATE blnk.transactions
+UPDATE ledgerforge.transactions
 SET effective_date = created_at
 WHERE effective_date IS NULL;
 

@@ -107,7 +107,7 @@ Terminal 1, start the queue benchmark:
 
 ```bash
 go run ./tests/loadtest/tools/queue_benchmark.go \
-  -redis-dsn "$BLNK_REDIS_DNS" \
+  -redis-dsn "$LEDGERFORGE_REDIS_DNS" \
   -queue-prefixes "new:transaction_,hot_" \
   -wait \
   -out tests/loadtest/queue-summary.json

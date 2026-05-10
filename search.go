@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package blnk
+package ledgerforge
 
 import (
 	"context"
@@ -31,11 +31,11 @@ import (
 // Returns:
 // - interface{}: The search results.
 // - error: An error if the search operation fails.
-func (l *Blnk) Search(collection string, query *api.SearchCollectionParams) (interface{}, error) {
+func (l *LedgerForge) Search(collection string, query *api.SearchCollectionParams) (interface{}, error) {
 	return l.search.Search(context.Background(), collection, query)
 }
 
 // MultiSearch performs a multi-search operation across collections.
-func (l *Blnk) MultiSearch(searchParams *api.MultiSearchSearchesParameter) (*api.MultiSearchResult, error) {
+func (l *LedgerForge) MultiSearch(searchParams *api.MultiSearchSearchesParameter) (*api.MultiSearchResult, error) {
 	return l.search.MultiSearch(context.Background(), *searchParams)
 }

@@ -1,10 +1,10 @@
-package blnk
+package ledgerforge
 
 import (
 	"context"
 	"time"
 
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/model"
 )
 
 // CreateAPIKey creates a new API key for the specified owner
@@ -19,7 +19,7 @@ import (
 // Returns:
 // - *model.APIKey: The created API key
 // - error: An error if the operation fails
-func (l *Blnk) CreateAPIKey(ctx context.Context, name, ownerID string, scopes []string, expiresAt time.Time) (*model.APIKey, error) {
+func (l *LedgerForge) CreateAPIKey(ctx context.Context, name, ownerID string, scopes []string, expiresAt time.Time) (*model.APIKey, error) {
 	return l.datasource.CreateAPIKey(ctx, name, ownerID, scopes, expiresAt)
 }
 
@@ -32,7 +32,7 @@ func (l *Blnk) CreateAPIKey(ctx context.Context, name, ownerID string, scopes []
 // Returns:
 // - []*model.APIKey: List of API keys
 // - error: An error if the operation fails
-func (l *Blnk) ListAPIKeys(ctx context.Context, ownerID string) ([]*model.APIKey, error) {
+func (l *LedgerForge) ListAPIKeys(ctx context.Context, ownerID string) ([]*model.APIKey, error) {
 	return l.datasource.ListAPIKeys(ctx, ownerID)
 }
 
@@ -45,7 +45,7 @@ func (l *Blnk) ListAPIKeys(ctx context.Context, ownerID string) ([]*model.APIKey
 //
 // Returns:
 // - error: An error if the operation fails
-func (l *Blnk) RevokeAPIKey(ctx context.Context, id, ownerID string) error {
+func (l *LedgerForge) RevokeAPIKey(ctx context.Context, id, ownerID string) error {
 	return l.datasource.RevokeAPIKey(ctx, id, ownerID)
 }
 
@@ -58,7 +58,7 @@ func (l *Blnk) RevokeAPIKey(ctx context.Context, id, ownerID string) error {
 // Returns:
 // - *model.APIKey: The API key if found
 // - error: An error if the operation fails
-func (l *Blnk) GetAPIKeyByKey(ctx context.Context, key string) (*model.APIKey, error) {
+func (l *LedgerForge) GetAPIKeyByKey(ctx context.Context, key string) (*model.APIKey, error) {
 	return l.datasource.GetAPIKey(ctx, key)
 }
 
@@ -70,6 +70,6 @@ func (l *Blnk) GetAPIKeyByKey(ctx context.Context, key string) (*model.APIKey, e
 //
 // Returns:
 // - error: An error if the operation fails
-func (l *Blnk) UpdateLastUsed(ctx context.Context, id string) error {
+func (l *LedgerForge) UpdateLastUsed(ctx context.Context, id string) error {
 	return l.datasource.UpdateLastUsed(ctx, id)
 }

@@ -1,4 +1,4 @@
-package blnk
+package ledgerforge
 
 import (
 	"context"
@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blnkfinance/blnk/config"
-	"github.com/blnkfinance/blnk/database"
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/config"
+	"github.com/devaccuracy/ledgerforge/database"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -125,7 +125,7 @@ func pollForAggregateDebitBalance(ctx context.Context, ds database.IDataSource, 
 }
 
 // pollForTransactionFundAllocation polls until the transaction has fund allocation metadata populated
-func pollForTransactionFundAllocation(ctx context.Context, blnk *Blnk, transactionID string, expectedCount int, pollInterval, timeout time.Duration) (*TransactionLineage, error) {
+func pollForTransactionFundAllocation(ctx context.Context, ledgerforge *LedgerForge, transactionID string, expectedCount int, pollInterval, timeout time.Duration) (*TransactionLineage, error) {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -138,7 +138,7 @@ func pollForTransactionFundAllocation(ctx context.Context, blnk *Blnk, transacti
 			return nil, fmt.Errorf("timed out waiting for transaction %s to have %d fund allocations: %w",
 				transactionID, expectedCount, timeoutCtx.Err())
 		case <-ticker.C:
-			lineage, err := blnk.GetTransactionLineage(ctx, transactionID)
+			lineage, err := ledgerforge.GetTransactionLineage(ctx, transactionID)
 			if err != nil {
 				continue
 			}
@@ -163,7 +163,7 @@ func TestLineageFullFlow(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -186,11 +186,11 @@ func TestLineageFullFlow(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	// Start the lineage outbox processor to process lineage entries asynchronously
-	processor := NewLineageOutboxProcessor(blnk).WithPollInterval(100 * time.Millisecond)
+	processor := NewLineageOutboxProcessor(ledgerforge).WithPollInterval(100 * time.Millisecond)
 	processor.Start(ctx)
 	defer processor.Stop()
 
@@ -226,11 +226,11 @@ func TestLineageFullFlow(t *testing.T) {
 		Precision:      100,
 		SkipQueue:      true,
 		MetaData: map[string]interface{}{
-			"BLNK_LINEAGE_PROVIDER": "stripe",
+			"LEDGERFORGE_LINEAGE_PROVIDER": "stripe",
 		},
 	}
 
-	queuedStripe, err := blnk.QueueTransaction(ctx, stripeTxn)
+	queuedStripe, err := ledgerforge.QueueTransaction(ctx, stripeTxn)
 	require.NoError(t, err, "Failed to queue stripe transaction")
 	t.Logf("Stripe deposit transaction: %s", queuedStripe.TransactionID)
 
@@ -250,11 +250,11 @@ func TestLineageFullFlow(t *testing.T) {
 		Precision:      100,
 		SkipQueue:      true,
 		MetaData: map[string]interface{}{
-			"BLNK_LINEAGE_PROVIDER": "paypal",
+			"LEDGERFORGE_LINEAGE_PROVIDER": "paypal",
 		},
 	}
 
-	queuedPaypal, err := blnk.QueueTransaction(ctx, paypalTxn)
+	queuedPaypal, err := ledgerforge.QueueTransaction(ctx, paypalTxn)
 	require.NoError(t, err, "Failed to queue paypal transaction")
 	t.Logf("PayPal deposit transaction: %s", queuedPaypal.TransactionID)
 
@@ -291,7 +291,7 @@ func TestLineageFullFlow(t *testing.T) {
 		SkipQueue:      true,
 	}
 
-	queuedPayment, err := blnk.QueueTransaction(ctx, paymentTxn)
+	queuedPayment, err := ledgerforge.QueueTransaction(ctx, paymentTxn)
 	require.NoError(t, err, "Failed to queue payment transaction")
 	t.Logf("Payment transaction: %s", queuedPayment.TransactionID)
 
@@ -306,10 +306,10 @@ func TestLineageFullFlow(t *testing.T) {
 	t.Logf("Merchant's balance: %s", merchantAfterPayment.Balance.String())
 
 	// Wait for lineage debit processing to complete (processed asynchronously via outbox)
-	_, err = pollForTransactionFundAllocation(ctx, blnk, queuedPayment.TransactionID, 2, pollInterval, pollTimeout)
+	_, err = pollForTransactionFundAllocation(ctx, ledgerforge, queuedPayment.TransactionID, 2, pollInterval, pollTimeout)
 	require.NoError(t, err, "Lineage debit processing should complete and populate fund allocation")
 
-	lineage, err := blnk.GetBalanceLineage(ctx, createdAlice.BalanceID)
+	lineage, err := ledgerforge.GetBalanceLineage(ctx, createdAlice.BalanceID)
 	require.NoError(t, err, "Failed to get balance lineage")
 
 	assert.Equal(t, 0, lineage.TotalWithLineage.Cmp(big.NewInt(1000)),
@@ -333,7 +333,7 @@ func TestLineageFullFlow(t *testing.T) {
 		}
 	}
 
-	txnLineage, err := blnk.GetTransactionLineage(ctx, queuedPayment.TransactionID)
+	txnLineage, err := ledgerforge.GetTransactionLineage(ctx, queuedPayment.TransactionID)
 	require.NoError(t, err, "Failed to get transaction lineage")
 
 	assert.Len(t, txnLineage.FundAllocation, 2, "Should have 2 fund allocations")
@@ -364,7 +364,7 @@ func TestLineageToLineageTransfer(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -387,11 +387,11 @@ func TestLineageToLineageTransfer(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	// Start the lineage outbox processor to process lineage entries asynchronously
-	processor := NewLineageOutboxProcessor(blnk).WithPollInterval(100 * time.Millisecond)
+	processor := NewLineageOutboxProcessor(ledgerforge).WithPollInterval(100 * time.Millisecond)
 	processor.Start(ctx)
 	defer processor.Stop()
 
@@ -431,7 +431,7 @@ func TestLineageToLineageTransfer(t *testing.T) {
 	require.NoError(t, err)
 	t.Logf("Receiver balance: %s", receiverBalance.BalanceID)
 
-	_, err = blnk.QueueTransaction(ctx, &model.Transaction{
+	_, err = ledgerforge.QueueTransaction(ctx, &model.Transaction{
 		Reference:      fmt.Sprintf("stripe_%s", suffix),
 		Source:         "@world",
 		Destination:    senderBalance.BalanceID,
@@ -440,14 +440,14 @@ func TestLineageToLineageTransfer(t *testing.T) {
 		AllowOverdraft: true,
 		Precision:      100,
 		SkipQueue:      true,
-		MetaData:       map[string]interface{}{"BLNK_LINEAGE_PROVIDER": "stripe"},
+		MetaData:       map[string]interface{}{"LEDGERFORGE_LINEAGE_PROVIDER": "stripe"},
 	})
 	require.NoError(t, err)
 
 	_, err = pollForLineageMappings(ctx, ds, senderBalance.BalanceID, 1, pollInterval, pollTimeout)
 	require.NoError(t, err)
 
-	_, err = blnk.QueueTransaction(ctx, &model.Transaction{
+	_, err = ledgerforge.QueueTransaction(ctx, &model.Transaction{
 		Reference:      fmt.Sprintf("bank_%s", suffix),
 		Source:         "@world",
 		Destination:    senderBalance.BalanceID,
@@ -456,7 +456,7 @@ func TestLineageToLineageTransfer(t *testing.T) {
 		AllowOverdraft: true,
 		Precision:      100,
 		SkipQueue:      true,
-		MetaData:       map[string]interface{}{"BLNK_LINEAGE_PROVIDER": "bank"},
+		MetaData:       map[string]interface{}{"LEDGERFORGE_LINEAGE_PROVIDER": "bank"},
 	})
 	require.NoError(t, err)
 
@@ -467,7 +467,7 @@ func TestLineageToLineageTransfer(t *testing.T) {
 	require.NoError(t, err)
 	t.Logf("Sender balance: %s", senderAfterDeposit.Balance.String())
 
-	transferTxn, err := blnk.QueueTransaction(ctx, &model.Transaction{
+	transferTxn, err := ledgerforge.QueueTransaction(ctx, &model.Transaction{
 		Reference:      fmt.Sprintf("transfer_%s", suffix),
 		Source:         senderBalance.BalanceID,
 		Destination:    receiverBalance.BalanceID,
@@ -489,10 +489,10 @@ func TestLineageToLineageTransfer(t *testing.T) {
 	t.Logf("Receiver balance after transfer: %s", receiverAfterTransfer.Balance.String())
 
 	// Wait for lineage outbox processing to complete by polling for fund allocation
-	_, err = pollForTransactionFundAllocation(ctx, blnk, transferTxn.TransactionID, 1, pollInterval, pollTimeout)
+	_, err = pollForTransactionFundAllocation(ctx, ledgerforge, transferTxn.TransactionID, 1, pollInterval, pollTimeout)
 	require.NoError(t, err, "Lineage debit processing should complete and populate fund allocation")
 
-	senderLineage, err := blnk.GetBalanceLineage(ctx, senderBalance.BalanceID)
+	senderLineage, err := ledgerforge.GetBalanceLineage(ctx, senderBalance.BalanceID)
 	require.NoError(t, err)
 	t.Logf("Sender lineage after transfer:")
 	for _, p := range senderLineage.Providers {
@@ -519,7 +519,7 @@ func TestLineageToLineageTransfer(t *testing.T) {
 		}
 	}
 
-	receiverLineage, err := blnk.GetBalanceLineage(ctx, receiverBalance.BalanceID)
+	receiverLineage, err := ledgerforge.GetBalanceLineage(ctx, receiverBalance.BalanceID)
 	require.NoError(t, err)
 	t.Logf("Receiver lineage after transfer:")
 	for _, p := range receiverLineage.Providers {
@@ -540,7 +540,7 @@ func TestLineageToLineageTransfer(t *testing.T) {
 			"Receiver stripe available should be 8000 ($80), got %s", stripeProvider.Available.String())
 	}
 
-	txnLineage, err := blnk.GetTransactionLineage(ctx, transferTxn.TransactionID)
+	txnLineage, err := ledgerforge.GetTransactionLineage(ctx, transferTxn.TransactionID)
 	require.NoError(t, err)
 
 	assert.Len(t, txnLineage.FundAllocation, 1, "Should have 1 fund allocation (stripe only)")
@@ -577,7 +577,7 @@ func TestLineageAllocationStrategies(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -600,11 +600,11 @@ func TestLineageAllocationStrategies(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	// Start the lineage outbox processor to process lineage entries asynchronously
-	processor := NewLineageOutboxProcessor(blnk).WithPollInterval(100 * time.Millisecond)
+	processor := NewLineageOutboxProcessor(ledgerforge).WithPollInterval(100 * time.Millisecond)
 	processor.Start(ctx)
 	defer processor.Stop()
 
@@ -627,7 +627,7 @@ func TestLineageAllocationStrategies(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		_, err = blnk.QueueTransaction(ctx, &model.Transaction{
+		_, err = ledgerforge.QueueTransaction(ctx, &model.Transaction{
 			Reference:      fmt.Sprintf("lifo_stripe_%s", suffix),
 			Source:         "@world",
 			Destination:    balance.BalanceID,
@@ -636,14 +636,14 @@ func TestLineageAllocationStrategies(t *testing.T) {
 			AllowOverdraft: true,
 			Precision:      100,
 			SkipQueue:      true,
-			MetaData:       map[string]interface{}{"BLNK_LINEAGE_PROVIDER": "stripe"},
+			MetaData:       map[string]interface{}{"LEDGERFORGE_LINEAGE_PROVIDER": "stripe"},
 		})
 		require.NoError(t, err)
 
 		_, err = pollForLineageMappings(ctx, ds, balance.BalanceID, 1, pollInterval, pollTimeout)
 		require.NoError(t, err)
 
-		_, err = blnk.QueueTransaction(ctx, &model.Transaction{
+		_, err = ledgerforge.QueueTransaction(ctx, &model.Transaction{
 			Reference:      fmt.Sprintf("lifo_bank_%s", suffix),
 			Source:         "@world",
 			Destination:    balance.BalanceID,
@@ -652,7 +652,7 @@ func TestLineageAllocationStrategies(t *testing.T) {
 			AllowOverdraft: true,
 			Precision:      100,
 			SkipQueue:      true,
-			MetaData:       map[string]interface{}{"BLNK_LINEAGE_PROVIDER": "bank"},
+			MetaData:       map[string]interface{}{"LEDGERFORGE_LINEAGE_PROVIDER": "bank"},
 		})
 		require.NoError(t, err)
 
@@ -668,7 +668,7 @@ func TestLineageAllocationStrategies(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		txn, err := blnk.QueueTransaction(ctx, &model.Transaction{
+		txn, err := ledgerforge.QueueTransaction(ctx, &model.Transaction{
 			Reference:      fmt.Sprintf("lifo_spend_%s", suffix),
 			Source:         balance.BalanceID,
 			Destination:    merchant.BalanceID,
@@ -684,7 +684,7 @@ func TestLineageAllocationStrategies(t *testing.T) {
 		require.NoError(t, err)
 
 		// Poll for fund allocation (debit lineage is processed asynchronously)
-		lineage, err := pollForTransactionFundAllocation(ctx, blnk, txn.TransactionID, 1, pollInterval, pollTimeout)
+		lineage, err := pollForTransactionFundAllocation(ctx, ledgerforge, txn.TransactionID, 1, pollInterval, pollTimeout)
 		require.NoError(t, err, "Failed to poll for transaction fund allocation")
 		t.Logf("LIFO allocation for $25 spend:")
 		for _, alloc := range lineage.FundAllocation {
@@ -703,7 +703,7 @@ func TestLineageAllocationStrategies(t *testing.T) {
 			}
 		}
 
-		balLineage, err := blnk.GetBalanceLineage(ctx, balance.BalanceID)
+		balLineage, err := ledgerforge.GetBalanceLineage(ctx, balance.BalanceID)
 		require.NoError(t, err)
 		t.Logf("LIFO remaining balance breakdown:")
 		for _, p := range balLineage.Providers {
@@ -747,7 +747,7 @@ func TestLineageAllocationStrategies(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		_, err = blnk.QueueTransaction(ctx, &model.Transaction{
+		_, err = ledgerforge.QueueTransaction(ctx, &model.Transaction{
 			Reference:      fmt.Sprintf("prop_stripe_%s", suffix),
 			Source:         "@world",
 			Destination:    balance.BalanceID,
@@ -756,14 +756,14 @@ func TestLineageAllocationStrategies(t *testing.T) {
 			AllowOverdraft: true,
 			Precision:      100,
 			SkipQueue:      true,
-			MetaData:       map[string]interface{}{"BLNK_LINEAGE_PROVIDER": "stripe"},
+			MetaData:       map[string]interface{}{"LEDGERFORGE_LINEAGE_PROVIDER": "stripe"},
 		})
 		require.NoError(t, err)
 
 		_, err = pollForLineageMappings(ctx, ds, balance.BalanceID, 1, pollInterval, pollTimeout)
 		require.NoError(t, err)
 
-		_, err = blnk.QueueTransaction(ctx, &model.Transaction{
+		_, err = ledgerforge.QueueTransaction(ctx, &model.Transaction{
 			Reference:      fmt.Sprintf("prop_paypal_%s", suffix),
 			Source:         "@world",
 			Destination:    balance.BalanceID,
@@ -772,7 +772,7 @@ func TestLineageAllocationStrategies(t *testing.T) {
 			AllowOverdraft: true,
 			Precision:      100,
 			SkipQueue:      true,
-			MetaData:       map[string]interface{}{"BLNK_LINEAGE_PROVIDER": "paypal"},
+			MetaData:       map[string]interface{}{"LEDGERFORGE_LINEAGE_PROVIDER": "paypal"},
 		})
 		require.NoError(t, err)
 
@@ -788,7 +788,7 @@ func TestLineageAllocationStrategies(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		txn, err := blnk.QueueTransaction(ctx, &model.Transaction{
+		txn, err := ledgerforge.QueueTransaction(ctx, &model.Transaction{
 			Reference:      fmt.Sprintf("prop_spend_%s", suffix),
 			Source:         balance.BalanceID,
 			Destination:    merchant.BalanceID,
@@ -804,7 +804,7 @@ func TestLineageAllocationStrategies(t *testing.T) {
 		require.NoError(t, err)
 
 		// Poll for fund allocation (debit lineage is processed asynchronously)
-		lineage, err := pollForTransactionFundAllocation(ctx, blnk, txn.TransactionID, 2, pollInterval, pollTimeout)
+		lineage, err := pollForTransactionFundAllocation(ctx, ledgerforge, txn.TransactionID, 2, pollInterval, pollTimeout)
 		require.NoError(t, err, "Failed to poll for transaction fund allocation")
 		t.Logf("PROPORTIONAL allocation for $50 spend:")
 		for _, alloc := range lineage.FundAllocation {
@@ -834,7 +834,7 @@ func TestLineageAllocationStrategies(t *testing.T) {
 		assert.Equal(t, int64(3000), stripeAlloc, "Stripe should contribute 3000 (precise, $30 = 60%% of $50)")
 		assert.Equal(t, int64(2000), paypalAlloc, "Paypal should contribute 2000 (precise, $20 = 40%% of $50)")
 
-		balLineage, err := blnk.GetBalanceLineage(ctx, balance.BalanceID)
+		balLineage, err := ledgerforge.GetBalanceLineage(ctx, balance.BalanceID)
 		require.NoError(t, err)
 		t.Logf("PROPORTIONAL remaining balance breakdown:")
 		for _, p := range balLineage.Providers {
@@ -876,7 +876,7 @@ func TestLineageInflightHold(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -899,11 +899,11 @@ func TestLineageInflightHold(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	// Start the lineage outbox processor to process lineage entries asynchronously
-	processor := NewLineageOutboxProcessor(blnk).WithPollInterval(100 * time.Millisecond)
+	processor := NewLineageOutboxProcessor(ledgerforge).WithPollInterval(100 * time.Millisecond)
 	processor.Start(ctx)
 	defer processor.Stop()
 
@@ -926,7 +926,7 @@ func TestLineageInflightHold(t *testing.T) {
 	require.NoError(t, err)
 	t.Logf("Created balance: %s", balance.BalanceID)
 
-	inflightTxn, err := blnk.QueueTransaction(ctx, &model.Transaction{
+	inflightTxn, err := ledgerforge.QueueTransaction(ctx, &model.Transaction{
 		Reference:      fmt.Sprintf("inflight_hold_%s", suffix),
 		Source:         "@world",
 		Destination:    balance.BalanceID,
@@ -936,7 +936,7 @@ func TestLineageInflightHold(t *testing.T) {
 		Precision:      100,
 		Inflight:       true,
 		SkipQueue:      true,
-		MetaData:       map[string]interface{}{"BLNK_LINEAGE_PROVIDER": "stripe"},
+		MetaData:       map[string]interface{}{"LEDGERFORGE_LINEAGE_PROVIDER": "stripe"},
 	})
 	require.NoError(t, err)
 	t.Logf("Created inflight transaction: %s (status: %s)", inflightTxn.TransactionID, inflightTxn.Status)
@@ -1008,7 +1008,7 @@ func TestLineageInflightCommit(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -1031,11 +1031,11 @@ func TestLineageInflightCommit(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	// Start the lineage outbox processor to process lineage entries asynchronously
-	processor := NewLineageOutboxProcessor(blnk).WithPollInterval(100 * time.Millisecond)
+	processor := NewLineageOutboxProcessor(ledgerforge).WithPollInterval(100 * time.Millisecond)
 	processor.Start(ctx)
 	defer processor.Stop()
 
@@ -1057,7 +1057,7 @@ func TestLineageInflightCommit(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	inflightTxn, err := blnk.QueueTransaction(ctx, &model.Transaction{
+	inflightTxn, err := ledgerforge.QueueTransaction(ctx, &model.Transaction{
 		Reference:      fmt.Sprintf("inflight_commit_%s", suffix),
 		Source:         "@world",
 		Destination:    balance.BalanceID,
@@ -1067,7 +1067,7 @@ func TestLineageInflightCommit(t *testing.T) {
 		Precision:      100,
 		Inflight:       true,
 		SkipQueue:      true,
-		MetaData:       map[string]interface{}{"BLNK_LINEAGE_PROVIDER": "paypal"},
+		MetaData:       map[string]interface{}{"LEDGERFORGE_LINEAGE_PROVIDER": "paypal"},
 	})
 	require.NoError(t, err)
 	t.Logf("Created inflight transaction: %s (status: %s)", inflightTxn.TransactionID, inflightTxn.Status)
@@ -1089,7 +1089,7 @@ func TestLineageInflightCommit(t *testing.T) {
 	}
 
 	// Commit the main transaction
-	commitTxn, err := blnk.CommitInflightTransaction(ctx, inflightTxn.TransactionID, big.NewInt(5000))
+	commitTxn, err := ledgerforge.CommitInflightTransaction(ctx, inflightTxn.TransactionID, big.NewInt(5000))
 	require.NoError(t, err)
 	t.Logf("Committed main transaction: %s (parent: %s)", commitTxn.TransactionID, commitTxn.ParentTransaction)
 	require.Equal(t, StatusApplied, commitTxn.Status, "Committed transaction should have APPLIED status")
@@ -1132,7 +1132,7 @@ func TestLineageInflightCommit(t *testing.T) {
 	t.Logf("Created merchant balance: %s", merchantBalance.BalanceID)
 
 	// Spend $30 (3000 precise) from main balance to merchant
-	spendTxn, err := blnk.QueueTransaction(ctx, &model.Transaction{
+	spendTxn, err := ledgerforge.QueueTransaction(ctx, &model.Transaction{
 		Reference:   fmt.Sprintf("spend_to_merchant_%s", suffix),
 		Source:      balance.BalanceID,
 		Destination: merchantBalance.BalanceID,
@@ -1201,7 +1201,7 @@ func TestLineageInflightVoid(t *testing.T) {
 			Dns: "localhost:6379",
 		},
 		DataSource: config.DataSourceConfig{
-			Dns: "postgres://postgres:password@localhost:5432/blnk?sslmode=disable",
+			Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable",
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue_test",
@@ -1224,11 +1224,11 @@ func TestLineageInflightVoid(t *testing.T) {
 	ds, err := database.NewDataSource(cnf)
 	require.NoError(t, err, "Failed to create datasource")
 
-	blnk, err := NewBlnk(ds)
-	require.NoError(t, err, "Failed to create Blnk instance")
+	ledgerforge, err := NewLedgerForge(ds)
+	require.NoError(t, err, "Failed to create LedgerForge instance")
 
 	// Start the lineage outbox processor to process lineage entries asynchronously
-	processor := NewLineageOutboxProcessor(blnk).WithPollInterval(100 * time.Millisecond)
+	processor := NewLineageOutboxProcessor(ledgerforge).WithPollInterval(100 * time.Millisecond)
 	processor.Start(ctx)
 	defer processor.Stop()
 
@@ -1250,7 +1250,7 @@ func TestLineageInflightVoid(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	inflightTxn, err := blnk.QueueTransaction(ctx, &model.Transaction{
+	inflightTxn, err := ledgerforge.QueueTransaction(ctx, &model.Transaction{
 		Reference:      fmt.Sprintf("inflight_void_%s", suffix),
 		Source:         "@world",
 		Destination:    balance.BalanceID,
@@ -1260,7 +1260,7 @@ func TestLineageInflightVoid(t *testing.T) {
 		Precision:      100,
 		Inflight:       true,
 		SkipQueue:      true,
-		MetaData:       map[string]interface{}{"BLNK_LINEAGE_PROVIDER": "bank"},
+		MetaData:       map[string]interface{}{"LEDGERFORGE_LINEAGE_PROVIDER": "bank"},
 	})
 	require.NoError(t, err)
 	t.Logf("Created inflight transaction: %s (status: %s)", inflightTxn.TransactionID, inflightTxn.Status)
@@ -1279,7 +1279,7 @@ func TestLineageInflightVoid(t *testing.T) {
 		"Shadow inflight debit balance should be 7500 before void")
 
 	// Void the main transaction
-	voidTxn, err := blnk.VoidInflightTransaction(ctx, inflightTxn.TransactionID)
+	voidTxn, err := ledgerforge.VoidInflightTransaction(ctx, inflightTxn.TransactionID)
 	require.NoError(t, err)
 	t.Logf("Voided main transaction: %s (parent: %s)", voidTxn.TransactionID, voidTxn.ParentTransaction)
 	require.Equal(t, StatusVoid, voidTxn.Status, "Voided transaction should have VOID status")

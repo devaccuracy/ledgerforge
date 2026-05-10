@@ -1,9 +1,9 @@
-FROM golang:1.25-alpine as build-env
-WORKDIR /go/src/blnk
+FROM golang:1.25-alpine AS build-env
+WORKDIR /go/src/ledgerforge
 
 COPY . .
 
-RUN go build -o /blnk ./cmd/*.go
+RUN go build -o /ledgerforge ./cmd/*.go
 
 FROM debian:bullseye-slim
 
@@ -15,10 +15,10 @@ RUN apt-get update && apt-get install -y wget gnupg2 lsb-release && \
     apt-get install -y postgresql-client-16 && \
     rm -rf /var/lib/apt/lists/*
 
-COPY --from=build-env /blnk /usr/local/bin/blnk
+COPY --from=build-env /ledgerforge /usr/local/bin/ledgerforge
 
-RUN chmod +x /usr/local/bin/blnk
+RUN chmod +x /usr/local/bin/ledgerforge
 
-CMD ["blnk", "start"]
+CMD ["ledgerforge", "start"]
 
 EXPOSE 8080

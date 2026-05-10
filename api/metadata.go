@@ -38,7 +38,7 @@ func (a Api) UpdateMetadata(c *gin.Context) {
 		return
 	}
 
-	updatedMetadata, err := a.blnk.UpdateMetadata(c.Request.Context(), entityID, req.Metadata)
+	updatedMetadata, err := a.ledgerforge.UpdateMetadata(c.Request.Context(), entityID, req.Metadata)
 	if err != nil {
 		if errors.Is(err, errors.New("entity not found")) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "entity not found"})

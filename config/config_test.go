@@ -135,7 +135,7 @@ func TestValidateAndAddDefaults_TransactionLockWaitTimeoutAlreadyDuration(t *tes
 
 func TestLoadConfigFromFile(t *testing.T) {
 	// Create a temporary file
-	tmpFile, err := os.CreateTemp("", "blnk.json")
+	tmpFile, err := os.CreateTemp("", "ledgerforge.json")
 	if err != nil {
 		t.Fatalf("Unable to create temporary file: %v", err)
 	}
@@ -160,8 +160,8 @@ func TestLoadConfigFromFile(t *testing.T) {
 	tmpFile.Close() // Close the file so loadConfigFromFile can open it
 
 	// Set an environment variable to override the project name
-	os.Setenv("BLNK_PROJECT_NAME", "Env Project")
-	defer os.Unsetenv("BLNK_PROJECT_NAME") // Clean up after the test
+	os.Setenv("LEDGERFORGE_PROJECT_NAME", "Env Project")
+	defer os.Unsetenv("LEDGERFORGE_PROJECT_NAME") // Clean up after the test
 
 	// Load the configuration from the file
 	if err := loadConfigFromFile(tmpFile.Name()); err != nil {
@@ -190,7 +190,7 @@ func TestLoadConfigFromFile(t *testing.T) {
 
 func TestInitConfig(t *testing.T) {
 	// Create a temporary file
-	tmpFile, err := os.CreateTemp("", "blnk.json")
+	tmpFile, err := os.CreateTemp("", "ledgerforge.json")
 	if err != nil {
 		t.Fatalf("Unable to create temporary file: %v", err)
 	}

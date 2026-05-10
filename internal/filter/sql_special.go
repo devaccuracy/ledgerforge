@@ -151,7 +151,7 @@ func buildIndicatorCondition(f QueryFilter, tableAlias string, argPosition int) 
 		return "", nil, argPosition, nil
 	}
 
-	cte := fmt.Sprintf("_indicator_matches AS (SELECT b.balance_id FROM blnk.balances b WHERE %s)", subqueryCondition)
+	cte := fmt.Sprintf("_indicator_matches AS (SELECT b.balance_id FROM ledgerforge.balances b WHERE %s)", subqueryCondition)
 	ctes = []string{cte}
 
 	srcField := "source"

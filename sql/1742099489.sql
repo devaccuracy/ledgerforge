@@ -15,7 +15,7 @@
 -- +migrate Up
 
 -- +migrate StatementBegin
-CREATE OR REPLACE FUNCTION blnk.prevent_snapshot_update()
+CREATE OR REPLACE FUNCTION ledgerforge.prevent_snapshot_update()
    RETURNS TRIGGER
    LANGUAGE plpgsql
 AS $$
@@ -45,17 +45,17 @@ $$;
 
 -- +migrate StatementBegin
 -- Drop the trigger if it exists and recreate it
-DROP TRIGGER IF EXISTS prevent_snapshot_update_trigger ON blnk.balance_snapshots;
+DROP TRIGGER IF EXISTS prevent_snapshot_update_trigger ON ledgerforge.balance_snapshots;
 
 CREATE TRIGGER prevent_snapshot_update_trigger
-   BEFORE UPDATE ON blnk.balance_snapshots
+   BEFORE UPDATE ON ledgerforge.balance_snapshots
    FOR EACH ROW
-   EXECUTE FUNCTION blnk.prevent_snapshot_update();
+   EXECUTE FUNCTION ledgerforge.prevent_snapshot_update();
 -- +migrate StatementEnd
 
 -- +migrate Down
 
 -- +migrate StatementBegin
-DROP TRIGGER IF EXISTS prevent_snapshot_update_trigger ON blnk.balance_snapshots;
-DROP FUNCTION IF EXISTS blnk.prevent_snapshot_update();
+DROP TRIGGER IF EXISTS prevent_snapshot_update_trigger ON ledgerforge.balance_snapshots;
+DROP FUNCTION IF EXISTS ledgerforge.prevent_snapshot_update();
 -- +migrate StatementEnd

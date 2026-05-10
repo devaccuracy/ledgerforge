@@ -19,7 +19,7 @@ import (
 	"net/http"
 	"strconv"
 
-	model2 "github.com/blnkfinance/blnk/api/model"
+	model2 "github.com/devaccuracy/ledgerforge/api/model"
 
 	"github.com/gin-gonic/gin"
 )
@@ -48,7 +48,7 @@ func (a Api) CreateLedger(c *gin.Context) {
 		return
 	}
 
-	resp, err := a.blnk.CreateLedger(newLedger.ToLedger())
+	resp, err := a.ledgerforge.CreateLedger(newLedger.ToLedger())
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -76,7 +76,7 @@ func (a Api) GetLedger(c *gin.Context) {
 		return
 	}
 
-	resp, err := a.blnk.GetLedgerByID(id)
+	resp, err := a.ledgerforge.GetLedgerByID(id)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -128,7 +128,7 @@ func (a Api) GetAllLedgers(c *gin.Context) {
 		}
 
 		// Use the new filter method
-		resp, err := a.blnk.GetAllLedgersWithFilter(c.Request.Context(), filters, limitInt, offsetInt)
+		resp, err := a.ledgerforge.GetAllLedgersWithFilter(c.Request.Context(), filters, limitInt, offsetInt)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -139,7 +139,7 @@ func (a Api) GetAllLedgers(c *gin.Context) {
 	}
 
 	// Fall back to the legacy method when no filters are present
-	resp, err := a.blnk.GetAllLedgers(limitInt, offsetInt)
+	resp, err := a.ledgerforge.GetAllLedgers(limitInt, offsetInt)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -174,7 +174,7 @@ func (a Api) FilterLedgers(c *gin.Context) {
 		return
 	}
 
-	resp, count, err := a.blnk.GetAllLedgersWithFilterAndOptions(c.Request.Context(), filters, opts, limit, offset)
+	resp, count, err := a.ledgerforge.GetAllLedgersWithFilterAndOptions(c.Request.Context(), filters, opts, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -217,7 +217,7 @@ func (a Api) UpdateLedger(c *gin.Context) {
 		return
 	}
 
-	resp, err := a.blnk.UpdateLedger(id, updateLedger.Name)
+	resp, err := a.ledgerforge.UpdateLedger(id, updateLedger.Name)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

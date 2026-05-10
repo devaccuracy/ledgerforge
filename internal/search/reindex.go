@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/blnkfinance/blnk/database"
+	"github.com/devaccuracy/ledgerforge/database"
 	"github.com/sirupsen/logrus"
 )
 

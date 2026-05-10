@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/blnkfinance/blnk/internal/filter"
+	"github.com/devaccuracy/ledgerforge/internal/filter"
 	"github.com/gin-gonic/gin"
 )
 

@@ -14,14 +14,14 @@
 	limitations under the License.
 */
 
-package blnk
+package ledgerforge
 
 import (
 	"context"
 	"sync"
 	"time"
 
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/sirupsen/logrus"
 )
 
@@ -29,7 +29,7 @@ import (
 // It polls the database for pending entries and processes them asynchronously,
 // ensuring that lineage work is never lost even if Redis/queue operations fail.
 type LineageOutboxProcessor struct {
-	blnk         *Blnk
+	ledgerforge  *LedgerForge
 	batchSize    int
 	pollInterval time.Duration
 	lockDuration time.Duration
@@ -42,13 +42,13 @@ type LineageOutboxProcessor struct {
 // NewLineageOutboxProcessor creates a new outbox processor.
 //
 // Parameters:
-// - blnk *Blnk: The Blnk instance containing the datasource and processing logic.
+// - ledgerforge *LedgerForge: The LedgerForge instance containing the datasource and processing logic.
 //
 // Returns:
 // - *LineageOutboxProcessor: The configured processor.
-func NewLineageOutboxProcessor(blnk *Blnk) *LineageOutboxProcessor {
+func NewLineageOutboxProcessor(ledgerforge *LedgerForge) *LineageOutboxProcessor {
 	return &LineageOutboxProcessor{
-		blnk:         blnk,
+		ledgerforge:  ledgerforge,
 		batchSize:    100,
 		pollInterval: 1 * time.Second,
 		lockDuration: 30 * time.Second,
@@ -161,7 +161,7 @@ func (p *LineageOutboxProcessor) run(ctx context.Context) {
 
 // processBatch claims and processes a batch of pending outbox entries.
 func (p *LineageOutboxProcessor) processBatch(ctx context.Context) {
-	entries, err := p.blnk.datasource.ClaimPendingOutboxEntries(ctx, p.batchSize, p.lockDuration)
+	entries, err := p.ledgerforge.datasource.ClaimPendingOutboxEntries(ctx, p.batchSize, p.lockDuration)
 	if err != nil {
 		logrus.Errorf("failed to claim outbox entries: %v", err)
 		return
@@ -176,11 +176,11 @@ func (p *LineageOutboxProcessor) processBatch(ctx context.Context) {
 	for _, entry := range entries {
 		if err := p.processEntry(ctx, entry); err != nil {
 			logrus.Errorf("failed to process outbox entry %d (txn: %s): %v", entry.ID, entry.TransactionID, err)
-			if markErr := p.blnk.datasource.MarkOutboxFailed(ctx, entry.ID, err.Error()); markErr != nil {
+			if markErr := p.ledgerforge.datasource.MarkOutboxFailed(ctx, entry.ID, err.Error()); markErr != nil {
 				logrus.Errorf("failed to mark outbox entry %d as failed: %v", entry.ID, markErr)
 			}
 		} else {
-			if markErr := p.blnk.datasource.MarkOutboxCompleted(ctx, entry.ID); markErr != nil {
+			if markErr := p.ledgerforge.datasource.MarkOutboxCompleted(ctx, entry.ID); markErr != nil {
 				logrus.Errorf("failed to mark outbox entry %d as completed: %v", entry.ID, markErr)
 			}
 		}
@@ -189,5 +189,5 @@ func (p *LineageOutboxProcessor) processBatch(ctx context.Context) {
 
 // processEntry processes a single outbox entry.
 func (p *LineageOutboxProcessor) processEntry(ctx context.Context, entry model.LineageOutbox) error {
-	return p.blnk.ProcessLineageFromOutbox(ctx, entry)
+	return p.ledgerforge.ProcessLineageFromOutbox(ctx, entry)
 }

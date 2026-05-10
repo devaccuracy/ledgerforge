@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package blnk
+package ledgerforge
 
 import (
 	"database/sql"
@@ -25,12 +25,13 @@ import (
 
 	"github.com/brianvoe/gofakeit/v6"
 
-	"github.com/blnkfinance/blnk/internal/cache"
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/internal/cache"
+	"github.com/devaccuracy/ledgerforge/model"
+	"github.com/redis/go-redis/v9"
 
-	"github.com/blnkfinance/blnk/config"
+	"github.com/devaccuracy/ledgerforge/config"
 
-	"github.com/blnkfinance/blnk/database"
+	"github.com/devaccuracy/ledgerforge/database"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/assert"
@@ -39,7 +40,7 @@ import (
 func newTestDataSource() (database.IDataSource, sqlmock.Sqlmock, error) {
 	cnf := &config.Configuration{
 		Redis: config.RedisConfig{
-			Dns: "localhost:6379",
+			Dns: testRedisAddr(),
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:     "webhook_queue",
@@ -61,10 +62,7 @@ func newTestDataSource() (database.IDataSource, sqlmock.Sqlmock, error) {
 	if err != nil {
 		log.Printf("an error '%s' was not expected when opening a stub database Connection", err)
 	}
-	newCache, err := cache.NewCache()
-	if err != nil {
-		log.Printf("an error '%s' was not expected", err)
-	}
+	newCache := cache.NewCacheWithClient(redis.NewClient(&redis.Options{Addr: testRedisAddr()}))
 	return &database.Datasource{Conn: db, Cache: newCache}, mock, nil
 }
 
@@ -74,16 +72,16 @@ func TestCreateLedger(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 
 	ledger := model.Ledger{Name: "Test Ledger", MetaData: map[string]interface{}{"key": "value"}}
 	metaDataJSON, _ := json.Marshal(ledger.MetaData)
 
 	// Set expectations on mock
-	mock.ExpectExec("INSERT INTO blnk.ledgers").
+	mock.ExpectExec("INSERT INTO ledgerforge.ledgers").
 		WithArgs(metaDataJSON, ledger.Name, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -107,15 +105,15 @@ func TestGetAllLedgers(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 
 	rows := sqlmock.NewRows([]string{"ledger_id", "name", "created_at", "meta_data"}).
 		AddRow("ldg_1234567", "general ledger", time.Now(), `{"key":"value"}`)
 
-	mock.ExpectQuery("SELECT ledger_id, name, created_at, meta_data FROM blnk.ledgers ORDER BY created_at DESC LIMIT \\$1 OFFSET \\$2").
+	mock.ExpectQuery("SELECT ledger_id, name, created_at, meta_data FROM ledgerforge.ledgers ORDER BY created_at DESC LIMIT \\$1 OFFSET \\$2").
 		WithArgs(1, 1).
 		WillReturnRows(rows)
 
@@ -136,15 +134,15 @@ func TestGetLedgerByID(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 	testID := gofakeit.UUID()
 	row := sqlmock.NewRows([]string{gofakeit.UUID(), "name", "created_at", "meta_data"}).
 		AddRow(testID, "test-name", time.Now(), `{"key":"value"}`)
 
-	mock.ExpectQuery("SELECT ledger_id, name, created_at, meta_data FROM blnk.ledgers WHERE ledger_id =").
+	mock.ExpectQuery("SELECT ledger_id, name, created_at, meta_data FROM ledgerforge.ledgers WHERE ledger_id =").
 		WithArgs(testID).
 		WillReturnRows(row)
 
@@ -165,9 +163,9 @@ func TestUpdateLedger(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 
 	testID := "ldg_1234567"
@@ -179,12 +177,12 @@ func TestUpdateLedger(t *testing.T) {
 	row := sqlmock.NewRows([]string{"ledger_id", "name", "created_at", "meta_data"}).
 		AddRow(testID, originalName, testTime, `{"key":"value"}`)
 
-	mock.ExpectQuery("SELECT ledger_id, name, created_at, meta_data FROM blnk.ledgers WHERE ledger_id =").
+	mock.ExpectQuery("SELECT ledger_id, name, created_at, meta_data FROM ledgerforge.ledgers WHERE ledger_id =").
 		WithArgs(testID).
 		WillReturnRows(row)
 
 	// Mock the UPDATE query
-	mock.ExpectExec("UPDATE blnk.ledgers SET name = \\$1 WHERE ledger_id = \\$2").
+	mock.ExpectExec("UPDATE ledgerforge.ledgers SET name = \\$1 WHERE ledger_id = \\$2").
 		WithArgs(newName, testID).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
@@ -207,16 +205,16 @@ func TestUpdateLedgerNotFound(t *testing.T) {
 		t.Fatalf("Error creating test data source: %s", err)
 	}
 
-	d, err := NewBlnk(datasource)
+	d, err := NewLedgerForge(datasource)
 	if err != nil {
-		t.Fatalf("Error creating Blnk instance: %s", err)
+		t.Fatalf("Error creating LedgerForge instance: %s", err)
 	}
 
 	testID := "ldg_nonexistent"
 	newName := "Updated Ledger"
 
 	// Mock the GetLedgerByID call to return no rows (ledger not found)
-	mock.ExpectQuery("SELECT ledger_id, name, created_at, meta_data FROM blnk.ledgers WHERE ledger_id =").
+	mock.ExpectQuery("SELECT ledger_id, name, created_at, meta_data FROM ledgerforge.ledgers WHERE ledger_id =").
 		WithArgs(testID).
 		WillReturnError(sql.ErrNoRows)
 

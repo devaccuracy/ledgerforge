@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package blnk
+package ledgerforge
 
 import (
 	"context"
@@ -24,9 +24,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blnkfinance/blnk/config"
-	"github.com/blnkfinance/blnk/database/mocks"
-	"github.com/blnkfinance/blnk/model"
+	"github.com/devaccuracy/ledgerforge/config"
+	"github.com/devaccuracy/ledgerforge/database/mocks"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -223,7 +223,7 @@ func BenchmarkValidateTxn(b *testing.B) {
 	setupBenchmarkConfig()
 	mockDS := setupMockDataSource()
 
-	blnkInstance := &Blnk{
+	ledgerforgeInstance := &LedgerForge{
 		datasource: mockDS,
 		config:     setupBenchmarkConfig(),
 	}
@@ -233,7 +233,7 @@ func BenchmarkValidateTxn(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		txn := createTestTransaction("source-001", "dest-001", fmt.Sprintf("ref-%d", i), 100.00)
-		err := blnkInstance.validateTxn(ctx, txn)
+		err := ledgerforgeInstance.validateTxn(ctx, txn)
 		if err != nil {
 			b.Fatal(err)
 		}

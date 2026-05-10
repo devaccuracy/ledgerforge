@@ -969,7 +969,7 @@ func TestBuildIndicatorCondition(t *testing.T) {
 		if len(result.CTEs) != 1 {
 			t.Fatalf("expected 1 CTE, got %d", len(result.CTEs))
 		}
-		expectedCTE := "_indicator_matches AS (SELECT b.balance_id FROM blnk.balances b WHERE b.indicator ILIKE $1)"
+		expectedCTE := "_indicator_matches AS (SELECT b.balance_id FROM ledgerforge.balances b WHERE b.indicator ILIKE $1)"
 		if result.CTEs[0] != expectedCTE {
 			t.Errorf("expected CTE %q, got %q", expectedCTE, result.CTEs[0])
 		}

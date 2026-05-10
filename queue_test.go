@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package blnk
+package ledgerforge
 
 import (
 	"context"
@@ -23,8 +23,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blnkfinance/blnk/config"
-	redis_db "github.com/blnkfinance/blnk/internal/redis-db"
+	"github.com/devaccuracy/ledgerforge/config"
+	redis_db "github.com/devaccuracy/ledgerforge/internal/redis-db"
 	"github.com/hibiken/asynq"
 	"github.com/stretchr/testify/assert"
 )
@@ -32,7 +32,7 @@ import (
 func TestEnqueueImmediateTransactionSuccess(t *testing.T) {
 	cnf := &config.Configuration{
 		Redis: config.RedisConfig{
-			Dns: "localhost:6379",
+			Dns: testRedisAddr(),
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:   "webhook_queue",
@@ -41,7 +41,7 @@ func TestEnqueueImmediateTransactionSuccess(t *testing.T) {
 	}
 	config.ConfigStore.Store(cnf)
 
-	redisOption, err := redis_db.ParseRedisURL("localhost:6379", false)
+	redisOption, err := redis_db.ParseRedisURL(testRedisAddr(), false)
 	if err != nil {
 		log.Fatalf("Error parsing Redis URL: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestEnqueueImmediateTransactionSuccess(t *testing.T) {
 func TestEnqueueScheduledTransaction(t *testing.T) {
 	conf := &config.Configuration{
 		Redis: config.RedisConfig{
-			Dns: "localhost:6379",
+			Dns: testRedisAddr(),
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:   "webhook_queue",
@@ -79,8 +79,8 @@ func TestEnqueueScheduledTransaction(t *testing.T) {
 	}
 	config.ConfigStore.Store(conf)
 
-	client := asynq.NewClient(asynq.RedisClientOpt{Addr: "localhost:6379"})
-	inspector := asynq.NewInspector(asynq.RedisClientOpt{Addr: "localhost:6379"})
+	client := asynq.NewClient(asynq.RedisClientOpt{Addr: testRedisAddr()})
+	inspector := asynq.NewInspector(asynq.RedisClientOpt{Addr: testRedisAddr()})
 
 	q := NewQueue(conf, client)
 	q.Inspector = inspector
@@ -124,8 +124,8 @@ func TestQueueInflightCommitEnqueuesTask(t *testing.T) {
 	}
 	config.ConfigStore.Store(conf)
 
-	client := asynq.NewClient(asynq.RedisClientOpt{Addr: "localhost:6379"})
-	inspector := asynq.NewInspector(asynq.RedisClientOpt{Addr: "localhost:6379"})
+	client := asynq.NewClient(asynq.RedisClientOpt{Addr: testRedisAddr()})
+	inspector := asynq.NewInspector(asynq.RedisClientOpt{Addr: testRedisAddr()})
 
 	q := NewQueue(conf, client)
 	q.Inspector = inspector
@@ -146,7 +146,7 @@ func TestQueueInflightCommitEnqueuesTask(t *testing.T) {
 func TestEnqueueWithAsynqClientEnqueueError(t *testing.T) {
 	conf := &config.Configuration{
 		Redis: config.RedisConfig{
-			Dns: "localhost:6379",
+			Dns: testRedisAddr(),
 		},
 		Queue: config.QueueConfig{
 			WebhookQueue:   "webhook_queue",
@@ -154,8 +154,8 @@ func TestEnqueueWithAsynqClientEnqueueError(t *testing.T) {
 		},
 	}
 
-	client := asynq.NewClient(asynq.RedisClientOpt{Addr: "localhost:6379"})
-	inspector := asynq.NewInspector(asynq.RedisClientOpt{Addr: "localhost:6379"})
+	client := asynq.NewClient(asynq.RedisClientOpt{Addr: testRedisAddr()})
+	inspector := asynq.NewInspector(asynq.RedisClientOpt{Addr: testRedisAddr()})
 
 	q := NewQueue(conf, client)
 	q.Inspector = inspector

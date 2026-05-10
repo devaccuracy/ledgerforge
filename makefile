@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-PROJECT=blnk
+PROJECT=ledgerforge
 
 printProject:
 	echo ${PROJECT}
@@ -30,7 +30,7 @@ build:
 	go build -o ${PROJECT} ./cmd/*.go
 
 docker_run:
-	docker run -v `pwd`/blnk.json:/blnk.json -p 4300:4100 jerryenebeli/blnk:main
+	docker run -v `pwd`/ledgerforge.json:/ledgerforge.json -p 4300:4100 ghcr.io/devaccuracy/ledgerforge:main
 
 run:
 	./${PROJECT} start
