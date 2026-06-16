@@ -160,8 +160,14 @@ func TestLoadConfigFromFile(t *testing.T) {
 	tmpFile.Close() // Close the file so loadConfigFromFile can open it
 
 	// Set an environment variable to override the project name
-	os.Setenv("LEDGERFORGE_PROJECT_NAME", "Env Project")
-	defer os.Unsetenv("LEDGERFORGE_PROJECT_NAME") // Clean up after the test
+	if err := os.Setenv("LEDGERFORGE_PROJECT_NAME", "Env Project"); err != nil {
+		t.Fatalf("Failed to set env: %v", err)
+	}
+	defer func() {
+		if err := os.Unsetenv("LEDGERFORGE_PROJECT_NAME"); err != nil {
+			t.Errorf("Failed to unset env: %v", err)
+		}
+	}() // Clean up after the test
 
 	// Load the configuration from the file
 	if err := loadConfigFromFile(tmpFile.Name()); err != nil {

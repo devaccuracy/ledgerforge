@@ -127,7 +127,7 @@ func TestConnectionReuse(t *testing.T) {
 	// Create LedgerForge instance
 	ledgerforge, err := NewLedgerForge(nil)
 	assert.NoError(t, err)
-	defer ledgerforge.Close()
+	defer func() { _ = ledgerforge.Close() }()
 
 	// Send multiple webhook requests directly (bypass queue for immediate testing)
 	numRequests := 10
@@ -191,7 +191,7 @@ func TestHTTPClientConfiguration(t *testing.T) {
 	// Create LedgerForge instance
 	ledgerforge, err := NewLedgerForge(nil)
 	assert.NoError(t, err)
-	defer ledgerforge.Close()
+	defer func() { _ = ledgerforge.Close() }()
 
 	// Verify HTTP client is configured properly
 	assert.NotNil(t, ledgerforge.httpClient, "HTTP client should be initialized")
@@ -241,7 +241,7 @@ func TestProcessWebhookWithReusedClient(t *testing.T) {
 
 	ledgerforge, err := NewLedgerForge(nil)
 	assert.NoError(t, err)
-	defer ledgerforge.Close()
+	defer func() { _ = ledgerforge.Close() }()
 
 	// Store reference to the HTTP client
 	clientMutex.Lock()
