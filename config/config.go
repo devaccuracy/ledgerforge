@@ -258,7 +258,7 @@ func Fetch() (*Configuration, error) {
 	config := ConfigStore.Load()
 	c, ok := config.(*Configuration)
 	if !ok {
-		return nil, errors.New("config not loaded from file. Create a json file called ledgerforge.json with your config ")
+		return nil, errors.New("config not loaded from file: create a JSON file called ledgerforge.json with your config")
 	}
 	return c, nil
 }

@@ -299,7 +299,7 @@ func (l *LedgerForge) validateAndUpdateAmount(ctx context.Context, transaction *
 // - error: An error if the transaction is already fully committed.
 func (l *LedgerForge) checkTransactionCommitStatus(amountLeft *big.Int) error {
 	if amountLeft.Cmp(big.NewInt(0)) == 0 {
-		return errors.New("cannot commit. Transaction already committed")
+		return errors.New("cannot commit: transaction already committed")
 	}
 	return nil
 }
@@ -446,7 +446,7 @@ func (l *LedgerForge) VoidInflightTransaction(ctx context.Context, transactionID
 	}
 
 	if amountLeft.Cmp(big.NewInt(0)) == 0 {
-		err := errors.New("cannot void. Transaction already committed")
+		err := errors.New("cannot void: transaction already committed")
 		span.RecordError(err)
 		return transaction, err
 	}
