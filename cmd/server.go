@@ -78,7 +78,7 @@ func serveTLS(r *gin.Engine, conf config.ServerConfig) error {
 		TLSConfig: cfg.TLSConfig(), // TLS configuration from CertMagic
 	}
 
-	logrus.Errorf("Starting HTTPS server on %s\n", conf.Port)
+	logrus.Infof("Starting HTTPS server on %s", conf.Port)
 	// Start the HTTPS server with automatic certificate management
 	if err := server.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
 		logrus.Fatalf("Failed to start HTTPS server: %v", err)
