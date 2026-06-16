@@ -157,7 +157,9 @@ func TestLoadConfigFromFile(t *testing.T) {
 	if err := json.NewEncoder(tmpFile).Encode(sampleConfig); err != nil {
 		t.Fatalf("Unable to write to temporary file: %v", err)
 	}
-	tmpFile.Close() // Close the file so loadConfigFromFile can open it
+	if err := tmpFile.Close(); err != nil {
+		t.Fatalf("Failed to close temp file: %v", err)
+	} // Close the file so loadConfigFromFile can open it
 
 	// Set an environment variable to override the project name
 	if err := os.Setenv("LEDGERFORGE_PROJECT_NAME", "Env Project"); err != nil {
@@ -214,7 +216,9 @@ func TestInitConfig(t *testing.T) {
 	if err := json.NewEncoder(tmpFile).Encode(sampleConfig); err != nil {
 		t.Fatalf("Unable to write to temporary file: %v", err)
 	}
-	tmpFile.Close() // Close the file so InitConfig can open it
+	if err := tmpFile.Close(); err != nil {
+		t.Fatalf("Failed to close temp file: %v", err)
+	} // Close the file so InitConfig can open it
 
 	// Attempt to initialize the configuration using the temporary file
 	if err := InitConfig(tmpFile.Name()); err != nil {

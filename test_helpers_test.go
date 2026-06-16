@@ -18,7 +18,7 @@ func TestMain(m *testing.M) {
 
 	code := m.Run()
 
-	testRedisServer.Close()
+	testRedisServer.Close() // miniredis Close() does not return an error
 	os.Exit(code)
 }
 
