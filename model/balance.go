@@ -21,6 +21,7 @@ import (
 	"time"
 )
 
+// Balance represents a financial balance with credit, debit, inflight, and queued sub-balances.
 type Balance struct {
 	ID                    int64                  `json:"-"`
 	Balance               *big.Int               `json:"balance"`
@@ -47,6 +48,7 @@ type Balance struct {
 	AllocationStrategy    string                 `json:"allocation_strategy,omitempty"`
 }
 
+// BalanceMonitor defines a condition-based alert that triggers a callback when a balance meets the specified criteria.
 type BalanceMonitor struct {
 	MonitorID   string         `json:"monitor_id"`
 	BalanceID   string         `json:"balance_id"`
@@ -56,6 +58,7 @@ type BalanceMonitor struct {
 	Condition   AlertCondition `json:"condition"`
 }
 
+// LineageMapping tracks the relationship between a balance, its fund provider, and associated shadow/aggregate balances.
 type LineageMapping struct {
 	ID                 int64     `json:"id"`
 	BalanceID          string    `json:"balance_id"`
@@ -66,6 +69,7 @@ type LineageMapping struct {
 	CreatedAt          time.Time `json:"created_at"`
 }
 
+// BalanceFilter defines filter criteria for querying balances by range, currency, ledger, and time period.
 type BalanceFilter struct {
 	ID                 int64     `json:"id"`
 	BalanceRange       string    `json:"balance_range"`
@@ -77,11 +81,13 @@ type BalanceFilter struct {
 	To                 time.Time `json:"to"`
 }
 
+// BalanceTracker tracks in-memory balance state and access frequency for hot-path optimization.
 type BalanceTracker struct {
 	Balances    map[string]*Balance
 	Frequencies map[string]int
 	Mutex       sync.Mutex
 }
+// AlertCondition specifies the field, operator, value, and precision for a balance monitor alert threshold.
 type AlertCondition struct {
 	Value        float64  `json:"value"`
 	Precision    float64  `json:"precision"`

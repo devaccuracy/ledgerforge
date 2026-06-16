@@ -17,6 +17,7 @@ package model
 
 import "time"
 
+// Account represents a financial account linked to a balance, identity, and ledger.
 type Account struct {
 	AccountID  string                 `json:"account_id"`
 	Name       string                 `json:"name" form:"name"`

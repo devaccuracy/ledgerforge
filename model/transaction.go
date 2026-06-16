@@ -34,6 +34,7 @@ import (
 
 var tracer = otel.Tracer("ledgerforge.model.transaction")
 
+// Distribution defines how a transaction amount is allocated to a specific source or destination.
 type Distribution struct {
 	Identifier          string `json:"identifier"`
 	Distribution        string `json:"distribution"`                   // Can be a percentage (e.g., "10%"), a fixed amount (e.g., "100"), or "left"
@@ -53,6 +54,7 @@ type distributionState struct {
 	result          map[string]*big.Int
 }
 
+// Transaction represents a financial transaction between source and destination balances.
 type Transaction struct {
 	ID                 int64                  `json:"-"`
 	PreciseAmount      *big.Int               `json:"precise_amount,omitempty"`
@@ -86,6 +88,7 @@ type Transaction struct {
 	MetaData           map[string]interface{} `json:"meta_data,omitempty"`
 }
 
+// ToJSON serializes the transaction to JSON bytes.
 func (transaction *Transaction) ToJSON() ([]byte, error) {
 	_, span := tracer.Start(context.Background(), "ToJSON")
 	defer span.End()
@@ -99,6 +102,7 @@ func (transaction *Transaction) ToJSON() ([]byte, error) {
 	return data, nil
 }
 
+// PrecisionBankersRound applies banker's rounding (round half to even) at the given precision scale factor.
 func PrecisionBankersRound(num float64, precision float64) float64 {
 	// // For standard 2-decimal precision, use the original bankersRound
 	// if precision == 100 {
@@ -122,6 +126,7 @@ func PrecisionBankersRound(num float64, precision float64) float64 {
 	return math.Round(shifted) / precision
 }
 
+// GetEffectiveDate returns the transaction's effective date, falling back to CreatedAt if not explicitly set.
 func (t *Transaction) GetEffectiveDate() time.Time {
 	if t.EffectiveDate != nil {
 		return *t.EffectiveDate
