@@ -33,9 +33,9 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// balanceTracer is an OpenTelemetry tracer for tracking balance-related transactions.
+// balanceTracer is an OpenTelemetry tracer for tracking balance-related operations.
 var (
-	balanceTracer = otel.Tracer("ledgerforge.transactions")
+	balanceTracer = otel.Tracer("ledgerforge.balances")
 )
 
 // NewBalanceTracker creates a new BalanceTracker instance.

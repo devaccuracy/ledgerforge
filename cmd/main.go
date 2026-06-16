@@ -86,14 +86,14 @@ func setupLedgerForge(cfg *config.Configuration) (*ledgerforge.LedgerForge, erro
 	// Initialize a new data source from the configuration.
 	db, err := database.NewDataSource(cfg)
 	if err != nil {
-		return &ledgerforge.LedgerForge{}, fmt.Errorf("error getting datasource: %v", err)
+		return &ledgerforge.LedgerForge{}, fmt.Errorf("error getting datasource: %w", err)
 	}
 
 	// Create a new LedgerForge instance using the initialized data source.
 	newLedgerForge, err := ledgerforge.NewLedgerForge(db)
 	if err != nil {
 		logrus.Error(err) // Log the error using Logrus
-		return &ledgerforge.LedgerForge{}, fmt.Errorf("error creating ledgerforge: %v", err)
+		return &ledgerforge.LedgerForge{}, fmt.Errorf("error creating ledgerforge: %w", err)
 	}
 	return newLedgerForge, nil
 }
