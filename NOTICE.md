@@ -1,6 +1,8 @@
 # Notice
 
-LedgerForge is an independent open-source project derived from Blnk.
+LedgerForge Core is the open-source ledger engine for LedgerForge, a financial infrastructure platform building production-grade ledger systems for teams that move money.
+
+LedgerForge Core is derived from Blnk.
 
 The upstream project is published at:
 

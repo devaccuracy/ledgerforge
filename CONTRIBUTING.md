@@ -125,4 +125,4 @@ Before opening a PR, ensure:
 
 ## Reporting Security Issues
 
-Please do not open public issues for security vulnerabilities. Contact the LedgerForge team privately first.
+Please do not open public issues for security vulnerabilities. Email security reports to [security@ledgerforge.io](mailto:security@ledgerforge.io). See [SECURITY.md](./SECURITY.md).
