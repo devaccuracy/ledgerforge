@@ -1337,7 +1337,7 @@ func TestInflightTransactionFlowWithSkipQueueThenPartialCommit(t *testing.T) {
 	// Attempt another commit (should fail)
 	_, err = ledgerforge.CommitInflightTransaction(ctx, inflightEntry.TransactionID, big.NewInt(0))
 	require.Error(t, err, "Committing a fully committed transaction should fail")
-	require.Contains(t, err.Error(), "cannot commit. Transaction already committed",
+	require.Contains(t, err.Error(), "cannot commit: transaction already committed",
 		"Error message should indicate transaction is already committed")
 
 	// Verify commit history
@@ -1730,7 +1730,7 @@ func TestTwoInflightTransactionsCommitOneVoidCommitted(t *testing.T) {
 	// Attempt to void the already committed transaction (should fail)
 	_, err = ledgerforge.VoidInflightTransaction(ctx, inflightEntry2.TransactionID)
 	require.Error(t, err, "Voiding an already committed transaction should fail")
-	require.Contains(t, err.Error(), "Transaction already committed",
+	require.Contains(t, err.Error(), "cannot void: transaction already committed",
 		"Error message should indicate transaction is already committed")
 
 	// Check balances again to ensure they weren't affected by the failed void attempt
@@ -2010,7 +2010,7 @@ func TestInflightTransactionWithOvercommitValidation(t *testing.T) {
 	// Step 5: Attempt another commit (should fail)
 	_, err = ledgerforge.CommitInflightTransaction(ctx, inflightEntry.TransactionID, big.NewInt(0))
 	require.Error(t, err, "Second full commit should fail")
-	require.Contains(t, err.Error(), "cannot commit. Transaction already committed",
+	require.Contains(t, err.Error(), "cannot commit: transaction already committed",
 		"Error should mention that transaction is already committed")
 
 	// Verify balances remain unchanged after failed second commit
@@ -2032,7 +2032,7 @@ func TestInflightTransactionWithOvercommitValidation(t *testing.T) {
 	// Step 6: Attempt to void a fully committed transaction (should fail)
 	_, err = ledgerforge.VoidInflightTransaction(ctx, inflightEntry.TransactionID)
 	require.Error(t, err, "Voiding a fully committed transaction should fail")
-	require.Contains(t, err.Error(), "cannot void. Transaction already committed",
+	require.Contains(t, err.Error(), "cannot void: transaction already committed",
 		"Error should mention that transaction is already committed")
 
 	// Verify balances remain unchanged after failed void
@@ -2286,7 +2286,7 @@ func TestInflightTransactionWithPartialOvercommitValidation(t *testing.T) {
 	// Step 5: Attempt another commit (should fail)
 	_, err = ledgerforge.CommitInflightTransaction(ctx, inflightEntry.TransactionID, big.NewInt(0))
 	require.Error(t, err, "Second full commit should fail")
-	require.Contains(t, err.Error(), "cannot commit. Transaction already committed",
+	require.Contains(t, err.Error(), "cannot commit: transaction already committed",
 		"Error should mention that transaction is already committed")
 
 	// Verify balances remain unchanged after failed second commit
@@ -2308,7 +2308,7 @@ func TestInflightTransactionWithPartialOvercommitValidation(t *testing.T) {
 	// Step 6: Attempt to void a fully committed transaction (should fail)
 	_, err = ledgerforge.VoidInflightTransaction(ctx, inflightEntry.TransactionID)
 	require.Error(t, err, "Voiding a fully committed transaction should fail")
-	require.Contains(t, err.Error(), "cannot void. Transaction already committed",
+	require.Contains(t, err.Error(), "cannot void: transaction already committed",
 		"Error should mention that transaction is already committed")
 
 	// Verify balances remain unchanged after failed void
@@ -2831,12 +2831,12 @@ func TestMultipleSourcesInflightTransactionFlowWithSkipQueueAndCommit(t *testing
 	// Attempt another commit on each source (should fail)
 	_, err = ledgerforge.CommitInflightTransaction(ctx, inflightEntryOne.TransactionID, big.NewInt(0))
 	require.Error(t, err, "Committing a fully committed transaction should fail")
-	require.Contains(t, err.Error(), "cannot commit. Transaction already committed",
+	require.Contains(t, err.Error(), "cannot commit: transaction already committed",
 		"Error message should indicate transaction is already committed")
 
 	_, err = ledgerforge.CommitInflightTransaction(ctx, inflightEntryTwo.TransactionID, big.NewInt(0))
 	require.Error(t, err, "Committing a fully committed transaction should fail")
-	require.Contains(t, err.Error(), "cannot commit. Transaction already committed",
+	require.Contains(t, err.Error(), "cannot commit: transaction already committed",
 		"Error message should indicate transaction is already committed")
 
 	// Verify commit history for both sources
