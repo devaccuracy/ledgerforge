@@ -18,6 +18,7 @@ package notification
 
 import (
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,7 +26,7 @@ import (
 
 func TestRegisterWebhookSender(t *testing.T) {
 	// Reset the global webhook sender
-	webhookSender = nil
+	RegisterWebhookSender(nil)
 
 	// Create a mock webhook sender
 	mockSender := func(event string, payload interface{}) error {
@@ -36,12 +37,12 @@ func TestRegisterWebhookSender(t *testing.T) {
 	RegisterWebhookSender(mockSender)
 
 	// Verify the sender was registered
-	assert.NotNil(t, webhookSender)
+	assert.NotNil(t, registeredWebhookSender())
 }
 
 func TestRegisterWebhookSender_CalledCorrectly(t *testing.T) {
 	// Reset the global webhook sender
-	webhookSender = nil
+	RegisterWebhookSender(nil)
 
 	var capturedEvent string
 	var capturedPayload interface{}
@@ -58,7 +59,7 @@ func TestRegisterWebhookSender_CalledCorrectly(t *testing.T) {
 
 	// Call the sender
 	testPayload := map[string]string{"key": "value"}
-	err := webhookSender("test.event", testPayload)
+	err := registeredWebhookSender()("test.event", testPayload)
 
 	assert.NoError(t, err)
 	assert.Equal(t, "test.event", capturedEvent)
@@ -67,7 +68,7 @@ func TestRegisterWebhookSender_CalledCorrectly(t *testing.T) {
 
 func TestRegisterWebhookSender_ReturnsError(t *testing.T) {
 	// Reset the global webhook sender
-	webhookSender = nil
+	RegisterWebhookSender(nil)
 
 	expectedError := errors.New("webhook failed")
 
@@ -80,7 +81,7 @@ func TestRegisterWebhookSender_ReturnsError(t *testing.T) {
 	RegisterWebhookSender(mockSender)
 
 	// Call the sender
-	err := webhookSender("test.event", nil)
+	err := registeredWebhookSender()("test.event", nil)
 
 	assert.Error(t, err)
 	assert.Equal(t, expectedError, err)
@@ -88,7 +89,7 @@ func TestRegisterWebhookSender_ReturnsError(t *testing.T) {
 
 func TestRegisterWebhookSender_ReplacesPrevious(t *testing.T) {
 	// Reset the global webhook sender
-	webhookSender = nil
+	RegisterWebhookSender(nil)
 
 	callCount := 0
 
@@ -105,8 +106,30 @@ func TestRegisterWebhookSender_ReplacesPrevious(t *testing.T) {
 	})
 
 	// Call the sender
-	_ = webhookSender("test.event", nil)
+	_ = registeredWebhookSender()("test.event", nil)
 
 	// Second sender should have been called
 	assert.Equal(t, 2, callCount)
+}
+
+func TestWebhookSenderRegistrationIsConcurrentSafe(t *testing.T) {
+	const iterations = 100
+
+	var waitGroup sync.WaitGroup
+	for range iterations {
+		waitGroup.Add(2)
+
+		go func() {
+			defer waitGroup.Done()
+			RegisterWebhookSender(func(string, interface{}) error { return nil })
+		}()
+
+		go func() {
+			defer waitGroup.Done()
+			_ = registeredWebhookSender()
+		}()
+	}
+
+	waitGroup.Wait()
+	assert.NotNil(t, registeredWebhookSender())
 }

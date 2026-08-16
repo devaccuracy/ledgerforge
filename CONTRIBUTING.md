@@ -27,16 +27,16 @@ git clone https://github.com/devaccuracy/ledgerforge.git
 cd ledgerforge
 ```
 
-2. Install dependencies:
+2. Download dependencies:
 
 ```bash
-go mod tidy
+go mod download
 ```
 
 3. Build the binary:
 
 ```bash
-go build -o ledgerforge ./cmd/*.go
+go build -o ledgerforge ./cmd/ledgerforge
 ```
 
 4. Start required services:
@@ -71,6 +71,12 @@ You can also use:
 make test
 ```
 
+Before opening a pull request, run the complete local quality gate:
+
+```bash
+make verify
+```
+
 ## Coding Guidelines
 
 - Keep changes focused and minimal.
@@ -83,7 +89,7 @@ make test
 
 When your change affects schema or persistence behavior:
 
-- Add a migration in `sql/`.
+- Add a migration in `internal/core/sql/`.
 - Follow the existing migration naming pattern.
 - Include tests that validate the new behavior.
 

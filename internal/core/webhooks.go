@@ -1,0 +1,181 @@
+/*
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+package core
+
+import (
+	"bytes"
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/devaccuracy/ledgerforge/config"
+	"github.com/sirupsen/logrus"
+
+	"github.com/hibiken/asynq"
+)
+
+// NewWebhook represents the structure of a webhook notification.
+// It includes an event type and associated payload data.
+type NewWebhook struct {
+	Event   string      `json:"event"` // The event type that triggered the webhook.
+	Payload interface{} `json:"data"`  // The data associated with the event.
+}
+
+// getEventFromStatus maps a transaction status to a corresponding event string.
+//
+// Parameters:
+// - status string: The status of the transaction.
+//
+// Returns:
+// - string: The corresponding event string for the transaction status.
+func getEventFromStatus(status string) string {
+	switch strings.ToLower(status) {
+	case strings.ToLower(StatusQueued):
+		return "transaction.queued"
+	case strings.ToLower(StatusApplied):
+		return "transaction.applied"
+	case strings.ToLower(StatusScheduled):
+		return "transaction.scheduled"
+	case strings.ToLower(StatusInflight):
+		return "transaction.inflight"
+	case strings.ToLower(StatusVoid):
+		return "transaction.void"
+	case strings.ToLower(StatusRejected):
+		return "transaction.rejected"
+	default:
+		return "transaction.unknown"
+	}
+}
+
+// processHTTP sends a webhook notification via HTTP POST request.
+//
+// Parameters:
+// - data NewWebhook: The webhook notification data to send.
+// - client *http.Client: The HTTP client to use for the request.
+//
+// Returns:
+// - error: An error if the request or processing fails.
+func processHTTP(data NewWebhook, client *http.Client) error {
+	conf, err := config.Fetch()
+	if err != nil {
+		return err
+	}
+
+	payloadBytes, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+
+	secret := conf.Server.SecretKey
+
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+
+	signatureData := timestamp + "." + string(payloadBytes)
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(signatureData))
+	signature := hex.EncodeToString(mac.Sum(nil))
+
+	req, err := http.NewRequest(
+		"POST",
+		conf.Notification.Webhook.Url,
+		bytes.NewBuffer(payloadBytes),
+	)
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-LedgerForge-Signature", signature)
+	req.Header.Set("X-LedgerForge-Timestamp", timestamp)
+
+	for key, value := range conf.Notification.Webhook.Headers {
+		req.Header.Set(key, value)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		logrus.Warnf("Webhook failed with status %d", resp.StatusCode)
+		return nil
+	}
+
+	return nil
+}
+
+// SendWebhook enqueues a webhook notification task using the LedgerForge instance's asynq client.
+//
+// Parameters:
+// - newWebhook NewWebhook: The webhook notification data to enqueue.
+//
+// Returns:
+// - error: An error if the task could not be enqueued.
+func (b *LedgerForge) SendWebhook(newWebhook NewWebhook) error {
+	conf := b.Config()
+
+	if conf.Notification.Webhook.Url == "" {
+		return nil
+	}
+
+	payload, err := json.Marshal(newWebhook)
+	if err != nil {
+		return err
+	}
+	taskOptions := []asynq.Option{asynq.Queue(conf.Queue.WebhookQueue)}
+	task := asynq.NewTask(conf.Queue.WebhookQueue, payload, taskOptions...)
+	info, err := b.asynqClient.Enqueue(task)
+	if err != nil {
+		logrus.Error(err, info)
+		return err
+	}
+	return err
+}
+
+// ProcessWebhook processes a webhook notification task from the queue.
+//
+// Parameters:
+// - _ context.Context: The context for the operation.
+// - task *asynq.Task: The task containing the webhook notification data.
+//
+// Returns:
+// - error: An error if the webhook processing fails.
+func (b *LedgerForge) ProcessWebhook(_ context.Context, task *asynq.Task) error {
+	conf, err := config.Fetch()
+	if err != nil {
+		return err
+	}
+
+	if conf.Notification.Webhook.Url == "" {
+		return nil
+	}
+	var payload NewWebhook
+	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+		logrus.Errorf("Error unmarshaling task payload: %v", err)
+		return err
+	}
+	err = processHTTP(payload, b.httpClient)
+	if err != nil {
+		return err
+	}
+	return nil
+}

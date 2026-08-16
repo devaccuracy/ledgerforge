@@ -10,7 +10,7 @@ COPY . .
 
 ARG TARGETOS=linux
 ARG TARGETARCH
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=${TARGETARCH:-$(go env GOARCH)} go build -o /ledgerforge ./cmd/*.go
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=${TARGETARCH:-$(go env GOARCH)} go build -o /ledgerforge ./cmd/ledgerforge
 
 FROM postgres:16-bookworm
 
@@ -20,4 +20,4 @@ COPY --from=build-env /ledgerforge /usr/local/bin/ledgerforge
 
 CMD ["ledgerforge", "start"]
 
-EXPOSE 8080
+EXPOSE 5001

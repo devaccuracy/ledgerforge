@@ -19,7 +19,7 @@ import (
 	"net/http"
 
 	"github.com/devaccuracy/ledgerforge/internal/apierror"
-	backups "github.com/devaccuracy/ledgerforge/internal/pg-backups"
+	backups "github.com/devaccuracy/ledgerforge/internal/pgbackups"
 	"github.com/gin-gonic/gin"
 )
 

@@ -1,0 +1,30 @@
+package core
+
+import (
+	"os"
+	"testing"
+
+	"github.com/alicebob/miniredis/v2"
+)
+
+var testRedisServer *miniredis.Miniredis
+
+func TestMain(m *testing.M) {
+	var err error
+	testRedisServer, err = miniredis.Run()
+	if err != nil {
+		panic(err)
+	}
+
+	code := m.Run()
+
+	testRedisServer.Close() // miniredis Close() does not return an error
+	os.Exit(code)
+}
+
+func testRedisAddr() string {
+	if testRedisServer == nil {
+		panic("test redis server is not initialized")
+	}
+	return testRedisServer.Addr()
+}

@@ -23,7 +23,7 @@ import (
 
 	"github.com/devaccuracy/ledgerforge/config"
 	"github.com/devaccuracy/ledgerforge/internal/cache"
-	pgconn "github.com/devaccuracy/ledgerforge/internal/pg-conn"
+	pgconn "github.com/devaccuracy/ledgerforge/internal/pgconn"
 	"github.com/sirupsen/logrus"
 )
 

@@ -87,6 +87,7 @@ type BalanceTracker struct {
 	Frequencies map[string]int
 	Mutex       sync.Mutex
 }
+
 // AlertCondition specifies the field, operator, value, and precision for a balance monitor alert threshold.
 type AlertCondition struct {
 	Value        float64  `json:"value"`

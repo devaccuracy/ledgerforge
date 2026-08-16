@@ -20,19 +20,31 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: 1.25.0
+          cache: true
 
-      - name: Tidy
-        run: go mod tidy
+      - name: Verify module metadata
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: Verify formatting
+        run: test -z "$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
+
+      - name: Vet
+        run: go vet ./...
 
       - name: Build
-        run: go build ./cmd/*.go
+        run: go build ./...
+
+      - name: Race-detector test suite
+        run: go test -race -short ./...
 
   test:
     runs-on: ubuntu-latest
 
     services:
       postgres:
-        image: postgres:latest
+        image: postgres:16
         env:
           POSTGRES_DB: ledgerforge
           POSTGRES_USER: postgres
@@ -46,7 +58,7 @@ jobs:
           --health-retries 5
 
       redis:
-        image: redis:latest
+        image: redis:7.2.4
         ports:
           - 6379:6379
         options: >-
@@ -62,12 +74,10 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: 1.25.0
-
-      - name: Tidy
-        run: go mod tidy
+          cache: true
 
       - name: Migrate Database
-        run: go run ./cmd migrate up
+        run: go run ./cmd/ledgerforge migrate up
         env:
           LEDGERFORGE_DATA_SOURCE_DNS: postgres://postgres@localhost:5432/ledgerforge?sslmode=disable
           LEDGERFORGE_REDIS_DNS: localhost:6379

@@ -62,7 +62,7 @@ docker compose up
 Build and run the CLI directly:
 
 ```bash
-go build -o ledgerforge ./cmd/*.go
+go build -o ledgerforge ./cmd/ledgerforge
 ./ledgerforge --help
 ```
 

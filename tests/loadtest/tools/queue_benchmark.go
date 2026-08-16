@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	redis_db "github.com/devaccuracy/ledgerforge/internal/redis-db"
+	redis_db "github.com/devaccuracy/ledgerforge/internal/redisdb"
 	"github.com/hibiken/asynq"
 )
 

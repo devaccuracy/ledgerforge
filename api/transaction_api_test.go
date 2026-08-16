@@ -30,7 +30,7 @@ import (
 	model2 "github.com/devaccuracy/ledgerforge/api/model"
 	"github.com/devaccuracy/ledgerforge/config"
 	"github.com/devaccuracy/ledgerforge/database"
-	redis_db "github.com/devaccuracy/ledgerforge/internal/redis-db"
+	redis_db "github.com/devaccuracy/ledgerforge/internal/redisdb"
 	"github.com/devaccuracy/ledgerforge/internal/request"
 	"github.com/hibiken/asynq"
 

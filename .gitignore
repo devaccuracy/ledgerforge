@@ -9,3 +9,5 @@ dump.rdb
 heartbeat.db
 .claude
 CLAUDE.md
+__pycache__/
+*.py[cod]

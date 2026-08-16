@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/devaccuracy/ledgerforge/internal/request"
@@ -101,11 +102,24 @@ func SlackNotification(err error) {
 // WebhookSender defines a function signature for sending webhooks.
 type WebhookSender func(event string, payload interface{}) error
 
-var webhookSender WebhookSender
+var (
+	webhookSender   WebhookSender
+	webhookSenderMu sync.RWMutex
+)
 
 // RegisterWebhookSender registers a function to handle webhook sending.
 func RegisterWebhookSender(sender WebhookSender) {
+	webhookSenderMu.Lock()
+	defer webhookSenderMu.Unlock()
+
 	webhookSender = sender
+}
+
+func registeredWebhookSender() WebhookSender {
+	webhookSenderMu.RLock()
+	defer webhookSenderMu.RUnlock()
+
+	return webhookSender
 }
 
 // NotifyError sends an error notification through the configured notification system.
@@ -133,12 +147,13 @@ func NotifyError(systemError error) {
 		}
 
 		// If a webhook sender is registered and webhook URL is configured, send the webhook
-		if webhookSender != nil && conf.Notification.Webhook.Url != "" {
+		sender := registeredWebhookSender()
+		if sender != nil && conf.Notification.Webhook.Url != "" {
 			payload := map[string]interface{}{
 				"error": systemError.Error(),
 				"time":  time.Now(),
 			}
-			err := webhookSender("system.error", payload)
+			err := sender("system.error", payload)
 			if err != nil {
 				logrus.Errorf("Error sending webhook notification: %v", err)
 			}

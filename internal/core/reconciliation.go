@@ -1,0 +1,1491 @@
+/*
+Copyright 2024 Blnk Finance Authors.
+Copyright 2025 LedgerForge Contributors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package core
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"math"
+	"math/big"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/devaccuracy/ledgerforge/config"
+	"github.com/devaccuracy/ledgerforge/database"
+	"github.com/devaccuracy/ledgerforge/internal/files"
+	"github.com/devaccuracy/ledgerforge/internal/notification"
+	"github.com/devaccuracy/ledgerforge/model"
+	"github.com/sirupsen/logrus"
+	"github.com/texttheater/golang-levenshtein/levenshtein"
+	"github.com/wacul/ptr"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
+)
+
+// Status constants representing the various states a process can be in.
+const (
+	StatusStarted    = "started"     // Indicates the process has started.
+	StatusInProgress = "in_progress" // Indicates the process is ongoing.
+	StatusCompleted  = "completed"   // Indicates the process is finished successfully.
+	StatusFailed     = "failed"      // Indicates the process has failed.
+)
+
+// transactionProcessor represents the processor for handling reconciliation-related transactions.
+// Fields:
+// - reconciliation: The reconciliation object that holds transaction data to be processed.
+// - progress: Tracks the progress of the reconciliation process.
+// - reconciler: A function that handles the reconciliation logic for a batch of transactions.
+// - matches: Counter for transactions that have been successfully matched.
+// - unmatched: Counter for transactions that couldn't be matched.
+// - datasource: The interface for database operations, enabling interaction with the data source.
+// - progressSaveCount: The number of transactions processed before saving progress.
+type transactionProcessor struct {
+	reconciliation    model.Reconciliation
+	progress          model.ReconciliationProgress
+	reconciler        reconciler
+	matches           int
+	unmatched         int
+	datasource        database.IDataSource
+	progressSaveCount int
+	ledgerforge       *LedgerForge
+}
+
+// reconciler defines the function type for reconciling a batch of transactions.
+// It accepts a context, and a slice of transactions, and returns the matched transactions and unmatched ones.
+type reconciler func(ctx context.Context, txns []*model.Transaction) ([]model.Match, []string)
+
+// contains checks whether a slice contains a specific string.
+// Parameters:
+// - slice: The slice to check.
+// - item: The item to look for in the slice.
+// Returns:
+// - bool: True if the item is found in the slice, otherwise false.
+func contains(slice []string, item string) bool {
+	for _, a := range slice {
+		if a == item {
+			return true
+		}
+	}
+	return false
+}
+
+// UploadExternalData handles the process of uploading external data by detecting file type, parsing, and storing it.
+// Parameters:
+// - ctx: The context for controlling execution.
+// - source: The source of the external data.
+// - reader: An io.Reader for reading the data.
+// - filename: The name of the file being uploaded.
+// Returns:
+// - string: The ID of the upload.
+// - int: The total number of records processed.
+// - error: If any step of the process fails.
+func (s *LedgerForge) UploadExternalData(ctx context.Context, source string, reader io.Reader, filename string) (string, int, error) {
+	return files.UploadExternalData(ctx, source, reader, filename, func(ctx context.Context, uploadID string, txn model.ExternalTransaction) error {
+		return s.storeExternalTransaction(ctx, uploadID, txn)
+	})
+}
+
+// storeExternalTransaction stores an external transaction in the datasource.
+// Parameters:
+// - ctx: The context for controlling execution.
+// - uploadID: The unique ID of the current upload.
+// - txn: The external transaction to store.
+// Returns:
+// - error: If storing the transaction fails.
+func (s *LedgerForge) storeExternalTransaction(ctx context.Context, uploadID string, txn model.ExternalTransaction) error {
+	return s.datasource.RecordExternalTransaction(ctx, &txn, uploadID)
+}
+
+// postReconciliationActions queues the indexing of reconciliation data in the background.
+// This allows the reconciliation to be indexed without blocking the main process.
+// Parameters:
+// - ctx: The context for controlling execution.
+// - reconciliation: The reconciliation object to be indexed.
+func (l *LedgerForge) postReconciliationActions(_ context.Context, reconciliation model.Reconciliation) {
+	go func() {
+		// Queue the reconciliation data for indexing.
+		err := l.queue.queueIndexData(reconciliation.ReconciliationID, "reconciliations", reconciliation)
+		if err != nil {
+			// If there is an error, notify through the notification system.
+			notification.NotifyError(err)
+		}
+	}()
+}
+
+// StartReconciliation initiates the reconciliation process by creating a new reconciliation entry and starting the
+// process asynchronously. The process is detached to run in the background.
+// Parameters:
+// - ctx: The context controlling the reconciliation process.
+// - uploadID: The ID of the uploaded transaction file to reconcile.
+// - strategy: The reconciliation strategy to be used (e.g., "one_to_one").
+// - groupCriteria: Criteria to group transactions (optional).
+// - matchingRuleIDs: The IDs of the rules used for matching transactions.
+// - isDryRun: If true, the reconciliation will not commit changes (useful for testing).
+// Returns:
+// - string: The ID of the reconciliation process.
+// - error: If the reconciliation fails to start.
+func (s *LedgerForge) StartReconciliation(ctx context.Context, uploadID string, strategy string, groupCriteria string, matchingRuleIDs []string, isDryRun bool) (string, error) {
+	// Generate a unique ID for the reconciliation.
+	reconciliationID := model.GenerateUUIDWithSuffix("recon")
+	// Initialize a new reconciliation object with the provided parameters.
+	reconciliation := model.Reconciliation{
+		ReconciliationID: reconciliationID,
+		UploadID:         uploadID,
+		Status:           StatusStarted,
+		StartedAt:        time.Now(),
+		IsDryRun:         isDryRun,
+	}
+
+	// Record the reconciliation in the data source (e.g., database).
+	if err := s.datasource.RecordReconciliation(ctx, &reconciliation); err != nil {
+		return "", err
+	}
+
+	// Detach the context to allow the reconciliation process to run in the background.
+	detachedCtx := context.Background()
+	ctxWithTrace := trace.ContextWithSpan(detachedCtx, trace.SpanFromContext(ctx))
+
+	// Start the reconciliation process asynchronously.
+	go func() {
+		err := s.processReconciliation(ctxWithTrace, reconciliation, strategy, groupCriteria, matchingRuleIDs)
+		if err != nil {
+			// If an error occurs during the reconciliation, log it and update the reconciliation status to "failed".
+			logrus.Errorf("Error in reconciliation process: %v", err)
+			err := s.datasource.UpdateReconciliationStatus(ctxWithTrace, reconciliationID, StatusFailed, 0, 0)
+			if err != nil {
+				logrus.Errorf("Error updating reconciliation status: %v", err)
+			}
+		}
+	}()
+
+	return reconciliationID, nil
+}
+
+// StartInstantReconciliation initiates a reconciliation process directly with provided transactions
+// instead of loading them from an uploaded file.
+// Parameters:
+// - ctx: The context controlling the reconciliation process.
+// - externalTransactions: The array of external transactions to reconcile.
+// - strategy: The reconciliation strategy to be used (e.g., "one_to_one").
+// - groupCriteria: Criteria to group transactions (optional).
+// - matchingRuleIDs: The IDs of the rules used for matching transactions.
+// - isDryRun: If true, the reconciliation will not commit changes (useful for testing).
+// Returns:
+// - string: The ID of the reconciliation process.
+// - error: If the reconciliation fails to start.
+func (s *LedgerForge) StartInstantReconciliation(ctx context.Context, externalTransactions []model.ExternalTransaction,
+	strategy string, groupCriteria string, matchingRuleIDs []string, isDryRun bool,
+) (string, error) {
+	// Generate a unique ID for the reconciliation
+	reconciliationID := model.GenerateUUIDWithSuffix("recon")
+
+	// Use a temporary ID for the transactions
+	tempID := model.GenerateUUIDWithSuffix("instant")
+
+	// Initialize a new reconciliation object with the provided parameters
+	reconciliation := model.Reconciliation{
+		ReconciliationID: reconciliationID,
+		UploadID:         tempID,
+		Status:           StatusStarted,
+		StartedAt:        time.Now(),
+		IsDryRun:         isDryRun,
+	}
+
+	// Record the reconciliation in the data source
+	if err := s.datasource.RecordReconciliation(ctx, &reconciliation); err != nil {
+		return "", err
+	}
+
+	// Store the provided transactions in the database with the temporary ID
+	for _, txn := range externalTransactions {
+		if err := s.storeExternalTransaction(ctx, tempID, txn); err != nil {
+			// Log error and update reconciliation status
+			logrus.Errorf("Error storing transaction: %v", err)
+			err := s.datasource.UpdateReconciliationStatus(ctx, reconciliationID, StatusFailed, 0, 0)
+			if err != nil {
+				logrus.Errorf("Error updating reconciliation status: %v", err)
+				return "", fmt.Errorf("failed to store external transaction: %w", err)
+			}
+			return "", fmt.Errorf("failed to store external transaction: %w", err)
+		}
+	}
+
+	// Detach the context to allow the reconciliation process to run in the background
+	detachedCtx := context.Background()
+	ctxWithTrace := trace.ContextWithSpan(detachedCtx, trace.SpanFromContext(ctx))
+
+	// Start the reconciliation process asynchronously
+	go func() {
+		err := s.processReconciliation(ctxWithTrace, reconciliation, strategy, groupCriteria, matchingRuleIDs)
+		if err != nil {
+			// If an error occurs during the reconciliation, log it and update the reconciliation status to "failed"
+			logrus.Errorf("Error in instant reconciliation process: %v", err)
+			err := s.datasource.UpdateReconciliationStatus(ctxWithTrace, reconciliationID, StatusFailed, 0, 0)
+			if err != nil {
+				logrus.Errorf("Error updating reconciliation status: %v", err)
+			}
+		}
+	}()
+
+	return reconciliationID, nil
+}
+
+// GetReconciliation retrieves a reconciliation by its ID.
+// Parameters:
+// - ctx: The context controlling the request.
+// - reconciliationID: The ID of the reconciliation to retrieve.
+// Returns:
+// - *model.Reconciliation: The retrieved reconciliation object.
+// - error: If the reconciliation cannot be found or if retrieval fails.
+func (s *LedgerForge) GetReconciliation(ctx context.Context, reconciliationID string) (*model.Reconciliation, error) {
+	reconciliation, err := s.datasource.GetReconciliation(ctx, reconciliationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve reconciliation: %w", err)
+	}
+
+	return reconciliation, nil
+}
+
+// matchesRules checks whether an external transaction matches a group transaction based on specified matching rules.
+// It iterates through the rules and criteria, evaluating whether the transactions meet the conditions for a match.
+// Parameters:
+// - externalTxn: The external transaction to match.
+// - groupTxn: The internal or group transaction to compare against.
+// - rules: A list of matching rules containing criteria to apply.
+// Returns:
+// - bool: True if the transactions match based on the rules, otherwise false.
+func (s *LedgerForge) matchesRules(externalTxn *model.Transaction, groupTxn model.Transaction, rules []model.MatchingRule) bool {
+	for _, rule := range rules {
+		allCriteriaMet := true
+		// Iterate through each rule's criteria to check if all conditions are satisfied.
+		for _, criteria := range rule.Criteria {
+			var criterionMet bool
+			// Check each field specified in the criteria.
+			switch criteria.Field {
+			case "amount":
+				// Compare amounts between the external and group transactions.
+				criterionMet = s.matchesGroupAmount(externalTxn.Amount, groupTxn.Amount, criteria)
+			case "date":
+				// Compare the dates of the transactions.
+				criterionMet = s.matchesGroupDate(externalTxn.CreatedAt, groupTxn.CreatedAt, criteria)
+			case "description":
+				// Compare the description fields for a match.
+				criterionMet = s.matchesString(externalTxn.Description, groupTxn.Description, criteria)
+			case "reference":
+				// Compare the transaction references for a match.
+				criterionMet = s.matchesString(externalTxn.Reference, groupTxn.Reference, criteria)
+			case "currency":
+				// Compare the currencies of the transactions.
+				criterionMet = s.matchesCurrency(externalTxn.Currency, groupTxn.Currency, criteria)
+			}
+			// If any criterion is not met, mark the rule as not satisfied.
+			if !criterionMet {
+				allCriteriaMet = false
+				break
+			}
+		}
+		// If all criteria are satisfied, return true (the transactions match).
+		if allCriteriaMet {
+			return true
+		}
+	}
+	return false
+}
+
+// loadReconciliationProgress retrieves the progress of a reconciliation process.
+// Parameters:
+// - ctx: The context controlling the request.
+// - reconciliationID: The ID of the reconciliation to load progress for.
+// Returns:
+// - model.ReconciliationProgress: The current progress of the reconciliation.
+// - error: If the progress cannot be retrieved.
+func (s *LedgerForge) loadReconciliationProgress(ctx context.Context, reconciliationID string) (model.ReconciliationProgress, error) {
+	return s.datasource.LoadReconciliationProgress(ctx, reconciliationID)
+}
+
+// processReconciliation manages the full reconciliation process by executing each step: updating the status,
+// fetching rules, processing transactions, and finalizing the reconciliation.
+// Parameters:
+// - ctx: The context controlling the process.
+// - reconciliation: The reconciliation object representing the current reconciliation.
+// - strategy: The reconciliation strategy (e.g., one-to-one, one-to-many).
+// - groupCriteria: Criteria for grouping transactions (optional).
+// - matchingRuleIDs: A list of matching rule IDs to apply during the process.
+// Returns:
+// - error: If any step in the reconciliation process fails.
+func (s *LedgerForge) processReconciliation(ctx context.Context, reconciliation model.Reconciliation, strategy string, groupCriteria string, matchingRuleIDs []string) error {
+	// Update the reconciliation status to "in progress".
+	if err := s.updateReconciliationStatus(ctx, reconciliation.ReconciliationID, StatusInProgress); err != nil {
+		return fmt.Errorf("failed to update reconciliation status: %w", err)
+	}
+
+	// Retrieve the matching rules that apply to the reconciliation.
+	matchingRules, err := s.getMatchingRules(ctx, matchingRuleIDs)
+	if err != nil {
+		return fmt.Errorf("failed to get matching rules: %w", err)
+	}
+
+	// Initialize the reconciliation progress.
+	progress, err := s.initializeReconciliationProgress(ctx, reconciliation.ReconciliationID)
+	if err != nil {
+		return fmt.Errorf("failed to initialize reconciliation progress: %w", err)
+	}
+
+	// Create the reconciler function based on the strategy and rules.
+	reconciler := s.createReconciler(strategy, reconciliation.UploadID, groupCriteria, matchingRules)
+
+	// Create a transaction processor to handle the reconciliation logic.
+	processor := s.createTransactionProcessor(reconciliation, progress, reconciler)
+
+	// Process the transactions for reconciliation based on the chosen strategy.
+	err = s.processTransactions(ctx, reconciliation.UploadID, processor, strategy)
+	if err != nil {
+		return fmt.Errorf("failed to process transactions: %w", err)
+	}
+
+	// After processing, retrieve the results (matched and unmatched counts).
+	matched, unmatched := processor.getResults()
+
+	// Finalize the reconciliation by updating the status and recording the results.
+	return s.finalizeReconciliation(ctx, reconciliation, matched, unmatched)
+}
+
+// updateReconciliationStatus updates the status of a reconciliation process in the database.
+// Parameters:
+// - ctx: The context controlling the request.
+// - reconciliationID: The ID of the reconciliation.
+// - status: The new status to set.
+// Returns:
+// - error: If the status update fails.
+func (s *LedgerForge) updateReconciliationStatus(ctx context.Context, reconciliationID, status string) error {
+	return s.datasource.UpdateReconciliationStatus(ctx, reconciliationID, status, 0, 0)
+}
+
+// initializeReconciliationProgress initializes or retrieves the progress of a reconciliation.
+// If no progress exists, it creates a new progress entry.
+// Parameters:
+// - ctx: The context controlling the request.
+// - reconciliationID: The ID of the reconciliation.
+// Returns:
+// - model.ReconciliationProgress: The current or newly initialized progress.
+// - error: If the initialization or retrieval fails.
+func (s *LedgerForge) initializeReconciliationProgress(ctx context.Context, reconciliationID string) (model.ReconciliationProgress, error) {
+	progress, err := s.loadReconciliationProgress(ctx, reconciliationID)
+	if err != nil {
+		logrus.Errorf("Error loading reconciliation progress: %v", err)
+		return model.ReconciliationProgress{}, nil
+	}
+	return progress, nil
+}
+
+// createReconciler creates a reconciler function based on the specified strategy, group criteria, and matching rules.
+// Parameters:
+// - strategy: The reconciliation strategy (e.g., one-to-one, one-to-many).
+// - groupCriteria: Criteria for grouping transactions (optional).
+// - matchingRules: A list of matching rules to apply during reconciliation.
+// Returns:
+// - reconciler: A function that performs reconciliation according to the specified strategy.
+func (s *LedgerForge) createReconciler(strategy string, uploadID string, groupCriteria string, matchingRules []model.MatchingRule) reconciler {
+	return func(ctx context.Context, txns []*model.Transaction) ([]model.Match, []string) {
+		switch strategy {
+		case "one_to_one":
+			// Perform one-to-one reconciliation.
+			return s.oneToOneReconciliation(ctx, txns, matchingRules)
+		case "one_to_many":
+			// Perform one-to-many reconciliation.
+			return s.oneToManyReconciliation(ctx, txns, groupCriteria, matchingRules, false)
+		case "many_to_one":
+			// Perform many-to-one reconciliation.
+			return s.manyToOneReconciliation(ctx, txns, uploadID, groupCriteria, matchingRules, true)
+		default:
+			logrus.WithField("strategy", strategy).Warn("unsupported reconciliation strategy")
+			return nil, nil
+		}
+	}
+}
+
+// createTransactionProcessor creates a new transaction processor for the reconciliation.
+// Parameters:
+// - reconciliation: The reconciliation object representing the current process.
+// - progress: The current progress of the reconciliation.
+// - reconciler: The reconciler function to apply.
+// Returns:
+// - *transactionProcessor: The created transaction processor.
+func (s *LedgerForge) createTransactionProcessor(reconciliation model.Reconciliation, progress model.ReconciliationProgress, reconciler func(ctx context.Context, txns []*model.Transaction) ([]model.Match, []string)) *transactionProcessor {
+	conf, err := config.Fetch()
+	if err != nil {
+		logrus.Errorf("Error fetching configuration: %v", err)
+	}
+	return &transactionProcessor{
+		reconciliation:    reconciliation,
+		progress:          progress,
+		reconciler:        reconciler,
+		datasource:        s.datasource,
+		progressSaveCount: conf.Reconciliation.ProgressInterval,
+		ledgerforge:       s,
+	}
+}
+
+// process handles individual transaction processing, applying the reconciliation logic and recording results.
+// It also updates internal transaction metadata asynchronously when matches are found.
+// Parameters:
+// - ctx: The context controlling the request.
+// - txn: The transaction to process.
+// Returns:
+// - error: If processing or recording results fails.
+func (tp *transactionProcessor) process(ctx context.Context, txn *model.Transaction) error {
+	// Reconcile the batch of transactions and get matches and unmatched transactions.
+	batchMatches, batchUnmatched := tp.reconciler(ctx, []*model.Transaction{txn})
+
+	// Increment the counters for matched and unmatched transactions.
+	tp.matches += len(batchMatches)
+	tp.unmatched += len(batchUnmatched)
+
+	// If the reconciliation is not a dry run, record the matches and unmatched transactions.
+	if !tp.reconciliation.IsDryRun {
+		if len(batchMatches) > 0 {
+			// Record the matched transactions.
+			if err := tp.datasource.RecordMatches(ctx, tp.reconciliation.ReconciliationID, batchMatches); err != nil {
+				return err
+			}
+
+			// Asynchronously update the metadata for each matched internal transaction
+			go tp.updateMatchedTransactionsMetadata(context.Background(), batchMatches)
+		}
+
+		if len(batchUnmatched) > 0 {
+			// Record the unmatched transactions.
+			if err := tp.datasource.RecordUnmatched(ctx, tp.reconciliation.ReconciliationID, batchUnmatched); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Update the progress with the last processed transaction ID and increment the processed count.
+	tp.progress.LastProcessedExternalTxnID = txn.TransactionID
+	tp.progress.ProcessedCount++
+
+	// Periodically save the reconciliation progress.
+	if tp.progress.ProcessedCount%tp.progressSaveCount == 0 {
+		if err := tp.datasource.SaveReconciliationProgress(ctx, tp.reconciliation.ReconciliationID, tp.progress); err != nil {
+			logrus.Errorf("Error saving reconciliation progress: %v", err)
+		}
+	}
+
+	return nil
+}
+
+// updateMatchedTransactionsMetadata updates the metadata for internal transactions that were matched.
+// This function adds reconciliation information to the internal transaction's metadata.
+// Parameters:
+// - ctx: The context controlling the operation.
+// - matches: The list of matches to process.
+func (tp *transactionProcessor) updateMatchedTransactionsMetadata(ctx context.Context, matches []model.Match) {
+	for _, match := range matches {
+		// Prepare metadata with reconciliation information
+		metadata := map[string]interface{}{
+			"reconciled":            true,
+			"reconciliation_id":     tp.reconciliation.ReconciliationID,
+			"reconciled_at":         time.Now().Format(time.RFC3339),
+			"external_txn_id":       match.ExternalTransactionID,
+			"reconciliation_amount": match.Amount,
+		}
+
+		// Update the internal transaction's metadata
+		err := tp.ledgerforge.updateEntityMetadata(ctx, "transactions", match.InternalTransactionID, metadata)
+		if err != nil {
+			logrus.Errorf("Error updating metadata for transaction %s: %v", match.InternalTransactionID, err)
+		}
+	}
+}
+
+// getResults returns the total counts of matched and unmatched transactions processed during reconciliation.
+// Returns:
+// - int: The count of matched transactions.
+// - int: The count of unmatched transactions.
+func (tp *transactionProcessor) getResults() (int, int) {
+	return tp.matches, tp.unmatched
+}
+
+// processTransactions processes the transactions in batches, applying the reconciliation logic for each transaction.
+// Parameters:
+// - ctx: The context controlling the request.
+// - uploadID: The ID of the uploaded transaction file to reconcile.
+// - processor: The transaction processor handling the reconciliation logic.
+// - strategy: The reconciliation strategy to apply.
+// Returns:
+// - error: If any error occurs during processing.
+func (s *LedgerForge) processTransactions(ctx context.Context, uploadID string, processor *transactionProcessor, strategy string) error {
+	conf, err := config.Fetch()
+	if err != nil {
+		return err
+	}
+	processedCount := 0
+	var transactionProcessor getTxns
+	// Use different transaction retrieval methods depending on the strategy.
+	if strategy == "many_to_one" {
+		transactionProcessor = s.getInternalTransactionsPaginated
+	} else {
+		transactionProcessor = s.getExternalTransactionsPaginated
+	}
+
+	// Process the transactions in batches.
+	_, err = s.ProcessTransactionInBatches(
+		ctx,
+		uploadID,
+		big.NewInt(0),
+		conf.Transaction.MaxWorkers,
+		false, // Stream mode is disabled.
+		transactionProcessor,
+		func(ctx context.Context, txns <-chan *model.Transaction, results chan<- BatchJobResult, wg *sync.WaitGroup, _ *big.Int) {
+			defer wg.Done()
+			for txn := range txns {
+				if err := processor.process(ctx, txn); err != nil {
+					logrus.Errorf("Error processing transaction %s: %v", txn.TransactionID, err)
+					results <- BatchJobResult{Error: err}
+					return
+				}
+				processedCount++
+				if processedCount%10 == 0 {
+					logrus.Infof("Processed %d transactions", processedCount)
+				}
+				results <- BatchJobResult{}
+			}
+		},
+	)
+	logrus.Infof("Total transactions processed: %d", processedCount)
+	return err
+}
+
+// finalizeReconciliation finalizes the reconciliation process by updating its status and recording the final match/unmatch counts.
+// Parameters:
+// - ctx: The context controlling the request.
+// - reconciliation: The reconciliation object representing the current process.
+// - matchCount: The number of matched transactions.
+// - unmatchedCount: The number of unmatched transactions.
+// Returns:
+// - error: If any error occurs during finalization.
+func (s *LedgerForge) finalizeReconciliation(ctx context.Context, reconciliation model.Reconciliation, matchCount, unmatchedCount int) error {
+	// Update the reconciliation status to "completed".
+	reconciliation.Status = StatusCompleted
+	reconciliation.UnmatchedTransactions = unmatchedCount
+	reconciliation.MatchedTransactions = matchCount
+	reconciliation.CompletedAt = ptr.Time(time.Now())
+
+	logrus.Infof("Finalizing reconciliation. Matches: %d, Unmatched: %d", matchCount, unmatchedCount)
+
+	if !reconciliation.IsDryRun {
+		s.postReconciliationActions(ctx, reconciliation)
+	} else {
+		logrus.Infof("Dry run completed. Matches: %d, Unmatched: %d", matchCount, unmatchedCount)
+	}
+
+	// Update the final reconciliation status and counts in the data source.
+	err := s.datasource.UpdateReconciliationStatus(ctx, reconciliation.ReconciliationID, StatusCompleted, matchCount, unmatchedCount)
+	if err != nil {
+		logrus.Errorf("Error updating reconciliation status: %v", err)
+		return err
+	}
+
+	logrus.Infof("Reconciliation %s completed. Total matches: %d, Total unmatched: %d", reconciliation.ReconciliationID, matchCount, unmatchedCount)
+
+	return nil
+}
+
+// oneToOneReconciliation performs a one-to-one reconciliation, where each external transaction is matched against
+// a single internal transaction. The process is parallelized using goroutines.
+// Parameters:
+// - ctx: Context for managing cancellation and timeouts.
+// - externalTxns: The list of external transactions to be reconciled.
+// - matchingRules: The rules used to match external transactions to internal transactions.
+// Returns:
+// - []model.Match: A list of matched transactions.
+// - []string: A list of unmatched transaction IDs.
+func (s *LedgerForge) oneToOneReconciliation(ctx context.Context, externalTxns []*model.Transaction, matchingRules []model.MatchingRule) ([]model.Match, []string) {
+	conf, err := config.Fetch()
+	if err != nil {
+		logrus.Errorf("Error fetching configuration: %v", err)
+	}
+	maxWorkers := 10 // Default
+	if conf != nil {
+		maxWorkers = conf.Transaction.MaxWorkers
+	}
+
+	var matches []model.Match
+	var unmatched []string
+
+	matchChan := make(chan model.Match, len(externalTxns)) // Channel to collect matched transactions.
+	unmatchedChan := make(chan string, len(externalTxns))  // Channel to collect unmatched transactions.
+	var wg sync.WaitGroup                                  // WaitGroup to manage concurrent goroutines.
+	sem := make(chan struct{}, maxWorkers)                 // Semaphore to limit concurrency
+
+	// Iterate over each external transaction and attempt to match it against internal transactions.
+	for _, externalTxn := range externalTxns {
+		wg.Add(1)
+		go func(extTxn *model.Transaction) {
+			defer wg.Done()
+			sem <- struct{}{}        // Acquire token
+			defer func() { <-sem }() // Release token
+
+			err := s.findMatchingInternalTransaction(ctx, extTxn, matchingRules, matchChan, unmatchedChan)
+			if err != nil {
+				unmatchedChan <- extTxn.TransactionID
+				logrus.Errorf("No match found for external transaction %s: %v", extTxn.TransactionID, err)
+			}
+		}(externalTxn)
+	}
+
+	// Close the channels after all goroutines are finished.
+	go func() {
+		wg.Wait()
+		close(matchChan)
+		close(unmatchedChan)
+	}()
+
+	// Collect matches and unmatched transactions from channels.
+	for match := range matchChan {
+		matches = append(matches, match)
+	}
+	for unmatchedID := range unmatchedChan {
+		unmatched = append(unmatched, unmatchedID)
+	}
+
+	return matches, unmatched
+}
+
+// oneToManyReconciliation performs a one-to-many reconciliation, where each external transaction can match
+// multiple internal transactions grouped by specific criteria.
+// Parameters are the same as `oneToOneReconciliation`, with additional support for grouping criteria and a flag
+// to determine if the external transactions are grouped.
+// Returns:
+// - []model.Match: A list of matched transactions.
+// - []string: A list of unmatched transaction IDs.
+func (s *LedgerForge) oneToManyReconciliation(ctx context.Context, externalTxns []*model.Transaction, groupCriteria string, matchingRules []model.MatchingRule, isExternalGrouped bool) ([]model.Match, []string) {
+	conf, err := config.Fetch()
+	if err != nil {
+		logrus.Errorf("Error fetching configuration: %v", err)
+	}
+
+	var matches []model.Match
+	var unmatched []string
+
+	matchChan := make(chan model.Match, len(externalTxns))
+	unmatchedChan := make(chan string, len(externalTxns))
+	var wg sync.WaitGroup
+
+	// Initiate the one-to-many reconciliation process.
+	err = s.oneToMany(ctx, externalTxns, matchingRules, isExternalGrouped, &wg, groupCriteria, conf.Transaction.BatchSize, matchChan, unmatchedChan)
+	if err != nil {
+		logrus.Errorf("Error in one-to-many reconciliation: %v", err)
+	}
+
+	go func() {
+		wg.Wait()
+		close(matchChan)
+		close(unmatchedChan)
+	}()
+
+	for match := range matchChan {
+		matches = append(matches, match)
+	}
+	for unmatchedID := range unmatchedChan {
+		unmatched = append(unmatched, unmatchedID)
+	}
+
+	return matches, unmatched
+}
+
+// manyToOneReconciliation performs a many-to-one reconciliation, where multiple internal transactions
+// are grouped and matched against a single external transaction.
+// Similar parameters as `oneToManyReconciliation`, but operates in reverse (many internal to one external).
+// Returns:
+// - []model.Match: A list of matched transactions.
+// - []string: A list of unmatched transaction IDs.
+func (s *LedgerForge) manyToOneReconciliation(ctx context.Context, internalTxns []*model.Transaction, uploadID string, groupCriteria string, matchingRules []model.MatchingRule, isExternalGrouped bool) ([]model.Match, []string) {
+	conf, err := config.Fetch()
+	if err != nil {
+		logrus.Errorf("Error fetching configuration: %v", err)
+	}
+
+	var matches []model.Match
+	var unmatched []string
+
+	matchChan := make(chan model.Match, len(internalTxns))
+	unmatchedChan := make(chan string, len(internalTxns))
+	var wg sync.WaitGroup
+
+	// Initiate the many-to-one reconciliation process.
+	err = s.manyToOne(ctx, internalTxns, uploadID, matchingRules, isExternalGrouped, &wg, groupCriteria, conf.Transaction.BatchSize, matchChan, unmatchedChan)
+	if err != nil {
+		logrus.Errorf("Error in many-to-one reconciliation: %v", err)
+	}
+
+	// Close channels after processing.
+	go func() {
+		wg.Wait()
+		close(matchChan)
+		close(unmatchedChan)
+	}()
+
+	for match := range matchChan {
+		matches = append(matches, match)
+	}
+	for unmatchedID := range unmatchedChan {
+		unmatched = append(unmatched, unmatchedID)
+	}
+
+	return matches, unmatched
+}
+
+// manyToOne handles the core logic of many-to-one reconciliation.
+// It groups external transactions and processes them in batches, comparing them to internal transactions.
+// Parameters:
+// - ctx: The context controlling the operation.
+// - internalTxns: The internal transactions to match against.
+// - matchingRules: The rules to apply during reconciliation.
+// - isExternalGrouped: Whether the external transactions are grouped or not.
+// - wg: The WaitGroup to manage goroutines.
+// - groupingCriteria: The criteria used to group transactions.
+// - batchSize: The size of each batch of transactions to process.
+// - matchChan: Channel to collect matched transactions.
+// - unMatchChan: Channel to collect unmatched transactions.
+// Returns:
+// - error: If any error occurs during processing.
+func (s *LedgerForge) manyToOne(ctx context.Context, internalTxns []*model.Transaction, uploadID string, matchingRules []model.MatchingRule, isExternalGrouped bool, wg *sync.WaitGroup, groupingCriteria string, batchSize int, matchChan chan model.Match, unMatchChan chan string) error {
+	offset := int64(0)
+	ctx, span := otel.Tracer("ledgerforge.reconciliation").Start(ctx, "ProcessManyToOne")
+	defer span.End()
+
+	// Loop to process transactions in batches.
+	for {
+		groupedExternalTxns, err := s.groupExternalTransactions(ctx, uploadID, groupingCriteria, batchSize, offset)
+		if err != nil {
+			logrus.Errorf("Error grouping external transactions: %v", err)
+			break
+		}
+		if len(groupedExternalTxns) == 0 {
+			span.AddEvent("No more grouped transactions to process")
+			break
+		}
+		groupMap := s.buildGroupMap(groupedExternalTxns)
+		err = s.processGroupedTransactions(internalTxns, groupedExternalTxns, groupMap, matchingRules, isExternalGrouped, wg, matchChan, unMatchChan)
+		if err != nil {
+			logrus.Errorf("Error processing grouped transactions: %v", err)
+		}
+		if len(groupMap) == 0 {
+			break
+		}
+		offset += int64(batchSize)
+	}
+	return nil
+}
+
+// groupExternalTransactions retrieves and groups external transactions based on the specified criteria.
+// This is used in many-to-one reconciliation.
+// Parameters:
+// - ctx: The context controlling the operation.
+// - groupingCriteria: The criteria to group transactions.
+// - batchSize: The number of transactions to process in each batch.
+// - offset: The offset for pagination.
+// Returns:
+// - map[string][]*model.Transaction: A map of grouped transactions.
+// - error: If there is an error retrieving the transactions.
+func (s *LedgerForge) groupExternalTransactions(ctx context.Context, uploadID string, groupingCriteria string, batchSize int, offset int64) (map[string][]*model.Transaction, error) {
+	return s.datasource.FetchAndGroupExternalTransactions(ctx, uploadID, groupingCriteria, batchSize, offset)
+}
+
+// processGroupedTransactions handles the matching of transactions for both one-to-many and many-to-one reconciliations.
+// It processes each transaction group in parallel, comparing them to the target transactions.
+// Parameters:
+// - singleTxns: The single transactions (either external or internal).
+// - groupedTxns: The grouped transactions (either internal or external).
+// - groupMap: A map indicating the groups that have not yet been matched.
+// - matchingRules: The rules to apply for matching transactions.
+// - isExternalGrouped: Whether the external transactions are grouped.
+// - wg: The WaitGroup managing goroutines.
+// - matchChan: Channel for collecting matches.
+// - unMatchChan: Channel for collecting unmatched transaction IDs.
+// Returns:
+// - error: If any error occurs during processing.
+func (s *LedgerForge) processGroupedTransactions(singleTxns []*model.Transaction, groupedTxns map[string][]*model.Transaction, groupMap map[string]bool, matchingRules []model.MatchingRule, isExternalGrouped bool, wg *sync.WaitGroup, matchChan chan model.Match, unMatchChan chan string) error {
+	conf, err := config.Fetch()
+	if err != nil {
+		logrus.Errorf("Error fetching configuration: %v", err)
+	}
+	maxWorkers := 10 // Default
+	if conf != nil {
+		maxWorkers = conf.Transaction.MaxWorkers
+	}
+	sem := make(chan struct{}, maxWorkers) // Semaphore to limit concurrency
+
+	for _, singleTxn := range singleTxns {
+		wg.Add(1)
+		go func(txn *model.Transaction) {
+			defer wg.Done()
+			sem <- struct{}{}        // Acquire token
+			defer func() { <-sem }() // Release token
+
+			matched := s.matchSingleTransaction(txn, groupedTxns, groupMap, matchingRules, isExternalGrouped, matchChan)
+			if !matched {
+				unMatchChan <- txn.TransactionID
+			}
+		}(singleTxn)
+	}
+
+	return nil
+}
+
+// matchSingleTransaction attempts to match a single transaction with a group of transactions based on matching rules.
+// If a match is found, it sends the match to the match channel and marks the group as processed.
+// Parameters:
+// - singleTxn: The single transaction to match.
+// - groupedTxns: The grouped transactions to compare against.
+// - groupMap: A map tracking unprocessed groups.
+// - matchingRules: The rules for matching transactions.
+// - isExternalGrouped: Whether the external transactions are grouped.
+// - matchChan: Channel for sending matches.
+// Returns:
+// - bool: True if a match is found, false otherwise.
+func (s *LedgerForge) matchSingleTransaction(singleTxn *model.Transaction, groupedTxns map[string][]*model.Transaction, groupMap map[string]bool, matchingRules []model.MatchingRule, isExternalGrouped bool, matchChan chan model.Match) bool {
+	for groupKey := range groupMap {
+		if s.matchesGroup(singleTxn, groupedTxns[groupKey], matchingRules) {
+			for _, groupedTxn := range groupedTxns[groupKey] {
+				var externalID, internalID string
+				if isExternalGrouped {
+					externalID = groupedTxn.TransactionID
+					internalID = singleTxn.TransactionID
+				} else {
+					externalID = singleTxn.TransactionID
+					internalID = groupedTxn.TransactionID
+				}
+				// Send the match result to the channel.
+				matchChan <- model.Match{
+					ExternalTransactionID: externalID,
+					InternalTransactionID: internalID,
+					Amount:                groupedTxn.Amount,
+					Date:                  groupedTxn.CreatedAt,
+				}
+			}
+			delete(groupMap, groupKey) // Mark the group as processed.
+			return true
+		}
+	}
+	return false
+}
+
+// oneToMany performs the core logic for one-to-many reconciliation.
+// Parameters are similar to `manyToOne`, but it processes transactions in reverse (one external to many internal).
+// Returns:
+// - error: If any error occurs during processing.
+func (s *LedgerForge) oneToMany(ctx context.Context, singleTxn []*model.Transaction, matchingRules []model.MatchingRule, isExternalGrouped bool, wg *sync.WaitGroup, groupingCriteria string, batchSize int, matchChan chan model.Match, unMatchChan chan string) error {
+	offset := int64(0)
+	ctx, span := otel.Tracer("ledgerforge.reconciliation").Start(ctx, "ProcessOneToMany")
+	defer span.End()
+
+	for {
+		txns, err := s.groupInternalTransactions(ctx, groupingCriteria, batchSize, offset)
+		if err != nil {
+			logrus.Errorf("Error grouping internal transactions: %v", err)
+			break
+		}
+		if len(txns) == 0 {
+			span.AddEvent("No more grouped transactions to process")
+			break
+		}
+		groupMap := s.buildGroupMap(txns)
+		err = s.processGroupedTransactions(singleTxn, txns, groupMap, matchingRules, isExternalGrouped, wg, matchChan, unMatchChan)
+		if err != nil {
+			logrus.Errorf("Error in one-to-many reconciliation: %v", err)
+		}
+		if len(groupMap) == 0 {
+			break
+		}
+		offset += int64(batchSize)
+	}
+	return nil
+}
+
+// buildGroupMap creates a map for tracking unprocessed transaction groups.
+// Parameters:
+// - groupedTxns: The grouped transactions.
+// Returns:
+// - map[string]bool: A map with group keys as true, indicating that they have not yet been processed.
+func (s *LedgerForge) buildGroupMap(groupedTxns map[string][]*model.Transaction) map[string]bool {
+	groupMap := make(map[string]bool)
+	for key := range groupedTxns {
+		groupMap[key] = true
+	}
+	return groupMap
+}
+
+// groupInternalTransactions groups internal transactions based on the specified criteria for reconciliation.
+// Parameters are the same as `groupExternalTransactions`.
+// Returns:
+// - map[string][]*model.Transaction: A map of grouped internal transactions.
+// - error: If any error occurs during grouping.
+func (s *LedgerForge) groupInternalTransactions(ctx context.Context, groupingCriteria string, batchSize int, offset int64) (map[string][]*model.Transaction, error) {
+	return s.datasource.GroupTransactions(ctx, groupingCriteria, batchSize, offset)
+}
+
+// findMatchingInternalTransaction attempts to find an internal transaction that matches the given external transaction.
+// It processes the transactions in batches and applies the matching rules.
+// Parameters:
+// - ctx: The context controlling the operation.
+// - externalTxn: The external transaction to match.
+// - matchingRules: The rules for matching transactions.
+// - matchChan: Channel to send matched transactions.
+// - unMatchChan: Channel to send unmatched transaction IDs.
+// Returns:
+// - error: If any error occurs during processing.
+func (s *LedgerForge) findMatchingInternalTransaction(ctx context.Context, externalTxn *model.Transaction, matchingRules []model.MatchingRule, matchChan chan model.Match, unMatchChan chan string) error {
+	conf, err := config.Fetch()
+	if err != nil {
+		return err
+	}
+
+	matchFound := false
+
+	minAmount, maxAmount, minDate, maxDate, currency := s.calculateMatchingBounds(externalTxn, matchingRules)
+
+	_, err = s.ProcessTransactionInBatches(
+		ctx,
+		externalTxn.TransactionID,
+		big.NewInt(int64(externalTxn.Amount)),
+		conf.Transaction.MaxWorkers,
+		false, // Stream mode
+		func(ctx context.Context, id string, limit int, offset int64) ([]*model.Transaction, error) {
+			return s.datasource.GetTransactionsByCriteria(ctx, minAmount, maxAmount, currency, minDate, maxDate, limit, offset)
+		},
+
+		func(ctx context.Context, jobs <-chan *model.Transaction, results chan<- BatchJobResult, wg *sync.WaitGroup, amount *big.Int) {
+			defer wg.Done()
+			for internalTxn := range jobs {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					if s.matchesRules(externalTxn, *internalTxn, matchingRules) {
+						matchChan <- model.Match{
+							ExternalTransactionID: externalTxn.TransactionID,
+							InternalTransactionID: internalTxn.TransactionID,
+							Amount:                externalTxn.Amount,
+							Date:                  externalTxn.CreatedAt,
+						}
+						matchFound = true
+						return
+					}
+				}
+			}
+		},
+	)
+	if err != nil && err != context.Canceled {
+		return err
+	}
+
+	if !matchFound {
+		select {
+		case unMatchChan <- externalTxn.TransactionID:
+		default:
+			return fmt.Errorf("failed to send unmatched transaction ID to channel")
+		}
+	}
+
+	return nil
+}
+
+// getExternalTransactionsPaginated retrieves paginated external transactions from the data source.
+// Parameters:
+// - ctx: The context controlling the request.
+// - uploadID: The ID of the upload to retrieve transactions for.
+// - limit: The maximum number of transactions to retrieve.
+// - offset: The offset for pagination.
+// Returns:
+// - []*model.Transaction: A list of external transactions converted to internal transactions.
+// - error: If any error occurs during retrieval.
+func (s *LedgerForge) getExternalTransactionsPaginated(ctx context.Context, uploadID string, limit int, offset int64) ([]*model.Transaction, error) {
+	logrus.Debugf("Fetching external transactions: uploadID=%s, limit=%d, offset=%d", uploadID, limit, offset)
+	externalTransaction, err := s.datasource.GetExternalTransactionsPaginated(ctx, uploadID, limit, int64(offset))
+	if err != nil {
+		logrus.Errorf("Error fetching external transactions: %v", err)
+		return nil, err
+	}
+	logrus.Debugf("Fetched %d external transactions", len(externalTransaction))
+	transactions := make([]*model.Transaction, len(externalTransaction))
+
+	for i, txn := range externalTransaction {
+		transactions[i] = txn.ToInternalTransaction()
+	}
+	return transactions, nil
+}
+
+// getInternalTransactionsPaginated retrieves paginated internal transactions from the data source.
+// Parameters:
+// - ctx: The context controlling the request.
+// - id: The ID of the internal transactions to retrieve.
+// - limit: The maximum number of transactions to retrieve.
+// - offset: The offset for pagination.
+// Returns:
+// - []*model.Transaction: A list of internal transactions.
+// - error: If any error occurs during retrieval.
+func (s *LedgerForge) getInternalTransactionsPaginated(ctx context.Context, id string, limit int, offset int64) ([]*model.Transaction, error) {
+	return s.datasource.GetTransactionsPaginated(ctx, "", limit, offset)
+}
+
+// matchesGroup compares a group of internal transactions with a single external transaction using matching rules.
+// If a match is found, it returns true; otherwise, it returns false.
+// Parameters:
+// - externalTxn: The external transaction to compare.
+// - group: The group of internal transactions to compare against.
+// - matchingRules: The rules for matching transactions.
+// Returns:
+// - bool: True if the group matches the external transaction, false otherwise.
+func (s *LedgerForge) matchesGroup(externalTxn *model.Transaction, group []*model.Transaction, matchingRules []model.MatchingRule) bool {
+	var totalAmount float64
+	var minDate, maxDate time.Time
+	descriptions := make([]string, 0, len(group))
+	references := make([]string, 0, len(group))
+	currencies := make(map[string]bool)
+
+	// Iterate over the group of internal transactions and accumulate information.
+	for i, internalTxn := range group {
+		totalAmount += internalTxn.Amount
+
+		if i == 0 || internalTxn.CreatedAt.Before(minDate) {
+			minDate = internalTxn.CreatedAt
+		}
+		if i == 0 || internalTxn.CreatedAt.After(maxDate) {
+			maxDate = internalTxn.CreatedAt
+		}
+
+		descriptions = append(descriptions, internalTxn.Description)
+		references = append(references, internalTxn.Reference)
+		currencies[internalTxn.Currency] = true
+	}
+
+	// Create a virtual transaction representing the group for comparison.
+	groupTxn := model.Transaction{
+		Amount:      totalAmount,
+		CreatedAt:   minDate, // Use the earliest date in the group.
+		Description: strings.Join(descriptions, " | "),
+		Reference:   strings.Join(references, " | "),
+		Currency:    s.dominantCurrency(currencies), // Determine the dominant currency in the group.
+	}
+
+	// Use the matching rules to compare the group with the external transaction.
+	return s.matchesRules(externalTxn, groupTxn, matchingRules)
+}
+
+// dominantCurrency returns the dominant currency in a group of transactions.
+// If there is only one currency, it returns that currency, otherwise, it returns "MIXED".
+func (s *LedgerForge) dominantCurrency(currencies map[string]bool) string {
+	if len(currencies) == 1 {
+		for currency := range currencies {
+			return currency
+		}
+	}
+	return "MIXED"
+}
+
+// CreateMatchingRule creates a new matching rule after validating it.
+// Parameters:
+// - ctx: The context for managing the request.
+// - rule: The matching rule to be created.
+// Returns the created rule, or an error if validation or storage fails.
+func (s *LedgerForge) CreateMatchingRule(ctx context.Context, rule model.MatchingRule) (*model.MatchingRule, error) {
+	rule.RuleID = model.GenerateUUIDWithSuffix("rule") // Generate a unique rule ID.
+	rule.CreatedAt = time.Now()
+	rule.UpdatedAt = time.Now()
+
+	// Validate the rule before storing it.
+	err := s.validateRule(&rule)
+	if err != nil {
+		return nil, err
+	}
+
+	// Store the rule in the datasource.
+	err = s.datasource.RecordMatchingRule(ctx, &rule)
+	if err != nil {
+		return nil, err
+	}
+
+	return &rule, nil
+}
+
+// GetMatchingRule retrieves a matching rule by its ID.
+// Parameters:
+// - ctx: The context for managing the request.
+// - id: The ID of the matching rule to retrieve.
+// Returns the matching rule, or an error if retrieval fails.
+func (s *LedgerForge) GetMatchingRule(ctx context.Context, id string) (*model.MatchingRule, error) {
+	rule, err := s.datasource.GetMatchingRule(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return rule, nil
+}
+
+// UpdateMatchingRule updates an existing matching rule.
+// It retrieves the existing rule, validates the new data, and then updates the rule.
+// Parameters:
+// - ctx: The context for managing the request.
+// - rule: The updated rule data.
+// Returns the updated rule, or an error if validation or update fails.
+func (s *LedgerForge) UpdateMatchingRule(ctx context.Context, rule model.MatchingRule) (*model.MatchingRule, error) {
+	// Retrieve the existing rule by its ID.
+	existingRule, err := s.GetMatchingRule(ctx, rule.RuleID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Preserve the original creation time and update the modified time.
+	rule.CreatedAt = existingRule.CreatedAt
+	rule.UpdatedAt = time.Now()
+
+	// Validate the updated rule.
+	err = s.validateRule(&rule)
+	if err != nil {
+		return nil, err
+	}
+
+	// Update the rule in the datasource.
+	err = s.datasource.UpdateMatchingRule(ctx, &rule)
+	if err != nil {
+		return nil, err
+	}
+
+	return &rule, nil
+}
+
+// DeleteMatchingRule deletes a matching rule by its ID.
+// Parameters:
+// - ctx: The context for managing the request.
+// - id: The ID of the rule to delete.
+// Returns an error if deletion fails.
+func (s *LedgerForge) DeleteMatchingRule(ctx context.Context, id string) error {
+	return s.datasource.DeleteMatchingRule(ctx, id)
+}
+
+// ListMatchingRules retrieves all matching rules.
+// Parameters:
+// - ctx: The context for managing the request.
+// Returns a list of matching rules, or an error if retrieval fails.
+func (s *LedgerForge) ListMatchingRules(ctx context.Context) ([]*model.MatchingRule, error) {
+	return s.datasource.GetMatchingRules(ctx)
+}
+
+// validateRule validates a matching rule, including checking its basic structure and criteria.
+// Parameters:
+// - rule: The rule to validate.
+// Returns an error if the rule or any of its criteria are invalid.
+func (s *LedgerForge) validateRule(rule *model.MatchingRule) error {
+	// Validate basic structure of the rule.
+	if err := s.validateRuleBasics(rule); err != nil {
+		return err
+	}
+
+	// Validate each individual criterion.
+	for _, criteria := range rule.Criteria {
+		if err := s.validateCriteria(criteria); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateRuleBasics checks that the rule has a valid name and at least one criterion.
+// Parameters:
+// - rule: The rule to validate.
+// Returns an error if the rule is missing required fields.
+func (s *LedgerForge) validateRuleBasics(rule *model.MatchingRule) error {
+	if rule.Name == "" {
+		return errors.New("rule name is required")
+	}
+
+	if len(rule.Criteria) == 0 {
+		return errors.New("at least one matching criteria is required")
+	}
+
+	return nil
+}
+
+// validateCriteria checks the validity of a criterion, including its field, operator, and drift values.
+// Parameters:
+// - criteria: The criteria to validate.
+// Returns an error if the criteria are invalid.
+func (s *LedgerForge) validateCriteria(criteria model.MatchingCriteria) error {
+	if criteria.Field == "" || criteria.Operator == "" {
+		return errors.New("field and operator are required for each criteria")
+	}
+
+	if err := s.validateOperator(criteria.Operator); err != nil {
+		return err
+	}
+
+	if err := s.validateField(criteria.Field); err != nil {
+		return err
+	}
+
+	return s.validateDrift(criteria)
+}
+
+// validateOperator checks if the provided operator is valid.
+// Parameters:
+// - operator: The operator to validate.
+// Returns an error if the operator is invalid.
+func (s *LedgerForge) validateOperator(operator string) error {
+	validOperators := []string{"equals", "greater_than", "less_than", "contains"}
+	if !contains(validOperators, operator) {
+		return errors.New("invalid operator")
+	}
+	return nil
+}
+
+// validateField checks if the provided field is valid for a matching rule.
+// Parameters:
+// - field: The field to validate.
+// Returns an error if the field is invalid.
+func (s *LedgerForge) validateField(field string) error {
+	validFields := []string{"amount", "date", "description", "reference", "currency"}
+	if !contains(validFields, field) {
+		return errors.New("invalid field")
+	}
+	return nil
+}
+
+// validateDrift checks the allowable drift for the given field and operator.
+// Drift refers to acceptable deviations (e.g., percentage for amounts or seconds for dates).
+// Parameters:
+// - criteria: The criteria to validate.
+// Returns an error if the drift is invalid.
+func (s *LedgerForge) validateDrift(criteria model.MatchingCriteria) error {
+	if criteria.Operator == "equals" {
+		switch criteria.Field {
+		case "amount":
+			if criteria.AllowableDrift < 0 || criteria.AllowableDrift > 100 {
+				return errors.New("drift for amount must be between 0 and 100 (percentage)")
+			}
+		case "date":
+			if criteria.AllowableDrift < 0 {
+				return errors.New("drift for date must be non-negative (seconds)")
+			}
+		}
+	}
+	return nil
+}
+
+// getMatchingRules retrieves a list of matching rules by their IDs.
+// Parameters:
+// - ctx: The context for managing the request.
+// - matchingRuleIDs: The list of matching rule IDs to retrieve.
+// Returns a list of matching rules, or an error if retrieval fails.
+func (s *LedgerForge) getMatchingRules(ctx context.Context, matchingRuleIDs []string) ([]model.MatchingRule, error) {
+	var rules []model.MatchingRule
+	for _, id := range matchingRuleIDs {
+		rule, err := s.GetMatchingRule(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		rules = append(rules, *rule)
+	}
+	return rules, nil
+}
+
+// matchesString compares the external and internal string values based on the matching criteria.
+// Parameters:
+// - externalValue: The value from the external transaction.
+// - internalValue: The value from the internal transaction.
+// - criteria: The matching criteria, including operator and allowable drift.
+// Returns true if the values match according to the criteria, otherwise false.
+func (s *LedgerForge) matchesString(externalValue, internalValue string, criteria model.MatchingCriteria) bool {
+	switch criteria.Operator {
+	case "equals":
+		// Check if any part of the internal value matches the external value exactly.
+		for _, part := range strings.Split(internalValue, " | ") {
+			if strings.EqualFold(externalValue, part) {
+				return true
+			}
+		}
+		return false
+	case "contains":
+		// Check if the external value is contained in any part of the internal value.
+		for _, part := range strings.Split(internalValue, " | ") {
+			if s.partialMatch(externalValue, part, criteria.AllowableDrift) {
+				return true
+			}
+		}
+		return false
+	}
+	return false
+}
+
+// partialMatch compares two strings and checks if they match within a certain allowable drift, using Levenshtein distance.
+// Parameters:
+// - str1, str2: The strings to compare.
+// - allowableDrift: The allowable difference between the two strings (as a percentage).
+// Returns true if the strings match within the allowable drift, otherwise false.
+func (s *LedgerForge) partialMatch(str1, str2 string, allowableDrift float64) bool {
+	str1 = strings.ToLower(str1) // Convert to lowercase for case-insensitive comparison.
+	str2 = strings.ToLower(str2)
+
+	// Check if either string contains the other.
+	if strings.Contains(str1, str2) || strings.Contains(str2, str1) {
+		return true
+	}
+
+	// Calculate the Levenshtein distance between the strings.
+	distance := levenshtein.DistanceForStrings([]rune(str1), []rune(str2), levenshtein.DefaultOptions)
+
+	// Calculate the maximum allowable distance based on the length of the longer string.
+	maxLength := float64(max(len(str1), len(str2)))
+	maxAllowedDistance := int(maxLength * (allowableDrift / 100))
+
+	// Return true if the distance is within the allowable drift.
+	return distance <= maxAllowedDistance
+}
+
+// matchesCurrency compares currency values, handling special cases like "MIXED" for group transactions.
+// Parameters:
+// - externalValue: The currency value from the external transaction.
+// - internalValue: The currency value from the internal transaction.
+// - criteria: The matching criteria.
+// Returns true if the currencies match, otherwise false.
+func (s *LedgerForge) matchesCurrency(externalValue, internalValue string, criteria model.MatchingCriteria) bool {
+	if internalValue == "MIXED" {
+		// TODO: Handle the special case where the internal value is "MIXED" (multiple currencies in a group).
+		return true
+	}
+	return s.matchesString(externalValue, internalValue, criteria)
+}
+
+// matchesGroupAmount compares the amount of a single external transaction with the total amount of a grouped set of internal transactions.
+// Parameters:
+// - externalAmount: The amount from the external transaction.
+// - groupAmount: The total amount from the group of internal transactions.
+// - criteria: The matching criteria, including operator and allowable drift.
+// Returns true if the amounts match according to the criteria, otherwise false.
+func (s *LedgerForge) matchesGroupAmount(externalAmount, groupAmount float64, criteria model.MatchingCriteria) bool {
+	switch criteria.Operator {
+	case "equals":
+		allowableDrift := groupAmount * criteria.AllowableDrift
+		return math.Abs(externalAmount-groupAmount) <= allowableDrift
+	case "greater_than":
+		return externalAmount > groupAmount
+	case "less_than":
+		return externalAmount < groupAmount
+	}
+	return false
+}
+
+// matchesGroupDate compares the date of a single external transaction with the earliest date in a group of internal transactions.
+// Parameters:
+// - externalDate: The date from the external transaction.
+// - groupEarliestDate: The earliest date from the group of internal transactions.
+// - criteria: The matching criteria, including operator and allowable drift.
+// Returns true if the dates match according to the criteria, otherwise false.
+func (s *LedgerForge) matchesGroupDate(externalDate, groupEarliestDate time.Time, criteria model.MatchingCriteria) bool {
+	switch criteria.Operator {
+	case "equals":
+		difference := externalDate.Sub(groupEarliestDate)
+		return math.Abs(float64(difference/time.Second)) <= criteria.AllowableDrift
+	case "after":
+		return externalDate.After(groupEarliestDate)
+	case "before":
+		return externalDate.Before(groupEarliestDate)
+	}
+	return false
+}
+
+// calculateMatchingBounds calculates the query bounds (amount, date) for matching external transactions against internal ones.
+// It iterates through matching rules to find the widest possible range that satisfies all criteria.
+func (s *LedgerForge) calculateMatchingBounds(externalTxn *model.Transaction, matchingRules []model.MatchingRule) (*float64, *float64, *time.Time, *time.Time, *string) {
+	var minAmount, maxAmount *float64
+	var minDate, maxDate *time.Time
+	var currency *string
+
+	c := externalTxn.Currency
+	currency = &c
+
+	var lowestMinAmount, highestMaxAmount float64
+	var earliestMinDate, latestMaxDate time.Time
+
+	firstAmount := true
+	firstDate := true
+	hasAmountCriteria := false
+	hasDateCriteria := false
+
+	for _, rule := range matchingRules {
+		for _, criteria := range rule.Criteria {
+			if criteria.Field == "amount" && criteria.Operator == "equals" {
+				drift := criteria.AllowableDrift // percentage
+				amt := externalTxn.Amount
+				delta := amt * (drift / 100.0)
+				low := amt - delta
+				high := amt + delta
+
+				if firstAmount {
+					lowestMinAmount = low
+					highestMaxAmount = high
+					firstAmount = false
+				} else {
+					if low < lowestMinAmount {
+						lowestMinAmount = low
+					}
+					if high > highestMaxAmount {
+						highestMaxAmount = high
+					}
+				}
+				hasAmountCriteria = true
+			}
+			if criteria.Field == "date" && criteria.Operator == "equals" {
+				drift := time.Duration(criteria.AllowableDrift) * time.Second
+				d := externalTxn.CreatedAt
+				low := d.Add(-drift)
+				high := d.Add(drift)
+
+				if firstDate {
+					earliestMinDate = low
+					latestMaxDate = high
+					firstDate = false
+				} else {
+					if low.Before(earliestMinDate) {
+						earliestMinDate = low
+					}
+					if high.After(latestMaxDate) {
+						latestMaxDate = high
+					}
+				}
+				hasDateCriteria = true
+			}
+		}
+	}
+
+	if hasAmountCriteria {
+		minAmount = &lowestMinAmount
+		maxAmount = &highestMaxAmount
+	}
+	if hasDateCriteria {
+		minDate = &earliestMinDate
+		maxDate = &latestMaxDate
+	}
+
+	return minAmount, maxAmount, minDate, maxDate, currency
+}

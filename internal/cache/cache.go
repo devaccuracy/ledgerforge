@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/devaccuracy/ledgerforge/config"
-	redis_db "github.com/devaccuracy/ledgerforge/internal/redis-db"
+	redis_db "github.com/devaccuracy/ledgerforge/internal/redisdb"
 	"github.com/go-redis/cache/v9"
 	redis "github.com/redis/go-redis/v9"
 )
