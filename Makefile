@@ -17,7 +17,7 @@ GO_FILES := $(shell find . -type f -name '*.go' -not -path './vendor/*')
 
 .PHONY: \
 	print-project init generate fmt fmt-check tidy-check vet test test-integration \
-	build verify docker-run run run-workers build-run build-test-run \
+	build build-mcp verify docker-run run run-workers build-run build-test-run \
 	migrate-up migrate-down backup backup-s3 \
 	printProject docker_run run_workers build_run build_test_run migrate_up migrate_down backup_s3
 
@@ -55,7 +55,10 @@ test-integration:
 build:
 	go build -o $(PROJECT) ./cmd/ledgerforge
 
-verify: tidy-check fmt-check vet test build
+build-mcp:
+	go build -o $(PROJECT)-mcp ./cmd/ledgerforge-mcp
+
+verify: tidy-check fmt-check vet test build build-mcp
 
 docker-run:
 	docker run -v $(CURDIR)/ledgerforge.json:/ledgerforge.json -p 5001:5001 ghcr.io/devaccuracy/ledgerforge:main

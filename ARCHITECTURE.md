@@ -9,6 +9,7 @@ make production integrations stable while allowing the ledger engine to evolve.
 | --- | --- |
 | `/` | Stable public `ledgerforge` package. It is a compatibility facade for applications importing `github.com/devaccuracy/ledgerforge`. |
 | `cmd/ledgerforge` | The LedgerForge CLI and process entry point. |
+| `cmd/ledgerforge-mcp` | Local stdio MCP server for controlled agent integration. |
 | `internal/core` | Ledger orchestration: transaction execution, balances, queues, reconciliation, lineage, and webhook workflows. |
 | `api` | HTTP transport, request/response models, routing, and authentication middleware. |
 | `database` | Persistence interfaces and PostgreSQL implementations. |
@@ -29,6 +30,9 @@ make production integrations stable while allowing the ledger engine to evolve.
 - New shared application code belongs in an existing focused package or a new
   package under `internal/`; do not add implementation files to the repository
   root.
+- MCP tools depend on the public LedgerForge service surface and do not access
+  persistence internals directly. Write tools are registered only when the
+  operator enables them.
 
 ## Validation
 

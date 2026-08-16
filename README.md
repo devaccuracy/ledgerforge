@@ -89,6 +89,20 @@ Run database migrations:
 
 LedgerForge is API-first. Teams can run the open-source Core in their own environment and integrate through the HTTP API or wrap ledger workflows in their own services.
 
+## MCP integration
+
+LedgerForge includes a local, stdio-based MCP server for secure agent and tool
+integration. It is read-only by default; state-changing tools require an
+explicit `--allow-write` opt-in.
+
+```bash
+make build-mcp
+./ledgerforge-mcp --config ./ledgerforge.json
+```
+
+See the [MCP server guide](docs/mcp.md) for client configuration and production
+access guidance.
+
 ## Development
 
 ```bash
