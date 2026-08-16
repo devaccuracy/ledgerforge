@@ -13,7 +13,7 @@ Learn more at [ledgerforge.io](https://ledgerforge.io).
 
 ## Links
 
-- Website: [ledgerforge.io](https://ledgerforge.io)
+- Docs: [ledgerforge.io](https://ledgerforge.io/docs)
 - GitHub: [github.com/devaccuracy/ledgerforge](https://github.com/devaccuracy/ledgerforge)
 - Security reports: [security@ledgerforge.io](mailto:security@ledgerforge.io)
 
