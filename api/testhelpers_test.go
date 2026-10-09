@@ -214,14 +214,6 @@ func jsonReader(s string) io.Reader {
 	return strings.NewReader(s)
 }
 
-// resetReindexManager clears the package-level reindex singleton so progress
-// tests are deterministic regardless of test order.
-func resetReindexManager() {
-	globalReindexManager.mu.Lock()
-	globalReindexManager.service = nil
-	globalReindexManager.mu.Unlock()
-}
-
 // assertErrorCode asserts the standard dual error payload: the response has
 // the given status, error_detail carries the expected catalog code, and the
 // legacy flat field is still present.

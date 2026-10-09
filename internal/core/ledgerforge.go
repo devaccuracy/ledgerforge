@@ -56,6 +56,8 @@ type LedgerForge struct {
 	hotPairs           *hotpairs.Manager
 	reconciliationOnce sync.Once
 	reconciliation     *reconciliation.Service
+	reindexOnce        sync.Once
+	reindex            *search.ReindexJobs
 }
 
 const (
