@@ -105,24 +105,15 @@ func TestSplitTransactionPrecise_PreservesInputOrder(t *testing.T) {
 	}
 }
 
-// A repeated identifier collapses to one leg carrying the merged amount, so
-// iterating the caller's slice must not emit it twice and move the money
-// twice. Every entry naming that identifier is attributed to the single leg
-// rather than one of them being left blank.
-func TestSplitTransactionPrecise_RepeatedIdentifierEmitsOneLeg(t *testing.T) {
-	txn, legs := splitFanIn(t, []Distribution{
-		{Identifier: "bln_A", Distribution: "60"},
-		{Identifier: "bln_A", Distribution: "40"},
-	})
-
-	require.Len(t, legs, 1, "a repeated identifier must not produce two legs")
-	assert.Equal(t, "bln_A", legs[0].Source)
-	assert.Equal(t, 0, legs[0].PreciseAmount.Cmp(big.NewInt(10000)),
-		"the single leg must carry the merged amount, not a doubled one")
-
-	for i, d := range txn.Sources {
-		assert.Equal(t, legs[0].TransactionID, d.TransactionID,
-			"sources[%d] should be attributed to the merged leg", i)
+func TestSplitTransactionPrecise_RepeatedIdentifierRejected(t *testing.T) {
+	txn := &Transaction{Precision: 100, PreciseAmount: big.NewInt(10000), Sources: []Distribution{
+		{Identifier: "balance_a", Distribution: "60"},
+		{Identifier: "balance_a", Distribution: "40"},
+	}}
+	_, err := txn.SplitTransactionPrecise(context.Background())
+	require.ErrorContains(t, err, "unique")
+	for _, dist := range txn.Sources {
+		assert.Empty(t, dist.TransactionID)
 	}
 }
 

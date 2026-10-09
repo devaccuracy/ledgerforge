@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/big"
 	"net/http"
 	"strconv"
 	"strings"
@@ -30,8 +29,6 @@ import (
 
 	ledgerforge "github.com/devaccuracy/ledgerforge"
 	model2 "github.com/devaccuracy/ledgerforge/api/model"
-	"github.com/devaccuracy/ledgerforge/config"
-	"github.com/devaccuracy/ledgerforge/database"
 	"github.com/devaccuracy/ledgerforge/internal/apierror"
 	"github.com/devaccuracy/ledgerforge/model"
 
@@ -494,39 +491,10 @@ func (a Api) UpdateInflightStatus(c *gin.Context) {
 		return
 	}
 
-	// Resolved before the dry-run branch too: a plain `amount` is the normal
-	// way callers request a partial commit, and skipping this resolution for
-	// dry runs previously meant that field was silently ignored there,
-	// letting an over-limit amount preview as would_apply: true.
-	//
-	// This does mean a dry run now reaches ApplyPrecisionWithDBLookup, which
-	// the branch used to sit ahead of because it writes into a package-level
-	// precision cache. That is a read-through cache of a value that never
-	// changes for a given transaction, so the entry a projection leaves is
-	// the same one the real commit would have written and can never be
-	// stale; the only cost is that a projection can contribute to the
-	// entry-count bound that resets the map. Preferred over resolving the
-	// amount twice, once per branch, and risking the two drifting apart —
-	// which is the class of bug this resolution was moved to fix.
-	cnf, err := config.Fetch()
+	amount, err := a.resolveInflightAmount(c.Request.Context(), id, req.Amount, req.ExactAmount(), req.PreciseAmount)
 	if err != nil {
-		respondError(c, err)
+		respondError(c, err, withDefault(apierror.ErrTxnInvalidAmount))
 		return
-	}
-	ds, err := database.GetDBConnection(cnf)
-	if err != nil {
-		respondError(c, err)
-		return
-	}
-
-	amount := model.ApplyPrecisionWithDBLookup(&model.Transaction{Amount: req.Amount, TransactionID: id}, ds.Conn)
-
-	if req.PreciseAmount != nil {
-		if req.PreciseAmount.Sign() <= 0 {
-			respondCode(c, apierror.ErrTxnInvalidAmount, "precise_amount must be positive", nil)
-			return
-		}
-		amount = req.PreciseAmount
 	}
 
 	if req.DryRun {
@@ -943,26 +911,12 @@ func (a Api) BulkCommitInflight(c *gin.Context) {
 		return
 	}
 
-	cnf, err := config.Fetch()
-	if err != nil {
-		respondError(c, err)
-		return
-	}
-	ds, err := database.GetDBConnection(cnf)
-	if err != nil {
-		respondError(c, err)
-		return
-	}
-
 	items := make([]ledgerforge.BulkInflightItem, len(req.Transactions))
 	for i, it := range req.Transactions {
-		// Match single-tx semantics: precise_amount wins; else apply precision
-		// via the same DB-lookup helper used by UpdateInflightStatus.
-		var amount *big.Int
-		if it.PreciseAmount != nil {
-			amount = it.PreciseAmount
-		} else {
-			amount = model.ApplyPrecisionWithDBLookup(&model.Transaction{Amount: it.Amount, TransactionID: it.TransactionID}, ds.Conn)
+		amount, err := a.resolveInflightAmount(c.Request.Context(), it.TransactionID, it.Amount, it.ExactAmount(), it.PreciseAmount)
+		if err != nil {
+			respondError(c, err, withDefault(apierror.ErrTxnInvalidAmount))
+			return
 		}
 		items[i] = ledgerforge.BulkInflightItem{TransactionID: it.TransactionID, Amount: amount}
 	}
