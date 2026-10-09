@@ -20,6 +20,7 @@ package core
 import (
 	"embed"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/hibiken/asynq"
@@ -34,24 +35,27 @@ import (
 	"github.com/devaccuracy/ledgerforge/internal/search"
 	"github.com/devaccuracy/ledgerforge/internal/tokenization"
 
+	"github.com/devaccuracy/ledgerforge/internal/reconciliation"
 	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/redis/go-redis/v9"
 )
 
 // LedgerForge represents the main struct for the LedgerForge application.
 type LedgerForge struct {
-	queue       *Queue
-	search      *search.TypesenseClient
-	redis       redis.UniversalClient
-	asynqClient *asynq.Client
-	datasource  database.IDataSource
-	bt          *model.BalanceTracker
-	tokenizer   *tokenization.TokenizationService
-	httpClient  *http.Client
-	Hooks       hooks.HookManager
-	config      *config.Configuration
-	cache       cache.Cache
-	hotPairs    *hotpairs.Manager
+	queue              *Queue
+	search             *search.TypesenseClient
+	redis              redis.UniversalClient
+	asynqClient        *asynq.Client
+	datasource         database.IDataSource
+	bt                 *model.BalanceTracker
+	tokenizer          *tokenization.TokenizationService
+	httpClient         *http.Client
+	Hooks              hooks.HookManager
+	config             *config.Configuration
+	cache              cache.Cache
+	hotPairs           *hotpairs.Manager
+	reconciliationOnce sync.Once
+	reconciliation     *reconciliation.Service
 }
 
 const (

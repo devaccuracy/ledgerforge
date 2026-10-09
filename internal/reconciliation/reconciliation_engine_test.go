@@ -13,7 +13,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-package core
+package reconciliation
 
 import (
 	"context"
@@ -38,7 +38,7 @@ import (
 // BatchSize is 100 so paginated mocks key off limit=100; MaxWorkers is 1 for determinism.
 func storeReconEngineConfig() *config.Configuration {
 	cnf := &config.Configuration{
-		Redis: config.RedisConfig{Dns: testRedisAddr()},
+		Redis: config.RedisConfig{Dns: "unused.invalid:6379"},
 		Transaction: config.TransactionConfig{
 			BatchSize:    100,
 			MaxWorkers:   1,
@@ -69,7 +69,7 @@ func reconWaitOrFail(t *testing.T, done <-chan struct{}, msg string) {
 func TestRecon_UploadExternalData_CSV(t *testing.T) {
 	storeReconEngineConfig()
 	mockDS := new(mocks.MockDataSource)
-	b := &LedgerForge{datasource: mockDS}
+	b := testService(mockDS)
 
 	var mu sync.Mutex
 	var stored []model.ExternalTransaction
@@ -116,7 +116,7 @@ func TestRecon_UploadExternalData_CSV(t *testing.T) {
 func TestRecon_UploadExternalData_StoreErrorPropagates(t *testing.T) {
 	storeReconEngineConfig()
 	mockDS := new(mocks.MockDataSource)
-	b := &LedgerForge{datasource: mockDS}
+	b := testService(mockDS)
 
 	mockDS.On("RecordExternalTransaction", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("db down"))
 
@@ -133,7 +133,7 @@ func TestRecon_UploadExternalData_StoreErrorPropagates(t *testing.T) {
 func TestRecon_UploadExternalData_UnsupportedFileType(t *testing.T) {
 	storeReconEngineConfig()
 	mockDS := new(mocks.MockDataSource)
-	b := &LedgerForge{datasource: mockDS}
+	b := testService(mockDS)
 
 	uploadID, count, err := b.UploadExternalData(context.Background(), "bank-one", strings.NewReader("just some notes\n"), "notes.txt")
 	require.Error(t, err)
@@ -146,7 +146,7 @@ func TestRecon_UploadExternalData_UnsupportedFileType(t *testing.T) {
 func TestRecon_UploadExternalData_CSVMissingRequiredColumn(t *testing.T) {
 	storeReconEngineConfig()
 	mockDS := new(mocks.MockDataSource)
-	b := &LedgerForge{datasource: mockDS}
+	b := testService(mockDS)
 
 	// "Date" column missing.
 	csvData := "ID,Amount,Currency,Reference,Description\next-1,10,USD,r1,d1\n"
@@ -159,7 +159,7 @@ func TestRecon_UploadExternalData_CSVMissingRequiredColumn(t *testing.T) {
 func TestRecon_UploadExternalData_JSON(t *testing.T) {
 	storeReconEngineConfig()
 	mockDS := new(mocks.MockDataSource)
-	b := &LedgerForge{datasource: mockDS}
+	b := testService(mockDS)
 
 	var mu sync.Mutex
 	var stored []model.ExternalTransaction
@@ -195,7 +195,7 @@ func TestRecon_StoreExternalTransaction(t *testing.T) {
 
 	t.Run("success passes txn and upload id through", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		b := &LedgerForge{datasource: mockDS}
+		b := testService(mockDS)
 		mockDS.On("RecordExternalTransaction", mock.Anything, mock.MatchedBy(func(p *model.ExternalTransaction) bool {
 			return p != nil && p.ID == "ext-1" && p.Amount == 42.42
 		}), "upload_1").Return(nil).Once()
@@ -206,7 +206,7 @@ func TestRecon_StoreExternalTransaction(t *testing.T) {
 
 	t.Run("error propagates", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		b := &LedgerForge{datasource: mockDS}
+		b := testService(mockDS)
 		dbErr := errors.New("write failed")
 		mockDS.On("RecordExternalTransaction", mock.Anything, mock.Anything, mock.Anything).Return(dbErr).Once()
 		assert.ErrorIs(t, b.storeExternalTransaction(ctx, "upload_1", txn), dbErr)
@@ -218,7 +218,7 @@ func TestRecon_StoreExternalTransaction(t *testing.T) {
 func TestRecon_StartReconciliation_RecordErrorAborts(t *testing.T) {
 	storeReconEngineConfig()
 	mockDS := new(mocks.MockDataSource)
-	b := &LedgerForge{datasource: mockDS}
+	b := testService(mockDS)
 
 	dbErr := errors.New("insert failed")
 	mockDS.On("RecordReconciliation", mock.Anything, mock.Anything).Return(dbErr).Once()
@@ -232,7 +232,7 @@ func TestRecon_StartReconciliation_RecordErrorAborts(t *testing.T) {
 func TestRecon_StartReconciliation_DryRunCompletes(t *testing.T) {
 	storeReconEngineConfig()
 	mockDS := new(mocks.MockDataSource)
-	b := &LedgerForge{datasource: mockDS}
+	b := testService(mockDS)
 
 	now := time.Now()
 	done := make(chan struct{})
@@ -283,7 +283,7 @@ func TestRecon_StartReconciliation_DryRunCompletes(t *testing.T) {
 func TestRecon_StartReconciliation_ProcessFailureMarksFailed(t *testing.T) {
 	storeReconEngineConfig()
 	mockDS := new(mocks.MockDataSource)
-	b := &LedgerForge{datasource: mockDS}
+	b := testService(mockDS)
 
 	done := make(chan struct{})
 	mockDS.On("RecordReconciliation", mock.Anything, mock.Anything).Return(nil).Once()
@@ -304,7 +304,7 @@ func TestRecon_StartReconciliation_ProcessFailureMarksFailed(t *testing.T) {
 func TestRecon_StartInstantReconciliation_RecordErrorAborts(t *testing.T) {
 	storeReconEngineConfig()
 	mockDS := new(mocks.MockDataSource)
-	b := &LedgerForge{datasource: mockDS}
+	b := testService(mockDS)
 
 	dbErr := errors.New("insert failed")
 	mockDS.On("RecordReconciliation", mock.Anything, mock.Anything).Return(dbErr).Once()
@@ -318,7 +318,7 @@ func TestRecon_StartInstantReconciliation_RecordErrorAborts(t *testing.T) {
 func TestRecon_StartInstantReconciliation_StoreErrorMarksFailed(t *testing.T) {
 	storeReconEngineConfig()
 	mockDS := new(mocks.MockDataSource)
-	b := &LedgerForge{datasource: mockDS}
+	b := testService(mockDS)
 
 	mockDS.On("RecordReconciliation", mock.Anything, mock.Anything).Return(nil).Once()
 	mockDS.On("RecordExternalTransaction", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("disk full")).Once()
@@ -334,7 +334,7 @@ func TestRecon_StartInstantReconciliation_StoreErrorMarksFailed(t *testing.T) {
 func TestRecon_StartInstantReconciliation_DryRunCompletes(t *testing.T) {
 	storeReconEngineConfig()
 	mockDS := new(mocks.MockDataSource)
-	b := &LedgerForge{datasource: mockDS}
+	b := testService(mockDS)
 
 	now := time.Now()
 	done := make(chan struct{})
@@ -384,7 +384,7 @@ func TestRecon_StartInstantReconciliation_DryRunCompletes(t *testing.T) {
 func TestRecon_ProcessReconciliation_DryRunMatchedAndUnmatched(t *testing.T) {
 	storeReconEngineConfig()
 	mockDS := new(mocks.MockDataSource)
-	b := &LedgerForge{datasource: mockDS}
+	b := testService(mockDS)
 
 	now := time.Now()
 	rec := model.Reconciliation{ReconciliationID: "recon_test", UploadID: "upload_1", IsDryRun: true}
@@ -429,7 +429,7 @@ func TestRecon_ProcessReconciliation_DryRunMatchedAndUnmatched(t *testing.T) {
 func TestRecon_ProcessReconciliation_StatusUpdateError(t *testing.T) {
 	storeReconEngineConfig()
 	mockDS := new(mocks.MockDataSource)
-	b := &LedgerForge{datasource: mockDS}
+	b := testService(mockDS)
 
 	mockDS.On("UpdateReconciliationStatus", mock.Anything, "recon_x", StatusInProgress, 0, 0).
 		Return(errors.New("locked")).Once()
@@ -442,7 +442,7 @@ func TestRecon_ProcessReconciliation_StatusUpdateError(t *testing.T) {
 func TestRecon_ProcessReconciliation_RuleFetchError(t *testing.T) {
 	storeReconEngineConfig()
 	mockDS := new(mocks.MockDataSource)
-	b := &LedgerForge{datasource: mockDS}
+	b := testService(mockDS)
 
 	mockDS.On("UpdateReconciliationStatus", mock.Anything, "recon_x", StatusInProgress, 0, 0).Return(nil).Once()
 	mockDS.On("GetMatchingRule", mock.Anything, "rule_missing").Return((*model.MatchingRule)(nil), errors.New("no such rule")).Once()
@@ -455,7 +455,7 @@ func TestRecon_ProcessReconciliation_RuleFetchError(t *testing.T) {
 func TestRecon_ProcessReconciliation_TransactionFetchError(t *testing.T) {
 	storeReconEngineConfig()
 	mockDS := new(mocks.MockDataSource)
-	b := &LedgerForge{datasource: mockDS}
+	b := testService(mockDS)
 
 	mockDS.On("UpdateReconciliationStatus", mock.Anything, "recon_x", StatusInProgress, 0, 0).Return(nil).Once()
 	mockDS.On("LoadReconciliationProgress", mock.Anything, "recon_x").Return(model.ReconciliationProgress{}, nil).Once()
@@ -476,7 +476,7 @@ func TestRecon_LoadReconciliationProgress(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		b := &LedgerForge{datasource: mockDS}
+		b := testService(mockDS)
 		want := model.ReconciliationProgress{LastProcessedExternalTxnID: "ext_9", ProcessedCount: 9}
 		mockDS.On("LoadReconciliationProgress", mock.Anything, "recon_1").Return(want, nil).Once()
 
@@ -487,7 +487,7 @@ func TestRecon_LoadReconciliationProgress(t *testing.T) {
 
 	t.Run("error propagates", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		b := &LedgerForge{datasource: mockDS}
+		b := testService(mockDS)
 		dbErr := errors.New("no progress")
 		mockDS.On("LoadReconciliationProgress", mock.Anything, "recon_1").Return(model.ReconciliationProgress{}, dbErr).Once()
 
@@ -501,7 +501,7 @@ func TestRecon_InitializeReconciliationProgress(t *testing.T) {
 
 	t.Run("returns stored progress", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		b := &LedgerForge{datasource: mockDS}
+		b := testService(mockDS)
 		want := model.ReconciliationProgress{LastProcessedExternalTxnID: "ext_5", ProcessedCount: 5}
 		mockDS.On("LoadReconciliationProgress", mock.Anything, "recon_1").Return(want, nil).Once()
 
@@ -513,7 +513,7 @@ func TestRecon_InitializeReconciliationProgress(t *testing.T) {
 	t.Run("load error falls back to fresh progress without failing", func(t *testing.T) {
 		// Deliberate behavior: a missing progress row must not abort a new reconciliation.
 		mockDS := new(mocks.MockDataSource)
-		b := &LedgerForge{datasource: mockDS}
+		b := testService(mockDS)
 		mockDS.On("LoadReconciliationProgress", mock.Anything, "recon_1").
 			Return(model.ReconciliationProgress{}, errors.New("not found")).Once()
 
@@ -525,7 +525,7 @@ func TestRecon_InitializeReconciliationProgress(t *testing.T) {
 
 func TestRecon_UpdateReconciliationStatus(t *testing.T) {
 	mockDS := new(mocks.MockDataSource)
-	b := &LedgerForge{datasource: mockDS}
+	b := testService(mockDS)
 
 	mockDS.On("UpdateReconciliationStatus", mock.Anything, "recon_1", StatusInProgress, 0, 0).Return(nil).Once()
 	require.NoError(t, b.updateReconciliationStatus(context.Background(), "recon_1", StatusInProgress))
@@ -542,7 +542,7 @@ func TestRecon_CreateReconciler_Dispatch(t *testing.T) {
 
 	t.Run("unknown strategy returns nil results and touches nothing", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		b := &LedgerForge{datasource: mockDS}
+		b := testService(mockDS)
 
 		rec := b.createReconciler("two_to_two", "upload_1", "", nil)
 		matches, unmatched := rec(ctx, []*model.Transaction{{TransactionID: "ext_1", Amount: 1}})
@@ -553,7 +553,7 @@ func TestRecon_CreateReconciler_Dispatch(t *testing.T) {
 
 	t.Run("one_to_one strategy with no input is a no-op", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		b := &LedgerForge{datasource: mockDS}
+		b := testService(mockDS)
 
 		rec := b.createReconciler("one_to_one", "upload_1", "", nil)
 		matches, unmatched := rec(ctx, nil)
@@ -563,7 +563,7 @@ func TestRecon_CreateReconciler_Dispatch(t *testing.T) {
 
 	t.Run("one_to_many groups internal transactions by criteria", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		b := &LedgerForge{datasource: mockDS}
+		b := testService(mockDS)
 		mockDS.On("GroupTransactions", mock.Anything, "reference", 100, int64(0)).
 			Return(map[string][]*model.Transaction{}, nil).Once()
 
@@ -574,7 +574,7 @@ func TestRecon_CreateReconciler_Dispatch(t *testing.T) {
 
 	t.Run("many_to_one groups external transactions by upload id and criteria", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		b := &LedgerForge{datasource: mockDS}
+		b := testService(mockDS)
 		mockDS.On("FetchAndGroupExternalTransactions", mock.Anything, "upload_1", "reference", 100, int64(0)).
 			Return(map[string][]*model.Transaction{}, nil).Once()
 
@@ -590,7 +590,7 @@ func TestRecon_CreateTransactionProcessor(t *testing.T) {
 	config.ConfigStore.Store(cnf)
 
 	mockDS := new(mocks.MockDataSource)
-	b := &LedgerForge{datasource: mockDS}
+	b := testService(mockDS)
 
 	rec := model.Reconciliation{ReconciliationID: "recon_1", IsDryRun: true}
 	progress := model.ReconciliationProgress{ProcessedCount: 7}
@@ -602,7 +602,7 @@ func TestRecon_CreateTransactionProcessor(t *testing.T) {
 	assert.Equal(t, rec, processor.reconciliation)
 	assert.Equal(t, progress, processor.progress)
 	assert.Equal(t, 42, processor.progressSaveCount, "progress save interval must come from configuration")
-	assert.Equal(t, b, processor.ledgerforge)
+	assert.NotNil(t, processor.updateMetadata)
 
 	// restore the default interval for subsequent tests
 	storeReconEngineConfig()
@@ -625,7 +625,7 @@ func TestRecon_Process_DryRunSkipsPersistence(t *testing.T) {
 		},
 		datasource:        mockDS,
 		progressSaveCount: 100,
-		ledgerforge:       &LedgerForge{datasource: mockDS},
+		updateMetadata:    mockDS.UpdateTransactionMetadata,
 	}
 
 	err := tp.process(context.Background(), &model.Transaction{TransactionID: "ext_1"})
@@ -660,7 +660,7 @@ func TestRecon_Process_RecordsMatchesUnmatchedAndMetadata(t *testing.T) {
 		},
 		datasource:        mockDS,
 		progressSaveCount: 100,
-		ledgerforge:       &LedgerForge{datasource: mockDS},
+		updateMetadata:    mockDS.UpdateTransactionMetadata,
 	}
 
 	err := tp.process(context.Background(), &model.Transaction{TransactionID: "ext_1"})
@@ -694,7 +694,7 @@ func TestRecon_Process_RecordMatchesErrorPropagates(t *testing.T) {
 		},
 		datasource:        mockDS,
 		progressSaveCount: 100,
-		ledgerforge:       &LedgerForge{datasource: mockDS},
+		updateMetadata:    mockDS.UpdateTransactionMetadata,
 	}
 
 	err := tp.process(context.Background(), &model.Transaction{TransactionID: "ext_1"})
@@ -716,7 +716,7 @@ func TestRecon_Process_RecordUnmatchedErrorPropagates(t *testing.T) {
 		},
 		datasource:        mockDS,
 		progressSaveCount: 100,
-		ledgerforge:       &LedgerForge{datasource: mockDS},
+		updateMetadata:    mockDS.UpdateTransactionMetadata,
 	}
 
 	err := tp.process(context.Background(), &model.Transaction{TransactionID: "ext_1"})
@@ -737,7 +737,7 @@ func TestRecon_Process_SavesProgressAtInterval(t *testing.T) {
 		reconciler:        func(ctx context.Context, txns []*model.Transaction) ([]model.Match, []string) { return nil, nil },
 		datasource:        mockDS,
 		progressSaveCount: 2,
-		ledgerforge:       &LedgerForge{datasource: mockDS},
+		updateMetadata:    mockDS.UpdateTransactionMetadata,
 	}
 
 	require.NoError(t, tp.process(context.Background(), &model.Transaction{TransactionID: "ext_1"}))
@@ -760,7 +760,7 @@ func TestRecon_Process_ProgressSaveErrorIsNonFatal(t *testing.T) {
 		reconciler:        func(ctx context.Context, txns []*model.Transaction) ([]model.Match, []string) { return nil, nil },
 		datasource:        mockDS,
 		progressSaveCount: 1,
-		ledgerforge:       &LedgerForge{datasource: mockDS},
+		updateMetadata:    mockDS.UpdateTransactionMetadata,
 	}
 
 	assert.NoError(t, tp.process(context.Background(), &model.Transaction{TransactionID: "ext_1"}),
@@ -779,7 +779,7 @@ func TestRecon_GetResults(t *testing.T) {
 func TestRecon_ProcessTransactions_UsesExternalSourceForOneToOne(t *testing.T) {
 	storeReconEngineConfig()
 	mockDS := new(mocks.MockDataSource)
-	b := &LedgerForge{datasource: mockDS}
+	b := testService(mockDS)
 
 	var mu sync.Mutex
 	var seen []string
@@ -795,7 +795,7 @@ func TestRecon_ProcessTransactions_UsesExternalSourceForOneToOne(t *testing.T) {
 		},
 		datasource:        mockDS,
 		progressSaveCount: 100,
-		ledgerforge:       b,
+		updateMetadata:    b.updateMetadata,
 	}
 
 	mockDS.On("GetExternalTransactionsPaginated", mock.Anything, "upload_1", 100, int64(0)).
@@ -815,14 +815,14 @@ func TestRecon_ProcessTransactions_UsesExternalSourceForOneToOne(t *testing.T) {
 func TestRecon_ProcessTransactions_UsesInternalSourceForManyToOne(t *testing.T) {
 	storeReconEngineConfig()
 	mockDS := new(mocks.MockDataSource)
-	b := &LedgerForge{datasource: mockDS}
+	b := testService(mockDS)
 
 	tp := &transactionProcessor{
 		reconciliation:    model.Reconciliation{ReconciliationID: "recon_s", IsDryRun: true},
 		reconciler:        func(ctx context.Context, txns []*model.Transaction) ([]model.Match, []string) { return nil, nil },
 		datasource:        mockDS,
 		progressSaveCount: 100,
-		ledgerforge:       b,
+		updateMetadata:    b.updateMetadata,
 	}
 
 	// Note: getInternalTransactionsPaginated always queries with an empty id.
@@ -840,14 +840,14 @@ func TestRecon_ProcessTransactions_UsesInternalSourceForManyToOne(t *testing.T) 
 func TestRecon_ProcessTransactions_FetchErrorPropagates(t *testing.T) {
 	storeReconEngineConfig()
 	mockDS := new(mocks.MockDataSource)
-	b := &LedgerForge{datasource: mockDS}
+	b := testService(mockDS)
 
 	tp := &transactionProcessor{
 		reconciliation:    model.Reconciliation{ReconciliationID: "recon_s", IsDryRun: true},
 		reconciler:        func(ctx context.Context, txns []*model.Transaction) ([]model.Match, []string) { return nil, nil },
 		datasource:        mockDS,
 		progressSaveCount: 100,
-		ledgerforge:       b,
+		updateMetadata:    b.updateMetadata,
 	}
 
 	mockDS.On("GetExternalTransactionsPaginated", mock.Anything, "upload_1", 100, int64(0)).
@@ -863,7 +863,7 @@ func TestRecon_ProcessTransactions_FetchErrorPropagates(t *testing.T) {
 func TestRecon_FinalizeReconciliation_DryRun(t *testing.T) {
 	storeReconEngineConfig()
 	mockDS := new(mocks.MockDataSource)
-	b := &LedgerForge{datasource: mockDS}
+	b := testService(mockDS)
 
 	mockDS.On("UpdateReconciliationStatus", mock.Anything, "recon_f", StatusCompleted, 3, 2).Return(nil).Once()
 
@@ -875,7 +875,7 @@ func TestRecon_FinalizeReconciliation_DryRun(t *testing.T) {
 func TestRecon_FinalizeReconciliation_StatusErrorPropagates(t *testing.T) {
 	storeReconEngineConfig()
 	mockDS := new(mocks.MockDataSource)
-	b := &LedgerForge{datasource: mockDS}
+	b := testService(mockDS)
 
 	dbErr := errors.New("final update failed")
 	mockDS.On("UpdateReconciliationStatus", mock.Anything, "recon_f", StatusCompleted, 1, 0).Return(dbErr).Once()
@@ -885,11 +885,10 @@ func TestRecon_FinalizeReconciliation_StatusErrorPropagates(t *testing.T) {
 }
 
 func TestRecon_FinalizeReconciliation_NonDryRun(t *testing.T) {
-	cnf := storeReconEngineConfig()
+	storeReconEngineConfig()
 	mockDS := new(mocks.MockDataSource)
-	// queue with empty TypeSense DNS: queueIndexData becomes a no-op, exercising the
-	// postReconciliationActions path without a real broker.
-	b := &LedgerForge{datasource: mockDS, queue: &Queue{config: cnf}}
+	// The injected index callback exercises postReconciliationActions without a broker.
+	b := testService(mockDS)
 
 	mockDS.On("UpdateReconciliationStatus", mock.Anything, "recon_f", StatusCompleted, 5, 4).Return(nil).Once()
 
@@ -902,7 +901,7 @@ func TestRecon_FinalizeReconciliation_NonDryRun(t *testing.T) {
 
 func TestRecon_GetExternalTransactionsPaginated_ConvertsToInternal(t *testing.T) {
 	mockDS := new(mocks.MockDataSource)
-	b := &LedgerForge{datasource: mockDS}
+	b := testService(mockDS)
 
 	date := time.Date(2026, 2, 1, 9, 30, 0, 0, time.UTC)
 	mockDS.On("GetExternalTransactionsPaginated", mock.Anything, "upload_1", 10, int64(20)).
@@ -925,7 +924,7 @@ func TestRecon_GetExternalTransactionsPaginated_ConvertsToInternal(t *testing.T)
 
 func TestRecon_GetExternalTransactionsPaginated_ErrorPropagates(t *testing.T) {
 	mockDS := new(mocks.MockDataSource)
-	b := &LedgerForge{datasource: mockDS}
+	b := testService(mockDS)
 
 	dbErr := errors.New("page fetch failed")
 	mockDS.On("GetExternalTransactionsPaginated", mock.Anything, "upload_1", 10, int64(0)).
@@ -939,7 +938,7 @@ func TestRecon_GetExternalTransactionsPaginated_ErrorPropagates(t *testing.T) {
 func TestRecon_GetInternalTransactionsPaginated(t *testing.T) {
 	t.Run("queries with empty id regardless of input", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		b := &LedgerForge{datasource: mockDS}
+		b := testService(mockDS)
 
 		want := []*model.Transaction{{TransactionID: "int_1"}}
 		mockDS.On("GetTransactionsPaginated", mock.Anything, "", 10, int64(5)).Return(want, nil).Once()
@@ -952,7 +951,7 @@ func TestRecon_GetInternalTransactionsPaginated(t *testing.T) {
 
 	t.Run("error propagates", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		b := &LedgerForge{datasource: mockDS}
+		b := testService(mockDS)
 		dbErr := errors.New("fetch failed")
 		mockDS.On("GetTransactionsPaginated", mock.Anything, "", 10, int64(0)).
 			Return(([]*model.Transaction)(nil), dbErr).Once()
