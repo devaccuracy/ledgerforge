@@ -70,18 +70,17 @@ do not seal the audit chain. The default poll interval is five seconds and the
 trailing delay is thirty seconds; recent rows will therefore remain unsealed temporarily. Redis and PostgreSQL
 must remain available to the server process.
 
-Canonical v2 uses a domain identifier, version and length-delimited fields hashed
-with SHA-256. This removes delimiter ambiguity from v1. The v2 record includes
+Canonical v3 uses a domain identifier, version and length-delimited fields hashed
+with SHA-256. Its embedded v2 payload includes
 the previous hash, database and transaction IDs, source/destination, decimal and precise amounts, precision, retained rate,
 currency, status, reference, parent, effective date and creation time. Numeric
 values come from PostgreSQL text without a floating-point round trip.
 
-New seals use **v3**, which embeds the unchanged v2 payload and additionally
-commits the overdraft cap, queue action, immutable execution controls, scheduled
+V3 additionally commits the overdraft cap, queue action, immutable execution controls, scheduled
 time and original historical rate evidence. The controls include execution
 flags, grouping/lineage decisions and inflight expiry/commit dates. Mutable
 customer metadata is excluded; reserved execution metadata is part of the
-immutable evidence. Existing v1/v2 hashes keep their original encoding. A sealed
+immutable evidence. The worker creates only v3 seals. A sealed
 commitment cannot be changed through ordinary transaction updates.
 
 Each sealed batch records a checkpoint with `sequence`, `count`, `head_hash`
@@ -157,10 +156,14 @@ do not replace the anchor with the current database export to clear the finding.
 
 ## Legacy and schema limitations
 
-Existing v1/v2 seals remain verifiable with their original encoders; they do not
-retroactively gain v3's execution-control coverage. v1 used delimiter-separated
-fields and omitted precision and economic parent/effective-date fields. v2 added
-those fields but omitted the controls added in v3.
+The supported installation paths are fresh databases and upgrades from main
+(`feda9b1`) or earlier published releases, which have no transaction hash chain.
+This release introduces v3 directly; the intermediate `44eddbc` v2 migration set
+was unreleased and is outside the supported upgrade paths. V1/v2 format decoders
+remain available for explicitly supplied older-format records and test fixtures,
+not as migration compatibility for unreleased installations. V1 omitted precision
+and economic parent/effective-date fields; v2 omitted the controls added in v3.
+Verification of those formats does not add v3's coverage to their commitments.
 
 New postings identify economic schema 1: retained `rate` is economically ignored
 and both legs use the same exact units. Historical non-unit rates without that
@@ -169,15 +172,16 @@ guessing their credit semantics, missing parent history or fractional/missing
 precise amounts. A finding is not automatically proof of malicious change.
 
 Legacy execution controls are read from original INSERT-journal evidence rather
-than current customer metadata. Upgrades preserve historical rate evidence; a
+than current customer metadata. Historical type checks ignore customer values of
+the wrong type without changing raw evidence or canonical bytes. Current schema
+controls remain strictly typed. Upgrades preserve historical rate evidence; a
 recorded schema transition can account for the original rate versus its restored
 default when an older installation already ran the rate-dropping migration.
 That bounded exception does not authorize later rate mutations. See
 [integrity upgrade maintenance](upgrade-notes.md) before migrating seeded history.
 
-A successful replay does not prove that every financial execution control was
-committed by an older hash schema. Preserve migration evidence and independently
-retained roots, and review the canonical version's field coverage before making
-an integrity claim. Test upgrades on seeded history, including existing v1/v2 seals.
+Preserve migration evidence and independently retained roots, and review the
+canonical version's field coverage before making an integrity claim. Test
+supported upgrades on seeded historical rows and customer metadata.
 Neither checker repairs missing evidence or certifies history predating retained
 records. See [deployment](deployment.md) for migration and backup operations.

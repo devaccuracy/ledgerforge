@@ -18,6 +18,8 @@ ALTER TABLE ledgerforge.transactions ADD CONSTRAINT transaction_execution_contro
 CHECK (execution_controls IS NULL OR jsonb_typeof(execution_controls) = 'object') NOT VALID;
 
 -- +migrate StatementBegin
+-- Keep raw legacy values in this evidence projection. Runtime hydration applies
+-- the original type checks; normalizing here would change canonical hash bytes.
 CREATE FUNCTION ledgerforge.transaction_execution_controls(txn_id TEXT, controls JSONB)
 RETURNS JSONB LANGUAGE sql STABLE AS $$
  SELECT COALESCE(controls, (

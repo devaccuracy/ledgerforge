@@ -35,7 +35,7 @@ const chainKey = "global"
 // the global hash chain in a single DB transaction. It locks the one chain_state
 // row FOR UPDATE (serializing every chainer instance — a second writer blocks,
 // then re-reads the advanced head), scans unchained rows older than cutoff in id
-// order, links each onto the head with canonical v2, writes their
+// order, links each onto the head with canonical v3, writes their
 // chain_* columns, and advances chain_state — all atomically, so a crash mid
 // batch loses nothing. Returns the number of rows sealed.
 func (d Datasource) ChainPendingTransactions(ctx context.Context, cutoff time.Time, batchSize int) (int, error) {

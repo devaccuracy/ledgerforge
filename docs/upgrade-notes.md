@@ -11,20 +11,29 @@ limitations under the License. -->
 
 # Integrity upgrade maintenance
 
-Back up the database and retain available audit checkpoint roots under independent
-custody before upgrading. If the installed version has no checkpoint export,
-record its available chain head with the backup manifest; the first later export
-establishes an external anchor from that point, not retroactive external custody.
+Supported paths are a fresh installation or an upgrade from main (`feda9b1`) or
+an earlier published release. Those versions have no transaction hash chain;
+this release introduces canonical v3 directly. The intermediate `44eddbc` v2
+migration set was unreleased and is outside the supported upgrade paths.
+
+Back up the database before upgrading. The first checkpoint export establishes
+an external anchor from that point, not retroactive external custody. Keep later
+checkpoint exports under independent custody.
 Run migrations before starting new servers or workers. Stop old servers and
 workers during this transition: they do not persist immutable execution controls.
 DDL still needs a brief exclusive table lock; use a maintenance window and a
 bounded PostgreSQL `lock_timeout`, and retry if busy writers prevent acquiring it.
 
 Migration 1781162340 adds nullable chain versions without updating the transaction
-table. A sealed row with a NULL version retains canonical v1. Existing v1/v2
-commitments stay verifiable; new seals use v3, which also covers execution controls,
-overdraft caps, queue actions and scheduling. Legacy controls are read from the
-original INSERT journal; current customer metadata cannot change execution.
+table. The worker creates only v3 seals, including for historical transactions.
+The verifier retains v1/v2 format decoders for explicitly supplied records and
+test fixtures; a NULL version on such a sealed record denotes v1. These decoders
+do not provide migration compatibility for an unreleased v1/v2 installation.
+V3 covers execution controls, overdraft caps, queue actions and scheduling.
+Legacy controls are read from the original INSERT journal using historical type
+checks: nonboolean flag values mean false, and invalid string controls use their
+original defaults. Raw evidence and canonical bytes are preserved; current
+schema controls remain strictly typed. Customer metadata cannot change execution.
 Historical non-unit rates without a known economic schema remain unsupported by
 financial replay. New postings record economic schema 1, in which rate is ignored.
 

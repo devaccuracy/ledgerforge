@@ -18,10 +18,12 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"math/big"
 	"testing"
 	"time"
 
+	"github.com/devaccuracy/ledgerforge/database"
 	"github.com/devaccuracy/ledgerforge/internal/integrity"
 	"github.com/devaccuracy/ledgerforge/model"
 	migrate "github.com/rubenv/sql-migrate"
@@ -262,6 +264,151 @@ func TestAuditSeededMainAndV1Upgrade(t *testing.T) {
 			result, err = ds.VerifyChainSnapshot(context.Background(), nil)
 			require.NoError(t, err)
 			require.False(t, result.Verified)
+		})
+	}
+}
+
+func TestAuditSeededMainCustomerMetadataUpgrade(t *testing.T) {
+	for _, metadata := range []string{
+		`{"allow_overdraft":"merchant_label"}`,
+		`{"inflight":7}`,
+		`{"atomic":[]}`,
+		`{"skip_queue":true}`,
+		`{"queue_lane":true}`,
+		`{"QUEUED_PARENT_TRANSACTION":9}`,
+		`{"allow_overdraft":"true","inflight":"true","atomic":"true","skip_queue":{},"_shadow_for":[]}`,
+		`{"allow_overdraft":null,"inflight":null,"atomic":null,"queue_lane":null,"QUEUED_PARENT_TRANSACTION":null}`,
+		`{"allow_overdraft":false,"inflight":true,"atomic":true,"queue_lane":"hot"}`,
+	} {
+		t.Run(metadata, func(t *testing.T) {
+			conn := openMigrationTestDB(t)
+			set := migrate.MigrationSet{SchemaName: "ledgerforge"}
+			_, err := set.Exec(conn, "postgres", migrate.EmbedFileSystemMigrationSource{FileSystem: mainMigrationFixtures, Root: mainMigrationRoot}, migrate.Up)
+			require.NoError(t, err)
+			seedMainMigrationLedger(t, conn)
+			id := model.GenerateUUIDWithSuffix("txn")
+			_, err = conn.Exec(`INSERT INTO ledgerforge.transactions
+			(transaction_id,parent_transaction,reference,source,destination,amount,precise_amount,precision,currency,status,meta_data,description,hash,created_at,scheduled_for)
+			VALUES ($1,'','legacy_customer_metadata_ref','main_src','main_dst',1,100,100,'USD','QUEUED',$2,'review','legacy_controls','1900-01-01','1900-01-01')`, id, metadata)
+			require.NoError(t, err)
+			before := migrationLedgerSnapshot(t, conn)
+			var originalJournal string
+			require.NoError(t, conn.QueryRow(`SELECT new_data::text FROM ledgerforge.transaction_journal WHERE transaction_id=$1 AND action_type='INSERT'`, id).Scan(&originalJournal))
+			_, err = set.Exec(conn, "postgres", migrate.EmbedFileSystemMigrationSource{FileSystem: SQLFiles, Root: "sql"}, migrate.Up)
+			require.NoError(t, err)
+			require.JSONEq(t, before, migrationLedgerSnapshot(t, conn), "upgrade must retain raw customer metadata and INSERT evidence")
+
+			b, base := newCoreTestLedgerForge(t)
+			t.Cleanup(func() {
+				require.NoError(t, b.Close())
+			})
+			ds := &database.Datasource{Conn: conn, Cache: base.(*database.Datasource).Cache}
+			b.datasource = ds
+			// Seal before hydration. The commitment must contain the raw legacy
+			// values, even when their runtime meaning is the default false/empty.
+			chainAll(t, ds)
+			sealed, err := ds.GetChainedTransactionsAfter(t.Context(), 0, 100)
+			require.NoError(t, err)
+			var raw map[string]interface{}
+			require.NoError(t, json.Unmarshal([]byte(metadata), &raw))
+			evidence := map[string]interface{}{"economic_version": 0, "reserved_metadata": map[string]interface{}{}}
+			for key, fallback := range map[string]interface{}{"allow_overdraft": false, "inflight": false, "atomic": false, "skip_queue": false, "queued_parent": "", "queue_lane": "normal", "shadow_for": ""} {
+				metadataKey := key
+				switch key {
+				case "queued_parent":
+					metadataKey = "QUEUED_PARENT_TRANSACTION"
+				case "shadow_for":
+					metadataKey = "_shadow_for"
+				}
+				value, exists := raw[metadataKey]
+				if !exists {
+					value = fallback
+				}
+				evidence[key] = value
+			}
+			encoded, err := json.Marshal(evidence)
+			require.NoError(t, err)
+			var canonicalEvidence string
+			require.NoError(t, conn.QueryRow(`SELECT $1::jsonb::text`, string(encoded)).Scan(&canonicalEvidence))
+			foundSeal := false
+			for _, link := range sealed {
+				if link.Row.TransactionID != id {
+					continue
+				}
+				foundSeal = true
+				require.Equal(t, 3, link.CanonicalVersion)
+				require.Equal(t, canonicalEvidence, link.Row.ExecutionControls, "legacy normalization must never change canonical bytes")
+				link.Row.ExecutionControls = canonicalEvidence
+				expectedHash, err := model.ComputeChainHashVersion(3, link.ChainPrevHash, link.Row)
+				require.NoError(t, err)
+				require.Equal(t, expectedHash, link.ChainHash)
+			}
+			require.True(t, foundSeal)
+			anchors, err := ds.ExportChainCheckpoints(t.Context())
+			require.NoError(t, err)
+			loaded, err := ds.GetTransaction(t.Context(), id)
+			require.NoError(t, err)
+			wantInflight, _ := raw["inflight"].(bool)
+			wantAtomic, _ := raw["atomic"].(bool)
+			require.False(t, loaded.AllowOverdraft)
+			require.Equal(t, wantInflight, loaded.Inflight)
+			require.Equal(t, wantAtomic, loaded.Atomic)
+			loadedMetadata, err := json.Marshal(loaded.MetaData)
+			require.NoError(t, err)
+			require.JSONEq(t, metadata, string(loadedMetadata))
+			stuck, err := ds.GetStuckQueuedTransactions(t.Context(), time.Second, 1)
+			require.NoError(t, err)
+			require.Len(t, stuck, 1, "legacy metadata must not hide accepted work from recovery")
+			require.Equal(t, id, stuck[0].TransactionID)
+			require.False(t, stuck[0].SkipQueue, "main never restored skip_queue from customer metadata")
+			inflight, err := ds.GetInflightTransactionsByParentID(t.Context(), id, 100, 0)
+			require.NoError(t, err)
+			if wantInflight {
+				require.Len(t, inflight, 1)
+			} else {
+				require.Empty(t, inflight, "customer string true is not an inflight flag")
+			}
+			wantLane := "normal"
+			if lane, ok := raw["queue_lane"].(string); ok && lane == "hot" {
+				wantLane = "hot"
+			}
+			require.Equal(t, wantLane, stuck[0].QueueLane)
+			laneCount, err := ds.CountQueuedTransactionsForPairLane(t.Context(), "main_src", "main_dst", "USD", wantLane)
+			require.NoError(t, err)
+			if wantLane == "normal" {
+				require.Equal(t, 2, laneCount)
+			} else {
+				require.Equal(t, 1, laneCount)
+			}
+			_, err = conn.Exec(`UPDATE ledgerforge.transactions SET meta_data='{"allow_overdraft":true,"inflight":false,"atomic":false}' WHERE transaction_id=$1`, id)
+			require.NoError(t, err)
+			sourceBefore, err := ds.GetBalanceByIDLite("main_src")
+			require.NoError(t, err)
+			require.NoError(t, NewQueuedTransactionRecoveryProcessor(b).processStuckTransaction(t.Context(), stuck[0]))
+			children, err := ds.GetTransactionsByParent(t.Context(), id, 100, 0)
+			require.NoError(t, err)
+			require.Len(t, children, 1)
+			expectedStatus := StatusApplied
+			if wantInflight {
+				expectedStatus = StatusInflight
+			}
+			require.Equal(t, expectedStatus, children[0].Status)
+			require.False(t, children[0].AllowOverdraft)
+			sourceAfter, err := ds.GetBalanceByIDLite("main_src")
+			require.NoError(t, err)
+			if wantInflight {
+				require.Equal(t, sourceBefore.Balance, sourceAfter.Balance)
+				require.Equal(t, new(big.Int).Add(sourceBefore.InflightDebitBalance, big.NewInt(100)), sourceAfter.InflightDebitBalance)
+			} else {
+				require.Equal(t, new(big.Int).Sub(sourceBefore.Balance, big.NewInt(100)), sourceAfter.Balance)
+			}
+			var currentJournal string
+			require.NoError(t, conn.QueryRow(`SELECT new_data::text FROM ledgerforge.transaction_journal WHERE transaction_id=$1 AND action_type='INSERT'`, id).Scan(&currentJournal))
+			require.Equal(t, originalJournal, currentJournal)
+			chainAll(t, ds)
+			audit, err := ds.VerifyChainSnapshotWithAnchors(t.Context(), nil, anchors)
+			require.NoError(t, err)
+			require.True(t, audit.Verified, "%+v", audit)
 		})
 	}
 }

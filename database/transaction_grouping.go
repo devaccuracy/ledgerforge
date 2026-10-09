@@ -353,7 +353,7 @@ func (d Datasource) GetInflightTransactionsByParentID(ctx context.Context, paren
 				   t.currency, t.destination, t.description, t.status, t.created_at, ledgerforge.transaction_metadata(t.transaction_id, t.meta_data) AS meta_data, t.scheduled_for, t.hash, t.effective_date
 			FROM ledgerforge.transactions t
 			WHERE (t.transaction_id = $1 OR t.parent_transaction = $1)
-			AND t.status = 'QUEUED' AND ledgerforge.transaction_execution_controls(t.transaction_id, t.execution_controls)->>'inflight' = 'true'
+			AND t.status = 'QUEUED' AND ledgerforge.transaction_execution_controls(t.transaction_id, t.execution_controls)->'inflight' = 'true'::jsonb
 			-- Don't include transactions that have been rejected (check by reference with _q suffix)
 			AND NOT EXISTS (
 				SELECT 1

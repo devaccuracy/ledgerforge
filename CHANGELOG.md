@@ -29,8 +29,8 @@ semantic versions.
   fuzz tests with independent arithmetic oracles.
 - Read-only `ledgerforge verify` accounting replay with JSON issue reports and
   repeatable-read PostgreSQL snapshots of balances and lifecycle evidence.
-- Canonical hash chains v2/v3, versioned verification of existing v1/v2 seals, persistent
-  checkpoint roots, `ledgerforge audit verify`, `audit export`, external
+- Canonical v3 hash chains, persistent checkpoint roots, `ledgerforge audit verify`,
+  `audit export`, external
   `--anchor` comparison, and separate pending-coverage/tampering reports.
 - Generated PostgreSQL operation-sequence tests, concurrent snapshot/chainer
   tests, and property tests for mutation, deletion, truncation and retained roots.
@@ -71,7 +71,10 @@ semantic versions.
   transaction-update policy; sealed commitments and deletes remain protected.
 - Audit/control migrations avoid transaction-table backfills, use a concurrent
   journal index and validate constraints separately; upgrade maintenance is
-  documented for historical installations.
+  documented for fresh installs and upgrades from main (`feda9b1`) or earlier
+  published releases. This release introduces v3 directly; intermediate v1/v2
+  migration sets were unreleased and are outside the supported upgrade paths.
+  Retained v1/v2 decoders verify explicitly supplied older-format records only.
 - Example configuration explicitly enables authentication. Compose requires a
   config file, binds published ports to loopback and starts workers after readiness.
 - Go minimum is 1.26 with toolchain 1.26.9 selected. CI, Docker/release builds and
@@ -102,6 +105,9 @@ semantic versions.
 - Audit upgrades retain historical rates and account for a recorded legacy
   column transition without rewriting INSERT-journal evidence or permitting
   later mutations.
+- Legacy customer metadata with nonboolean flags or nonstring execution keys
+  retains historical defaults during transaction reads and recovery. Raw INSERT
+  evidence and canonical bytes remain unchanged; current controls stay strict.
 - Notification/notifier setup and delivery use the originating instance's
   configuration, receiver and signing secret; borrowed datasource resources
   remain caller-owned.

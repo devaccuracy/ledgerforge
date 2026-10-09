@@ -58,7 +58,7 @@ type ChainRow struct {
 	CreatedAt         time.Time
 }
 
-// ComputeChainHash is the legacy v1 encoding, retained for existing commitments.
+// ComputeChainHash is the v1 encoding, retained for older-format verification.
 // New seals use ComputeChainHashVersion with canonical version 3.
 func ComputeChainHash(prevHash string, r ChainRow) string {
 	canonical := strings.Join([]string{
@@ -132,7 +132,7 @@ func CanonicalChainV3(prevHash string, r ChainRow) []byte {
 	return b.Bytes()
 }
 
-// ComputeChainHashVersion preserves v1 commitments already in the database.
+// ComputeChainHashVersion verifies explicitly supplied v1/v2 records and v3 seals.
 func ComputeChainHashVersion(version int, prevHash string, r ChainRow) (string, error) {
 	switch version {
 	case 1:

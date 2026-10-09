@@ -18,7 +18,6 @@ package integrity
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math/big"
 	"sort"
@@ -135,7 +134,9 @@ func Check(snapshot Snapshot) Report {
 		rows[r.TransactionID] = r
 		var control model.ExecutionControls
 		if r.ExecutionControls != "" {
-			if err := json.Unmarshal([]byte(r.ExecutionControls), &control); err != nil {
+			var err error
+			control, err = model.DecodeExecutionControls([]byte(r.ExecutionControls))
+			if err != nil {
 				add("unsupported_legacy", "", r.TransactionID, "invalid execution schema evidence")
 			}
 		}

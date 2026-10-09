@@ -26,7 +26,8 @@ WHERE action_type = 'INSERT' AND succeeded
 HAVING NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'ledgerforge' AND table_name = 'transactions' AND column_name = 'rate');
 ALTER TABLE ledgerforge.transactions ADD COLUMN IF NOT EXISTS rate NUMERIC NOT NULL DEFAULT 1;
 ALTER TABLE ledgerforge.transactions ADD COLUMN chain_version SMALLINT;
--- NULL version on an existing sealed row denotes v1; no whole-table backfill.
+-- NULL version denotes v1 for explicit older-format records/fixtures. Supported
+-- main upgrades contain no seals; the worker starts directly with v3.
 ALTER TABLE ledgerforge.transactions ADD CONSTRAINT transaction_chain_complete CHECK (
     (chain_seq IS NULL AND chain_prev_hash IS NULL AND chain_hash IS NULL AND chain_version IS NULL)
     OR (chain_seq IS NOT NULL AND chain_seq > 0 AND COALESCE(chain_version, 1) IN (1, 2, 3)
@@ -69,7 +70,7 @@ FOR EACH ROW EXECUTE FUNCTION ledgerforge.prevent_transaction_update();
 -- +migrate StatementEnd
 
 -- +migrate Down
--- Retain the financial/DELETE protection and sealed v1 bookkeeping policy.
+-- Retain financial/DELETE protection, including older-format sealed records.
 -- The optional JSON lookup above also works after chain_version is removed.
 DROP TABLE ledgerforge.chain_checkpoints;
 DROP TABLE ledgerforge.chain_schema_transitions;

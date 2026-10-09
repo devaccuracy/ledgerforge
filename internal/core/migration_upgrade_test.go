@@ -187,7 +187,8 @@ func TestMigrationUpgradePreservesV1Commitment(t *testing.T) {
 	conn := openMigrationTestDB(t)
 	set := migrate.MigrationSet{SchemaName: "ledgerforge"}
 	current := migrate.EmbedFileSystemMigrationSource{FileSystem: SQLFiles, Root: "sql"}
-	// Build a pre-v2 installation and seal a row using the original v1 encoding.
+	// Partially migrate a fixture and seal a row using the v1 encoding. This
+	// tests format verification, not an upgrade from a released installation.
 	_, err := set.ExecVersion(conn, "postgres", current, migrate.Up, 1781162329)
 	require.NoError(t, err)
 	created := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)

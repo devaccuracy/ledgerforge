@@ -48,6 +48,20 @@ func TestReplayLifecycle(t *testing.T) {
 		t.Fatalf("partial reservation: %+v", r.Issues)
 	}
 }
+
+func TestReplayLegacyCustomerMetadataTypes(t *testing.T) {
+	s := fixture()
+	for i := range s.Transactions {
+		s.Transactions[i].ExecutionControls = `{"economic_version":0,"allow_overdraft":"merchant_label","inflight":7,"atomic":[],"queue_lane":true,"queued_parent":9}`
+	}
+	if r := Check(s); !r.Verified {
+		t.Fatalf("legacy customer metadata poisoned replay: %+v", r.Issues)
+	}
+	s.Transactions[0].ExecutionControls = `{"economic_version":1,"allow_overdraft":"merchant_label"}`
+	if r := Check(s); r.Verified {
+		t.Fatal("malformed current execution controls accepted")
+	}
+}
 func TestReplayFindings(t *testing.T) {
 	cases := []struct {
 		name, kind string
