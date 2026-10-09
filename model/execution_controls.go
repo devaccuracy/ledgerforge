@@ -78,6 +78,38 @@ func (t *Transaction) ExecutionMetadata() map[string]interface{} {
 	return t.MetaData
 }
 
+// DecodeExecutionControls applies the historical type checks only to schema 0.
+// It never normalizes the original evidence used by the hash chain.
+func DecodeExecutionControls(data []byte) (ExecutionControls, error) {
+	var schema struct {
+		EconomicVersion int `json:"economic_version"`
+	}
+	var controls ExecutionControls
+	if err := json.Unmarshal(data, &schema); err != nil {
+		return controls, err
+	}
+	if schema.EconomicVersion != 0 {
+		err := json.Unmarshal(data, &controls)
+		return controls, err
+	}
+	var legacy map[string]interface{}
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return controls, err
+	}
+	controls.ReservedMetadata, _ = legacy["reserved_metadata"].(map[string]interface{})
+	controls.AllowOverdraft, _ = legacy["allow_overdraft"].(bool)
+	controls.Inflight, _ = legacy["inflight"].(bool)
+	controls.Atomic, _ = legacy["atomic"].(bool)
+	// Main did not restore SkipQueue from metadata, even for a boolean value.
+	controls.QueuedParent, _ = legacy["queued_parent"].(string)
+	controls.ShadowFor, _ = legacy["shadow_for"].(string)
+	controls.QueueLane = "normal"
+	if lane, ok := legacy["queue_lane"].(string); ok && lane == "hot" {
+		controls.QueueLane = lane
+	}
+	return controls, nil
+}
+
 // DecodeTransactionMetadata consumes the private SQL projection of immutable
 // controls. The marker is removed before metadata leaves the database layer.
 func DecodeTransactionMetadata(data []byte, t *Transaction) error {
@@ -89,8 +121,8 @@ func DecodeTransactionMetadata(data []byte, t *Transaction) error {
 		if err != nil {
 			return err
 		}
-		var c ExecutionControls
-		if err := json.Unmarshal(b, &c); err != nil {
+		c, err := DecodeExecutionControls(b)
+		if err != nil {
 			return err
 		}
 		c.Apply(t)

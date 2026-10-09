@@ -199,7 +199,7 @@ func (d Datasource) CountQueuedTransactionsForPairLane(ctx context.Context, sour
 		  AND t.source = $1
 		  AND t.destination = $2
 		  AND t.currency = $3
-		  AND COALESCE(ledgerforge.transaction_execution_controls(t.transaction_id, t.execution_controls)->>'queue_lane', 'normal') = $4
+		  AND CASE WHEN ledgerforge.transaction_execution_controls(t.transaction_id, t.execution_controls)->'queue_lane' = '"hot"'::jsonb THEN 'hot' ELSE 'normal' END = $4
 		  AND NOT EXISTS (
 		      SELECT 1 FROM ledgerforge.transactions child
 		      WHERE child.parent_transaction = t.transaction_id
