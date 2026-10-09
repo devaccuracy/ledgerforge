@@ -25,11 +25,12 @@ var version = "dev"
 func main() {
 	configPath := flag.String("config", "./ledgerforge.json", "path to LedgerForge configuration")
 	allowWrites := flag.Bool("allow-write", false, "enable MCP tools that change ledger state")
+	apiKey := flag.String("api-key", os.Getenv("LEDGERFORGE_MCP_API_KEY"), "API key identity for MCP; also reads LEDGERFORGE_MCP_API_KEY")
 	showVersion := flag.Bool("version", false, "print the server version and exit")
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Fprintln(os.Stdout, version)
+		_, _ = fmt.Fprintln(os.Stdout, version)
 		return
 	}
 
@@ -60,9 +61,16 @@ func main() {
 		}
 	}()
 
+	if *apiKey != "" {
+		key, err := service.GetAPIKeyByKey(context.Background(), *apiKey)
+		if err != nil || key == nil || !key.IsValid() {
+			log.Fatal("MCP API-key identity is invalid, expired, or revoked")
+		}
+	}
 	server := mcpserver.New(service, mcpserver.Options{
 		Version:     version,
 		AllowWrites: *allowWrites,
+		APIKey:      *apiKey,
 	})
 	if *allowWrites {
 		log.Print("LedgerForge MCP write tools are enabled")

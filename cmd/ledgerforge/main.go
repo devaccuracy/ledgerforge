@@ -18,7 +18,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 
 	"github.com/devaccuracy/ledgerforge"
@@ -49,34 +48,40 @@ func recoverPanic() {
 	}
 }
 
+// loadInstance loads the configuration file and initializes the LedgerForge
+// instance into app. Extracted from preRun so the initialization sequence
+// returns errors instead of exiting, keeping the Fatal at the command layer.
+func loadInstance(app *ledgerforgeInstance, configFile string) error {
+	// Initialize configuration from the specified configuration file.
+	if err := config.InitConfig(configFile); err != nil {
+		return fmt.Errorf("error loading config: %w", err)
+	}
+
+	// Fetch the configuration settings.
+	cnf, err := config.Fetch()
+	if err != nil {
+		return err
+	}
+
+	// Initialize the LedgerForge instance using the fetched configuration.
+	newLedgerForge, err := setupLedgerForge(cnf)
+	if err != nil {
+		notification.NotifyError(err) // Notify via the internal notification system
+		return err
+	}
+
+	// Assign the new LedgerForge instance and configuration to the app struct.
+	app.ledgerforge = newLedgerForge
+	app.cnf = cnf
+
+	return nil
+}
+
 // preRun sets up the configuration and initializes the LedgerForge instance before running any command.
 // It ensures that the configuration is loaded, and the LedgerForge instance is initialized properly.
 func preRun(app *ledgerforgeInstance, configFile *string) func(cmd *cobra.Command, args []string) error {
 	return func(cmd *cobra.Command, args []string) error {
-		// Initialize configuration from the specified configuration file.
-		err := config.InitConfig(*configFile)
-		if err != nil {
-			log.Fatal("error loading config", err)
-		}
-
-		// Fetch the configuration settings.
-		cnf, err := config.Fetch()
-		if err != nil {
-			return err
-		}
-
-		// Initialize the LedgerForge instance using the fetched configuration.
-		newLedgerForge, err := setupLedgerForge(cnf)
-		if err != nil {
-			notification.NotifyError(err) // Notify via the internal notification system
-			log.Fatal(err)                // Log the fatal error
-		}
-
-		// Assign the new LedgerForge instance and configuration to the app struct.
-		app.ledgerforge = newLedgerForge
-		app.cnf = cnf
-
-		return nil
+		return loadInstance(app, *configFile)
 	}
 }
 
@@ -118,9 +123,13 @@ func NewCLI() *LedgerForge {
 	rootCmd.PersistentPreRunE = preRun(b, &configFile)
 
 	// Add various subcommands to the root command.
-	rootCmd.AddCommand(serverCommands(b))  // Command for starting the server
-	rootCmd.AddCommand(workerCommands(b))  // Command for worker processes
-	rootCmd.AddCommand(migrateCommands(b)) // Command for database/schema migrations
+	rootCmd.AddCommand(serverCommands(b))      // Command for starting the server
+	rootCmd.AddCommand(workerCommands(b))      // Command for worker processes
+	rootCmd.AddCommand(migrateCommands(b))     // Command for database/schema migrations
+	rootCmd.AddCommand(verifyChainCommands(b)) // Command for verifying the transaction hash chain
+
+	rootCmd.AddCommand(verifyCommands(b))
+	rootCmd.AddCommand(auditCommands(b))
 
 	return &LedgerForge{cmd: rootCmd}
 }

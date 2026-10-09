@@ -19,7 +19,9 @@ package core
 
 import (
 	"embed"
+	"errors"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/hibiken/asynq"
@@ -34,24 +36,29 @@ import (
 	"github.com/devaccuracy/ledgerforge/internal/search"
 	"github.com/devaccuracy/ledgerforge/internal/tokenization"
 
-	"github.com/devaccuracy/ledgerforge/model"
+	"github.com/devaccuracy/ledgerforge/internal/reconciliation"
 	"github.com/redis/go-redis/v9"
 )
 
 // LedgerForge represents the main struct for the LedgerForge application.
 type LedgerForge struct {
-	queue       *Queue
-	search      *search.TypesenseClient
-	redis       redis.UniversalClient
-	asynqClient *asynq.Client
-	datasource  database.IDataSource
-	bt          *model.BalanceTracker
-	tokenizer   *tokenization.TokenizationService
-	httpClient  *http.Client
-	Hooks       hooks.HookManager
-	config      *config.Configuration
-	cache       cache.Cache
-	hotPairs    *hotpairs.Manager
+	queue              *Queue
+	search             *search.TypesenseClient
+	redis              redis.UniversalClient
+	asynqClient        *asynq.Client
+	datasource         database.IDataSource
+	tokenizer          *tokenization.TokenizationService
+	httpClient         *http.Client
+	Hooks              hooks.HookManager
+	config             *config.Configuration
+	cache              cache.Cache
+	hotPairs           *hotpairs.Manager
+	reconciliationOnce sync.Once
+	reconciliation     *reconciliation.Service
+	reindexOnce        sync.Once
+	reindex            *search.ReindexJobs
+	closeOnce          sync.Once
+	closeErr           error
 }
 
 const (
@@ -63,26 +70,23 @@ var SQLFiles embed.FS
 
 // initializeRedisClients sets up both the Redis client and Asynq client
 func initializeRedisClients(config *config.Configuration) (redis.UniversalClient, *asynq.Client, error) {
-	redisClient, err := redis_db.NewRedisClient([]string{config.Redis.Dns}, config.Redis.SkipTLSVerify, &redis_db.PoolConfig{
-		PoolSize:     config.Redis.PoolSize,
-		MinIdleConns: config.Redis.MinIdleConns,
-	})
+	pool := &redis_db.PoolConfig{
+		PoolSize:        config.Redis.PoolSize,
+		MinIdleConns:    config.Redis.MinIdleConns,
+		ConnMaxIdleTime: config.Redis.ConnMaxIdleTime,
+	}
+
+	redisClient, err := redis_db.NewRedisClient([]string{config.Redis.Dns}, config.Redis.SkipTLSVerify, pool)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	redisOption, err := redis_db.ParseRedisURL(config.Redis.Dns, config.Redis.SkipTLSVerify)
+	connOpt, err := redis_db.NewConnOpt(config.Redis.Dns, config.Redis.SkipTLSVerify, pool)
 	if err != nil {
+		_ = redisClient.Client().Close()
 		return nil, nil, err
 	}
-
-	asynqClient := asynq.NewClient(asynq.RedisClientOpt{
-		Addr:      redisOption.Addr,
-		Password:  redisOption.Password,
-		DB:        redisOption.DB,
-		TLSConfig: redisOption.TLSConfig,
-		PoolSize:  config.Redis.PoolSize,
-	})
+	asynqClient := asynq.NewClient(connOpt)
 
 	return redisClient.Client(), asynqClient, nil
 }
@@ -110,7 +114,7 @@ func initializeHTTPClient() *http.Client {
 }
 
 // NewLedgerForge initializes a new instance of LedgerForge with the provided database datasource.
-// It fetches the configuration, initializes Redis client, balance tracker, queue, and search client.
+// It fetches the configuration, initializes Redis clients, queue, reconciliation, and search services.
 //
 // Parameters:
 // - db database.IDataSource: The datasource for database operations.
@@ -129,14 +133,13 @@ func NewLedgerForge(db database.IDataSource) (*LedgerForge, error) {
 		return nil, err
 	}
 
-	bt := NewBalanceTracker()
 	hotPairManager := hotpairs.NewManager(redisClient, hotpairs.Config{
 		Enabled:                 configuration.Queue.EnableHotLane,
 		HotQueueName:            configuration.Queue.HotQueueName,
 		HotPairTTL:              configuration.Queue.HotPairTTL,
 		LockContentionThreshold: configuration.Queue.HotPairLockContentionThreshold,
 	})
-	newQueue := NewQueue(configuration, asynqClient)
+	newQueue := NewQueue(configuration, asynqClient, redisClient)
 	newSearch := search.NewTypesenseClient(configuration.TypeSenseKey, []string{configuration.TypeSense.Dns})
 	hookManager := hooks.NewHookManager(redisClient, asynqClient)
 	tokenizer := initializeTokenizationService(configuration)
@@ -146,7 +149,6 @@ func NewLedgerForge(db database.IDataSource) (*LedgerForge, error) {
 
 	b := &LedgerForge{
 		datasource:  db,
-		bt:          bt,
 		queue:       newQueue,
 		redis:       redisClient,
 		asynqClient: asynqClient,
@@ -159,22 +161,39 @@ func NewLedgerForge(db database.IDataSource) (*LedgerForge, error) {
 		hotPairs:    hotPairManager,
 	}
 
-	notification.RegisterWebhookSender(func(event string, payload interface{}) error {
-		return b.SendWebhook(NewWebhook{
-			Event:   event,
-			Payload: payload,
-		})
-	})
+	b.queue.notifyError = b.notifyError
+	b.reconciliationService()
+	b.reindexJobs()
 
 	return b, nil
 }
 
 // Close properly closes all connections and resources used by the LedgerForge instance.
 func (b *LedgerForge) Close() error {
-	if b.asynqClient != nil {
-		return b.asynqClient.Close()
-	}
-	return nil
+	b.closeOnce.Do(func() {
+		b.reindexJobs().Close()
+		var closeErrors []error
+		if b.queue != nil && b.queue.Inspector != nil {
+			closeErrors = append(closeErrors, b.queue.Inspector.Close())
+		}
+		if b.asynqClient != nil {
+			closeErrors = append(closeErrors, b.asynqClient.Close())
+		}
+		if b.redis != nil {
+			closeErrors = append(closeErrors, b.redis.Close())
+		}
+		if b.httpClient != nil {
+			b.httpClient.CloseIdleConnections()
+		}
+		b.closeErr = errors.Join(closeErrors...)
+	})
+	return b.closeErr
+}
+
+func (b *LedgerForge) notifyError(err error) {
+	notification.NotifyErrorWithSender(err, b.Config(), func(event string, payload interface{}) error {
+		return b.SendWebhook(NewWebhook{Event: event, Payload: payload})
+	})
 }
 
 // Config returns the cached configuration for the LedgerForge instance.

@@ -1,0 +1,287 @@
+/*
+Copyright 2026 LedgerForge Contributors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package api
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/devaccuracy/ledgerforge/config"
+	"github.com/devaccuracy/ledgerforge/model"
+)
+
+// A repeated refund must not move money.
+//
+// The refund of X is itself a child of X, so a second refund of X used to
+// select both X and the refund of X. The refund had not itself been refunded,
+// so it passed validation and was reversed -- re-applying the original payment
+// -- while X failed as already refunded. The aggregated error surfaced as 409
+// after the money had already moved, which reads to a caller like a safe
+// idempotency rejection.
+func TestRefundTwiceDoesNotReverseTheRefund(t *testing.T) {
+	router, b, err := setupRouter(t)
+	require.NoError(t, err)
+	src, dst := newDryRunFixture(t, b)
+
+	txn, err := b.QueueTransaction(t.Context(), &model.Transaction{
+		Reference: model.GenerateUUIDWithSuffix("refidem"), Source: src, Destination: dst,
+		Amount: 1, Precision: 100, Currency: "USD", SkipQueue: true,
+	})
+	require.NoError(t, err)
+
+	refund := func() int {
+		w := doJSON(router, http.MethodPost, "/refund-transaction/"+txn.TransactionID,
+			map[string]interface{}{"skip_queue": true})
+		return w.Code
+	}
+
+	require.Equal(t, http.StatusCreated, refund(), "the first refund must succeed")
+
+	srcAfterFirst, err := b.GetBalanceByID(t.Context(), src, nil, false)
+	require.NoError(t, err)
+	dstAfterFirst, err := b.GetBalanceByID(t.Context(), dst, nil, false)
+	require.NoError(t, err)
+
+	// Every further attempt must be inert, not just the second.
+	for attempt := 2; attempt <= 3; attempt++ {
+		assert.Equal(t, http.StatusConflict, refund(), "refund attempt %d should conflict", attempt)
+
+		srcNow, err := b.GetBalanceByID(t.Context(), src, nil, false)
+		require.NoError(t, err)
+		dstNow, err := b.GetBalanceByID(t.Context(), dst, nil, false)
+		require.NoError(t, err)
+
+		assert.Equal(t, srcAfterFirst.Balance.String(), srcNow.Balance.String(),
+			"refund attempt %d moved the source balance while reporting failure", attempt)
+		assert.Equal(t, dstAfterFirst.Balance.String(), dstNow.Balance.String(),
+			"refund attempt %d moved the destination balance while reporting failure", attempt)
+	}
+}
+
+// Default (queued) refund path: worker applies the reversal, then repeats are inert.
+func TestRefundQueuedThenRepeatDoesNotMoveBalances(t *testing.T) {
+	router, b, err := setupRouter(t)
+	require.NoError(t, err)
+
+	cnf, err := config.Fetch()
+	require.NoError(t, err)
+
+	queueName := fmt.Sprintf("%s_%d", cnf.Queue.TransactionQueue, 1)
+	cleanup := StartTestAsynqWorker(t, cnf, b, queueName)
+	defer cleanup()
+
+	src, dst := newDryRunFixture(t, b)
+
+	txn, err := b.QueueTransaction(t.Context(), &model.Transaction{
+		Reference: model.GenerateUUIDWithSuffix("refqueue"), Source: src, Destination: dst,
+		Amount: 1, Precision: 100, Currency: "USD", SkipQueue: true,
+	})
+	require.NoError(t, err)
+
+	w := doJSON(router, http.MethodPost, "/refund-transaction/"+txn.TransactionID, map[string]interface{}{})
+	require.Equal(t, http.StatusCreated, w.Code, "first queued refund must succeed: %s", w.Body.String())
+
+	appliedRef := model.RefundReference(txn.TransactionID) + "_q"
+	_, err = pollForTransactionStatus(context.Background(), b.GetDataSource(), appliedRef, "APPLIED", 200*time.Millisecond, 10*time.Second)
+	require.NoError(t, err, "worker must apply the queued refund")
+
+	srcAfterApply := balanceString(t, b, src)
+	dstAfterApply := balanceString(t, b, dst)
+
+	refund := func() int {
+		return doJSON(router, http.MethodPost, "/refund-transaction/"+txn.TransactionID, map[string]interface{}{}).Code
+	}
+
+	for attempt := 2; attempt <= 3; attempt++ {
+		assert.Equal(t, http.StatusConflict, refund(), "refund attempt %d should conflict", attempt)
+		assert.Equal(t, srcAfterApply, balanceString(t, b, src),
+			"refund attempt %d moved the source balance while reporting failure", attempt)
+		assert.Equal(t, dstAfterApply, balanceString(t, b, dst),
+			"refund attempt %d moved the destination balance while reporting failure", attempt)
+	}
+}
+
+// Split legs are children of the parent too, so excluding refunds by parentage
+// would have made them unrefundable. Excluding by the refund reference must
+// leave a fan-out refund working.
+func TestRefundStillRefundsSplitLegs(t *testing.T) {
+	router, b, err := setupRouter(t)
+	require.NoError(t, err)
+	src, dstA := newDryRunFixture(t, b)
+	_, dstB := newDryRunFixture(t, b)
+
+	srcPre := balanceString(t, b, src)
+	dstAPre := balanceString(t, b, dstA)
+	dstBPre := balanceString(t, b, dstB)
+
+	txn, err := b.QueueTransaction(t.Context(), &model.Transaction{
+		Reference: model.GenerateUUIDWithSuffix("splitref"), Source: src,
+		Amount: 2, Precision: 100, Currency: "USD", SkipQueue: true,
+		Destinations: []model.Distribution{
+			{Identifier: dstA, Distribution: "50%"},
+			{Identifier: dstB, Distribution: "50%"},
+		},
+	})
+	require.NoError(t, err)
+
+	srcPostPay := balanceString(t, b, src)
+	dstAPostPay := balanceString(t, b, dstA)
+	dstBPostPay := balanceString(t, b, dstB)
+	require.NotEqual(t, dstAPre, dstAPostPay, "leg A should have been credited")
+	require.NotEqual(t, dstBPre, dstBPostPay, "leg B should have been credited")
+	require.NotEqual(t, srcPre, srcPostPay, "source should have been debited")
+
+	w := doJSON(router, http.MethodPost, "/refund-transaction/"+txn.TransactionID,
+		map[string]interface{}{"skip_queue": true})
+	require.Equal(t, http.StatusCreated, w.Code, "a fan-out refund must still work: %s", w.Body.String())
+
+	assert.Equal(t, srcPre, balanceString(t, b, src), "source should be restored after refund")
+	assert.Equal(t, dstAPre, balanceString(t, b, dstA), "leg A should be restored after refund")
+	assert.Equal(t, dstBPre, balanceString(t, b, dstB), "leg B should be restored after refund")
+}
+
+// After one split leg is refunded directly, a parent fan-out refund should
+// finish the remaining legs and return success — not 409 with silent partial apply.
+func TestRefundParentCompletesAfterOneSplitLegRefunded(t *testing.T) {
+	router, b, err := setupRouter(t)
+	require.NoError(t, err)
+	src, dstA := newDryRunFixture(t, b)
+	_, dstB := newDryRunFixture(t, b)
+
+	srcPre := balanceString(t, b, src)
+	dstAPre := balanceString(t, b, dstA)
+	dstBPre := balanceString(t, b, dstB)
+
+	ref := model.GenerateUUIDWithSuffix("splitpart")
+	txn, err := b.QueueTransaction(t.Context(), &model.Transaction{
+		Reference: ref, Source: src,
+		Amount: 2, Precision: 100, Currency: "USD", SkipQueue: true,
+		Destinations: []model.Distribution{
+			{Identifier: dstA, Distribution: "50%"},
+			{Identifier: dstB, Distribution: "50%"},
+		},
+	})
+	require.NoError(t, err)
+
+	leg1Ref := ref + "-1"
+	leg1, err := b.GetTransactionByRef(t.Context(), leg1Ref)
+	require.NoError(t, err)
+
+	w := doJSON(router, http.MethodPost, "/refund-transaction/"+leg1.TransactionID,
+		map[string]interface{}{"skip_queue": true})
+	require.Equal(t, http.StatusCreated, w.Code, "single-leg refund must succeed: %s", w.Body.String())
+
+	assert.Equal(t, "49900", balanceString(t, b, src))
+	assert.Equal(t, "0", balanceString(t, b, dstA))
+	assert.Equal(t, "100", balanceString(t, b, dstB))
+
+	w = doJSON(router, http.MethodPost, "/refund-transaction/"+txn.TransactionID,
+		map[string]interface{}{"skip_queue": true})
+	require.Equal(t, http.StatusCreated, w.Code,
+		"parent refund must finish remaining legs: %s", w.Body.String())
+
+	assert.Equal(t, srcPre, balanceString(t, b, src))
+	assert.Equal(t, dstAPre, balanceString(t, b, dstA))
+	assert.Equal(t, dstBPre, balanceString(t, b, dstB))
+
+	w = doJSON(router, http.MethodPost, "/refund-transaction/"+txn.TransactionID,
+		map[string]interface{}{"skip_queue": true})
+	assert.Equal(t, http.StatusConflict, w.Code, "fully refunded parent must conflict")
+	assert.Equal(t, srcPre, balanceString(t, b, src))
+	assert.Equal(t, dstAPre, balanceString(t, b, dstA))
+	assert.Equal(t, dstBPre, balanceString(t, b, dstB))
+}
+
+// Queued path for the split partial-refund scenario: worker applies each
+// reversal before the next refund is issued.
+func TestRefundParentCompletesAfterOneSplitLegRefundedQueued(t *testing.T) {
+	router, b, err := setupRouter(t)
+	require.NoError(t, err)
+
+	cnf, err := config.Fetch()
+	require.NoError(t, err)
+
+	queueName := fmt.Sprintf("%s_%d", cnf.Queue.TransactionQueue, 1)
+	cleanup := StartTestAsynqWorker(t, cnf, b, queueName)
+	defer cleanup()
+
+	ds := b.GetDataSource()
+	src, dstA := newDryRunFixture(t, b)
+	_, dstB := newDryRunFixture(t, b)
+
+	srcPre := balanceString(t, b, src)
+	dstAPre := balanceString(t, b, dstA)
+	dstBPre := balanceString(t, b, dstB)
+
+	ref := model.GenerateUUIDWithSuffix("splitpartq")
+	txn, err := b.QueueTransaction(t.Context(), &model.Transaction{
+		Reference: ref, Source: src,
+		Amount: 2, Precision: 100, Currency: "USD", SkipQueue: true,
+		Destinations: []model.Distribution{
+			{Identifier: dstA, Distribution: "50%"},
+			{Identifier: dstB, Distribution: "50%"},
+		},
+	})
+	require.NoError(t, err)
+
+	leg1, err := b.GetTransactionByRef(t.Context(), ref+"-1")
+	require.NoError(t, err)
+	leg2, err := b.GetTransactionByRef(t.Context(), ref+"-2")
+	require.NoError(t, err)
+
+	w := doJSON(router, http.MethodPost, "/refund-transaction/"+leg1.TransactionID, map[string]interface{}{})
+	require.Equal(t, http.StatusCreated, w.Code, "queued single-leg refund must succeed: %s", w.Body.String())
+
+	_, err = pollForTransactionStatus(context.Background(), ds, model.RefundReference(leg1.TransactionID)+"_q", "APPLIED", 200*time.Millisecond, 10*time.Second)
+	require.NoError(t, err, "worker must apply the queued leg-1 refund")
+
+	assert.Equal(t, "49900", balanceString(t, b, src))
+	assert.Equal(t, "0", balanceString(t, b, dstA))
+	assert.Equal(t, "100", balanceString(t, b, dstB))
+
+	w = doJSON(router, http.MethodPost, "/refund-transaction/"+txn.TransactionID, map[string]interface{}{})
+	require.Equal(t, http.StatusCreated, w.Code,
+		"queued parent refund must finish remaining legs: %s", w.Body.String())
+
+	_, err = pollForTransactionStatus(context.Background(), ds, model.RefundReference(leg2.TransactionID)+"_q", "APPLIED", 200*time.Millisecond, 10*time.Second)
+	require.NoError(t, err, "worker must apply the queued leg-2 refund")
+
+	assert.Equal(t, srcPre, balanceString(t, b, src))
+	assert.Equal(t, dstAPre, balanceString(t, b, dstA))
+	assert.Equal(t, dstBPre, balanceString(t, b, dstB))
+
+	w = doJSON(router, http.MethodPost, "/refund-transaction/"+txn.TransactionID, map[string]interface{}{})
+	assert.Equal(t, http.StatusConflict, w.Code, "fully refunded parent must conflict")
+	assert.Equal(t, srcPre, balanceString(t, b, src))
+	assert.Equal(t, dstAPre, balanceString(t, b, dstA))
+	assert.Equal(t, dstBPre, balanceString(t, b, dstB))
+}
+
+func balanceString(t *testing.T, b interface {
+	GetBalanceByID(ctx context.Context, id string, include []string, withQueued bool) (*model.Balance, error)
+}, balanceID string) string {
+	t.Helper()
+	bal, err := b.GetBalanceByID(t.Context(), balanceID, nil, false)
+	require.NoError(t, err)
+	return bal.Balance.String()
+}

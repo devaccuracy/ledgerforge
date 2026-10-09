@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/devaccuracy/ledgerforge/internal/apierror"
@@ -8,16 +9,50 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+var errHooksRequireMasterKey = errors.New("hook management requires master key")
+
+// hookFailureCode distinguishes a missing hook (the manager returns
+// "hook not found: <id>") from genuine infrastructure failures.
+//
+// resolveErrorCode rather than classifyMessage: a not-found the manager
+// reports as a typed APIError, or as a wrapped sql.ErrNoRows, is still a
+// not-found even when its text matches no pattern.
+func hookFailureCode(err error) apierror.ErrorCode {
+	if code, ok := resolveErrorCode(err); ok && apierror.StatusForCode(code) == http.StatusNotFound {
+		return apierror.ErrHookNotFound
+	}
+	return apierror.ErrHookOperationFailed
+}
+
+func isHookMasterKeyRequest(c *gin.Context) bool {
+	isMasterKey, _ := c.Get("isMasterKey")
+	isMaster, _ := isMasterKey.(bool)
+	return isMaster
+}
+
+func ensureHookManagementAuthorized(c *gin.Context) bool {
+	if isHookMasterKeyRequest(c) {
+		return true
+	}
+
+	respondCode(c, apierror.ErrAuthMasterKeyRequired, errHooksRequireMasterKey.Error(), nil)
+	return false
+}
+
 // RegisterHook handles the registration of a new webhook.
 func (a *Api) RegisterHook(c *gin.Context) {
+	if !ensureHookManagementAuthorized(c) {
+		return
+	}
+
 	var hook hooks.Hook
 	if err := c.ShouldBindJSON(&hook); err != nil {
-		c.JSON(http.StatusBadRequest, apierror.NewAPIError(apierror.ErrInvalidInput, "invalid hook data", err))
+		respondBareAPIError(c, apierror.NewAPIError(apierror.ErrInvalidInput, "invalid hook data", err), apierror.ErrHookInvalid)
 		return
 	}
 
 	if err := a.ledgerforge.Hooks.RegisterHook(c.Request.Context(), &hook); err != nil {
-		c.JSON(http.StatusBadRequest, apierror.NewAPIError(apierror.ErrInvalidInput, "failed to register hook", err))
+		respondBareAPIError(c, apierror.NewAPIError(apierror.ErrInvalidInput, "failed to register hook", err), apierror.ErrHookOperationFailed)
 		return
 	}
 
@@ -26,15 +61,19 @@ func (a *Api) RegisterHook(c *gin.Context) {
 
 // UpdateHook handles updating an existing webhook.
 func (a *Api) UpdateHook(c *gin.Context) {
+	if !ensureHookManagementAuthorized(c) {
+		return
+	}
+
 	hookID := c.Param("id")
 	var hook hooks.Hook
 	if err := c.ShouldBindJSON(&hook); err != nil {
-		c.JSON(http.StatusBadRequest, apierror.NewAPIError(apierror.ErrInvalidInput, "invalid hook data", err))
+		respondBareAPIError(c, apierror.NewAPIError(apierror.ErrInvalidInput, "invalid hook data", err), apierror.ErrHookInvalid)
 		return
 	}
 
 	if err := a.ledgerforge.Hooks.UpdateHook(c.Request.Context(), hookID, &hook); err != nil {
-		c.JSON(http.StatusBadRequest, apierror.NewAPIError(apierror.ErrInvalidInput, "failed to update hook", err))
+		respondBareAPIError(c, apierror.NewAPIError(apierror.ErrInvalidInput, "failed to update hook", err), hookFailureCode(err))
 		return
 	}
 
@@ -43,10 +82,14 @@ func (a *Api) UpdateHook(c *gin.Context) {
 
 // GetHook retrieves a specific webhook by ID.
 func (a *Api) GetHook(c *gin.Context) {
+	if !ensureHookManagementAuthorized(c) {
+		return
+	}
+
 	hookID := c.Param("id")
 	hook, err := a.ledgerforge.Hooks.GetHook(c.Request.Context(), hookID)
 	if err != nil {
-		c.JSON(http.StatusNotFound, apierror.NewAPIError(apierror.ErrNotFound, "hook not found", err))
+		respondBareAPIError(c, apierror.NewAPIError(apierror.ErrNotFound, "hook not found", err), apierror.ErrHookNotFound)
 		return
 	}
 
@@ -55,10 +98,14 @@ func (a *Api) GetHook(c *gin.Context) {
 
 // ListHooks retrieves all hooks of a specific type.
 func (a *Api) ListHooks(c *gin.Context) {
+	if !ensureHookManagementAuthorized(c) {
+		return
+	}
+
 	hookType := hooks.HookType(c.Query("type"))
 	hooks, err := a.ledgerforge.Hooks.ListHooks(c.Request.Context(), hookType)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, apierror.NewAPIError(apierror.ErrInvalidInput, "failed to list hooks", err))
+		respondBareAPIError(c, apierror.NewAPIError(apierror.ErrInvalidInput, "failed to list hooks", err), apierror.ErrHookOperationFailed)
 		return
 	}
 
@@ -67,9 +114,13 @@ func (a *Api) ListHooks(c *gin.Context) {
 
 // DeleteHook removes a webhook by ID.
 func (a *Api) DeleteHook(c *gin.Context) {
+	if !ensureHookManagementAuthorized(c) {
+		return
+	}
+
 	hookID := c.Param("id")
 	if err := a.ledgerforge.Hooks.DeleteHook(c.Request.Context(), hookID); err != nil {
-		c.JSON(http.StatusBadRequest, apierror.NewAPIError(apierror.ErrInvalidInput, "failed to delete hook", err))
+		respondBareAPIError(c, apierror.NewAPIError(apierror.ErrInvalidInput, "failed to delete hook", err), hookFailureCode(err))
 		return
 	}
 

@@ -22,6 +22,8 @@ This includes commands for applying and rolling back migrations.
 package main
 
 import (
+	"fmt"
+
 	"github.com/devaccuracy/ledgerforge"
 	"github.com/devaccuracy/ledgerforge/config"
 	"github.com/devaccuracy/ledgerforge/database"
@@ -44,41 +46,50 @@ func migrateCommands(_ *ledgerforgeInstance) *cobra.Command {
 	return cmd
 }
 
+// runMigrations fetches the configuration, connects to the database, and
+// applies (or rolls back) the embedded SQL migrations in the "ledgerforge" schema.
+// It returns the number of migrations applied.
+func runMigrations(direction migrate.MigrationDirection) (int, error) {
+	// Define the source of the migrations.
+	migrations := migrate.EmbedFileSystemMigrationSource{
+		FileSystem: ledgerforge.SQLFiles,
+		Root:       "sql",
+	}
+
+	// Fetch the configuration.
+	cnf, err := config.Fetch()
+	if err != nil {
+		return 0, fmt.Errorf("error fetching config: %w", err)
+	}
+
+	// Connect to the database.
+	db, err := database.ConnectDB(cnf.DataSource)
+	if err != nil {
+		return 0, fmt.Errorf("error connecting to database: %w", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	// Set the schema for the migrations. (Previously only the up path set
+	// this; a standalone `migrate down` would have targeted the default
+	// search_path instead of the ledgerforge schema.)
+	migrate.SetSchema("ledgerforge")
+
+	return migrate.Exec(db, "postgres", migrations, direction)
+}
+
 // migrateUpCommands creates the command for applying migrations.
 func migrateUpCommands() *cobra.Command {
 	cmd := &cobra.Command{
-		Use: "up",
-		Run: func(cmd *cobra.Command, args []string) {
-			// Define the source of the migrations.
-			migrations := migrate.EmbedFileSystemMigrationSource{
-				FileSystem: ledgerforge.SQLFiles,
-				Root:       "sql",
-			}
-
-			// Fetch the configuration.
-			cnf, err := config.Fetch()
+		Use:           "up",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			n, err := runMigrations(migrate.Up)
 			if err != nil {
-				logrus.Errorf("Error fetching config: %v", err)
-				return
+				return fmt.Errorf("error migrating up: %w", err)
 			}
-
-			// Connect to the database.
-			db, err := database.ConnectDB(cnf.DataSource)
-			if err != nil {
-				logrus.Errorf("Error connecting to database: %v", err)
-				return
-			}
-
-			// Set the schema for the migrations.
-			migrate.SetSchema("ledgerforge")
-
-			// Apply the migrations.
-			n, err := migrate.Exec(db, "postgres", migrations, migrate.Up)
-			if err != nil {
-				logrus.Errorf("Error migrating up: %v", err)
-			} else {
-				logrus.Infof("Applied %d migrations!\n", n)
-			}
+			logrus.Infof("Applied %d migrations!\n", n)
+			return nil
 		},
 	}
 
@@ -88,35 +99,16 @@ func migrateUpCommands() *cobra.Command {
 // migrateDownCommands creates the command for rolling back migrations.
 func migrateDownCommands() *cobra.Command {
 	cmd := &cobra.Command{
-		Use: "down",
-		Run: func(cmd *cobra.Command, args []string) {
-			// Define the source of the migrations.
-			migrations := migrate.EmbedFileSystemMigrationSource{
-				FileSystem: ledgerforge.SQLFiles,
-				Root:       "sql",
-			}
-
-			// Fetch the configuration.
-			cnf, err := config.Fetch()
+		Use:           "down",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			n, err := runMigrations(migrate.Down)
 			if err != nil {
-				logrus.Errorf("Error fetching config: %v", err)
-				return
+				return fmt.Errorf("error migrating down: %w", err)
 			}
-
-			// Connect to the database.
-			db, err := database.ConnectDB(cnf.DataSource)
-			if err != nil {
-				logrus.Errorf("Error connecting to database: %v", err)
-				return
-			}
-
-			// Roll back the migrations.
-			n, err := migrate.Exec(db, "postgres", migrations, migrate.Down)
-			if err != nil {
-				logrus.Errorf("Error migrating down: %v", err)
-			} else {
-				logrus.Infof("Rolled back %d migrations!\n", n)
-			}
+			logrus.Infof("Rolled back %d migrations!\n", n)
+			return nil
 		},
 	}
 

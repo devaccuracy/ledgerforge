@@ -1,4 +1,4 @@
-ledgerforge
+/ledgerforge
 /ledgerforge-mcp
 */node_modules
 node_modules
@@ -12,3 +12,5 @@ heartbeat.db
 CLAUDE.md
 __pycache__/
 *.py[cod]
+tests/loadtest/*.json
+tests/loadtest/*.ndjson

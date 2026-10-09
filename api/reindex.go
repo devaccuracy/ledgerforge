@@ -17,11 +17,12 @@ limitations under the License.
 package api
 
 import (
-	"context"
 	"net/http"
-	"sync"
 
-	"github.com/devaccuracy/ledgerforge/internal/search"
+	"errors"
+	"github.com/devaccuracy/ledgerforge/internal/apierror"
+
+	ledgerforge "github.com/devaccuracy/ledgerforge"
 	"github.com/gin-gonic/gin"
 )
 
@@ -29,13 +30,6 @@ import (
 type ReindexRequest struct {
 	BatchSize int `json:"batch_size"`
 }
-
-type reindexManager struct {
-	service *search.ReindexService
-	mu      sync.RWMutex
-}
-
-var globalReindexManager = &reindexManager{}
 
 // StartReindex triggers a full reindex of all data from the database to Typesense.
 // The reindex runs asynchronously to avoid HTTP timeouts.
@@ -56,38 +50,24 @@ func (a Api) StartReindex(c *gin.Context) {
 		req.BatchSize = 1000
 	}
 
-	globalReindexManager.mu.Lock()
-	if globalReindexManager.service != nil {
-		progress := globalReindexManager.service.GetProgress()
-		if progress.Status == "in_progress" {
-			globalReindexManager.mu.Unlock()
-			c.JSON(http.StatusConflict, gin.H{
-				"error":    "A reindex operation is already in progress",
-				"progress": progress,
-			})
-			return
-		}
+	progress, err := a.ledgerforge.StartReindex(req.BatchSize)
+	if errors.Is(err, ledgerforge.ErrReindexInProgress) {
+		msg := "A reindex operation is already in progress"
+		c.JSON(http.StatusConflict, gin.H{
+			"error":        msg,
+			"progress":     progress,
+			"error_detail": apierror.NewErrorResponse(apierror.ErrSrchReindexInProgress, msg, progress).Error,
+		})
+		return
 	}
-
-	config := search.ReindexConfig{
-		BatchSize: req.BatchSize,
+	if err != nil {
+		respondCode(c, apierror.ErrInternalServer, "Failed to start reindex operation", nil)
+		return
 	}
-
-	reindexService := search.NewReindexService(
-		a.ledgerforge.GetSearchClient(),
-		a.ledgerforge.GetDataSource(),
-		config,
-	)
-	globalReindexManager.service = reindexService
-	globalReindexManager.mu.Unlock()
-
-	go func() {
-		_, _ = reindexService.StartReindex(context.Background())
-	}()
 
 	c.JSON(http.StatusAccepted, gin.H{
 		"message":  "Reindex operation started",
-		"progress": reindexService.GetProgress(),
+		"progress": progress,
 	})
 }
 
@@ -100,16 +80,11 @@ func (a Api) StartReindex(c *gin.Context) {
 // - 200 OK: Returns current progress.
 // - 404 Not Found: If no reindex operation has been started.
 func (a Api) GetReindexProgress(c *gin.Context) {
-	globalReindexManager.mu.RLock()
-	defer globalReindexManager.mu.RUnlock()
-
-	if globalReindexManager.service == nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": "No reindex operation has been started",
-		})
+	progress, err := a.ledgerforge.GetReindexProgress()
+	if err != nil {
+		respondCode(c, apierror.ErrSrchReindexNotStarted, "No reindex operation has been started", nil)
 		return
 	}
 
-	progress := globalReindexManager.service.GetProgress()
 	c.JSON(http.StatusOK, progress)
 }

@@ -16,17 +16,20 @@ limitations under the License.
 package api
 
 import (
+	"context"
 	"errors"
-	"math/big"
+	"fmt"
+	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
 
+	ledgerforge "github.com/devaccuracy/ledgerforge"
 	model2 "github.com/devaccuracy/ledgerforge/api/model"
-	"github.com/devaccuracy/ledgerforge/config"
-	"github.com/devaccuracy/ledgerforge/database"
+	"github.com/devaccuracy/ledgerforge/internal/apierror"
 	"github.com/devaccuracy/ledgerforge/model"
 
 	"github.com/gin-gonic/gin"
@@ -63,77 +66,74 @@ func transformTransaction(txn *model.Transaction) *model.Transaction {
 		}
 	}
 
-	// Check for inflight flag in metadata and move it to the main field
-	if result.MetaData != nil {
-		if inflightVal, exists := result.MetaData["inflight"]; exists {
-			if inflight, ok := inflightVal.(bool); ok && inflight {
-				result.Inflight = true
-				// Remove from metadata to avoid duplication
-				delete(result.MetaData, "inflight")
-			}
-		}
+	delete(result.MetaData, "inflight")
+	return &result
+}
 
-		// If metadata is now empty, set it to nil
-		if len(result.MetaData) == 0 {
-			result.MetaData = nil
-		}
+// respondPreview writes a dry-run projection.
+//
+// The status is 200 rather than 201 because nothing was created. A projected
+// rejection is still a 200: the request succeeded and the answer is "no".
+//
+// The rejection carries the same error code a real post would have returned,
+// resolved through the classifier every other endpoint uses, so existing
+// client-side handling for e.g. TXN_INSUFFICIENT_FUNDS works against a preview
+// without change.
+func (a Api) respondPreview(c *gin.Context, preview *model.TransactionPreview, err error) {
+	if err != nil {
+		respondError(c, err,
+			withUpgrade(apierror.ErrGenNotFound, apierror.ErrTxnNotFound),
+			withDefault(apierror.ErrTxnValidation))
+		return
 	}
 
-	return &result
+	resolvePreviewRejectionCode(preview)
+	c.JSON(http.StatusOK, preview)
+}
+
+// resolvePreviewRejectionCode fills in the error code a real post would have
+// returned for a projected rejection, using the same classifier the other
+// endpoints resolve errors through.
+func resolvePreviewRejectionCode(preview *model.TransactionPreview) {
+	if preview == nil || preview.Rejection == nil {
+		return
+	}
+	rawMessage := preview.Rejection.Message
+	if preview.Rejection.Code == "" {
+		code, ok := classifyMessage(rawMessage)
+		if !ok {
+			code = apierror.ErrTxnValidation
+		}
+		preview.Rejection.Code = string(code)
+	}
+	preview.Rejection.Message = clientErrorMessage(errors.New(rawMessage), apierror.ErrorCode(preview.Rejection.Code))
+	if preview.Rejection.Message != rawMessage {
+		logrus.WithField("error", rawMessage).Debug("preview rejection details suppressed")
+	}
+}
+
+// resolvePreviewRejectionCodes fills in rejection codes across a batch.
+func resolvePreviewRejectionCodes(previews []model.TransactionPreview) {
+	for i := range previews {
+		resolvePreviewRejectionCode(&previews[i])
+	}
 }
 
 func handleRecordTransactionValidationError(c *gin.Context, err error) {
 	var validationErrors validation.Errors
 	if errors.As(err, &validationErrors) {
 		if precisionErr, ok := validationErrors["Precision"]; ok && errors.Is(precisionErr, model2.ErrPrecisionMustBeInteger) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": precisionErr.Error()})
+			respondCode(c, apierror.ErrTxnPrecisionNotInteger, precisionErr.Error(), nil)
 			return
 		}
 	}
 
 	if errors.Is(err, model2.ErrPrecisionMustBeInteger) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondCode(c, apierror.ErrTxnPrecisionNotInteger, err.Error(), nil)
 		return
 	}
 
-	c.JSON(http.StatusBadRequest, gin.H{"errors": err.Error()})
-}
-
-// RecordTransaction handles the recording of a new transaction.
-// It binds the incoming JSON request to a RecordTransaction object, validates it,
-// and then records the transaction. If any errors occur during validation or recording,
-// it responds with an appropriate error message.
-//
-// Parameters:
-// - c: The Gin context containing the request and response.
-//
-// Responses:
-// - 400 Bad Request: If there's an error in binding JSON or validating the transaction.
-// - 201 Created: If the transaction is successfully recorded.
-func (a Api) RecordTransaction(c *gin.Context) {
-	var newTransaction model2.RecordTransaction
-	// Bind the incoming JSON request to the newTransaction model
-	if err := c.ShouldBindJSON(&newTransaction); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"errors": err.Error()})
-		return
-	}
-
-	// Validate the transaction data
-	err := newTransaction.ValidateRecordTransaction()
-	if err != nil {
-		handleRecordTransactionValidationError(c, err)
-		return
-	}
-
-	// Record the transaction using the LedgerForge service
-	resp, err := a.ledgerforge.RecordTransaction(c.Request.Context(), newTransaction.ToTransaction())
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Return a response with the recorded transaction, properly transformed
-	c.JSON(http.StatusCreated, transformTransaction(resp))
+	respondCode(c, apierror.ErrTxnValidation, err.Error(), nil, withLegacyKey("errors"))
 }
 
 // QueueTransaction handles queuing a new transaction for later processing.
@@ -152,7 +152,7 @@ func (a Api) QueueTransaction(c *gin.Context) {
 	// Bind the incoming JSON request to the newTransaction model
 	if err := c.ShouldBindJSON(&newTransaction); err != nil {
 		logrus.WithError(err).Error("failed to bind transaction JSON")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+		respondCode(c, apierror.ErrGenMalformedRequest, "Invalid input", nil)
 		return
 	}
 
@@ -163,11 +163,19 @@ func (a Api) QueueTransaction(c *gin.Context) {
 		return
 	}
 
+	// A dry run answers what the transaction would do and stops there, so it
+	// never reaches the queue.
+	if newTransaction.DryRun {
+		preview, err := a.ledgerforge.PreviewTransaction(c.Request.Context(), newTransaction.ToTransaction())
+		a.respondPreview(c, preview, err)
+		return
+	}
+
 	// Queue the transaction using the LedgerForge service
 	resp, err := a.ledgerforge.QueueTransaction(c.Request.Context(), newTransaction.ToTransaction())
 	if err != nil {
 		logrus.WithError(err).Error("failed to queue transaction")
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, err, withUpgrade(apierror.ErrGenNotFound, apierror.ErrTxnNotFound), withDefault(apierror.ErrTxnValidation))
 		return
 	}
 
@@ -175,9 +183,43 @@ func (a Api) QueueTransaction(c *gin.Context) {
 	c.JSON(http.StatusCreated, transformTransaction(resp))
 }
 
+// refundTransactionRequest is the optional JSON body of a refund
+// request. It is OPTIONAL: an empty body keeps the default behavior
+// (the refund is queued for asynchronous processing).
+type refundTransactionRequest struct {
+	// SkipQueue, when true, processes the refund synchronously instead
+	// of placing it on the transaction queue — useful for time-sensitive
+	// refunds where the caller needs immediate confirmation. Mirrors the
+	// skip_queue flag on Create Transaction.
+	SkipQueue bool `json:"skip_queue"`
+
+	// DryRun projects the reversal and returns the resulting balances without
+	// creating the refund. The parent transaction is not marked refunded, so a
+	// real refund afterwards still succeeds.
+	DryRun bool `json:"dry_run"`
+
+	// MetaData is merged onto the metadata the reversal inherits from the
+	// original transaction, with these keys winning on conflict. Use it to
+	// classify the reversal — {"type": "refund"} — distinctly from the
+	// movement it reverses.
+	//
+	// Merging rather than replacing keeps the keys the ledger sets on the
+	// original, which downstream processing reads.
+	MetaData map[string]interface{} `json:"meta_data,omitempty"`
+
+	// Description replaces the reversal's description, which otherwise copies
+	// the original transaction's.
+	Description string `json:"description,omitempty"`
+}
+
 // RefundTransaction processes a refund for a transaction based on the given ID.
 // It retrieves the transaction to be refunded and processes it in batches. If any errors
 // occur during retrieval or processing, it responds with an appropriate error message.
+//
+// The JSON body is optional. {"skip_queue": true} processes the refund
+// synchronously; an absent or empty body queues it (the default).
+// "description" and "meta_data" set those fields on the reversal, which
+// otherwise inherits the original transaction's.
 //
 // Parameters:
 // - c: The Gin context containing the request and response.
@@ -188,16 +230,41 @@ func (a Api) QueueTransaction(c *gin.Context) {
 func (a Api) RefundTransaction(c *gin.Context) {
 	id, passed := c.Params.Get("id")
 	if !passed {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "id is required. pass id in the route /:id"})
+		respondCode(c, apierror.ErrGenMissingParameter, "id is required. pass id in the route /:id", nil)
 		return
 	}
-	transaction, err := a.ledgerforge.ProcessTransactionInBatches(c.Request.Context(), id, big.NewInt(0), 1, false, a.ledgerforge.GetRefundableTransactionsByParentID, a.ledgerforge.RefundWorker)
+
+	// The body is optional — the long-standing bodiless
+	// `POST /refund-transaction/:id` must keep working unchanged. An
+	// empty body makes encoding/json (via ShouldBindJSON) return io.EOF;
+	// treat ONLY that as "no options supplied" and reject any other
+	// bind error. Detecting emptiness via io.EOF is reliable regardless
+	// of Content-Length / chunked transfer encoding.
+	var req refundTransactionRequest
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		respondCode(c, apierror.ErrGenMalformedRequest, sanitizeBindError(err), nil)
+		return
+	}
+
+	if req.DryRun {
+		preview, err := a.ledgerforge.PreviewRefund(c.Request.Context(), id)
+		a.respondPreview(c, preview, err)
+		return
+	}
+
+	refundOptions := ledgerforge.RefundOptions{
+		SkipQueue:   req.SkipQueue,
+		Description: req.Description,
+		MetaData:    req.MetaData,
+	}
+
+	transaction, err := a.ledgerforge.ProcessRefundsInBatches(c.Request.Context(), id, refundOptions)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, err, withUpgrade(apierror.ErrGenNotFound, apierror.ErrTxnNotFound), withDefault(apierror.ErrGenBadRequest))
 		return
 	}
 	if len(transaction) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "no transaction to refund"})
+		respondCode(c, apierror.ErrTxnNotFound, "no transaction to refund", nil)
 		return
 	}
 	resp := transformTransaction(transaction[0])
@@ -218,13 +285,13 @@ func (a Api) GetTransaction(c *gin.Context) {
 	id, passed := c.Params.Get("id")
 
 	if !passed {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "id is required. pass id in the route /:id"})
+		respondCode(c, apierror.ErrGenMissingParameter, "id is required. pass id in the route /:id", nil)
 		return
 	}
 
 	resp, err := a.ledgerforge.GetTransaction(c.Request.Context(), id)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, err, withUpgrade(apierror.ErrGenNotFound, apierror.ErrTxnNotFound))
 		return
 	}
 
@@ -245,13 +312,13 @@ func (a Api) GetTransactionByRef(c *gin.Context) {
 	reference, passed := c.Params.Get("reference")
 
 	if !passed {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "reference is required. pass reference in the route /ref/:reference"})
+		respondCode(c, apierror.ErrGenMissingParameter, "reference is required. pass reference in the route /ref/:reference", nil)
 		return
 	}
 
 	resp, err := a.ledgerforge.GetTransactionByRef(c.Request.Context(), reference)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, err, withUpgrade(apierror.ErrGenNotFound, apierror.ErrTxnNotFound))
 		return
 	}
 
@@ -293,14 +360,15 @@ func (a Api) GetAllTransactions(c *gin.Context) {
 	if HasFilters(c) {
 		filters, parseErrors := ParseFiltersFromContext(c, nil)
 		if len(parseErrors) > 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"errors": parseErrors})
+			respondCode(c, apierror.ErrGenValidation, "invalid filter parameters", parseErrors,
+				withLegacyKey("errors"), withLegacyValue(parseErrors))
 			return
 		}
 
 		// Use the new filter method
 		transactions, err := a.ledgerforge.GetAllTransactionsWithFilter(c.Request.Context(), filters, limitInt, offsetInt)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			respondError(c, err)
 			return
 		}
 
@@ -317,7 +385,7 @@ func (a Api) GetAllTransactions(c *gin.Context) {
 	// Fall back to legacy method when no filters are present
 	transactions, err := a.ledgerforge.GetAllTransactions(limitInt, offsetInt)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, err)
 		return
 	}
 
@@ -355,13 +423,13 @@ func (a Api) GetAllTransactions(c *gin.Context) {
 func (a Api) FilterTransactions(c *gin.Context) {
 	filters, opts, limit, offset, err := ParseFiltersFromBody(c, "transactions")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondCode(c, apierror.ErrGenValidation, err.Error(), nil)
 		return
 	}
 
 	transactions, count, err := a.ledgerforge.GetAllTransactionsWithFilterAndOptions(c.Request.Context(), filters, opts, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, err)
 		return
 	}
 
@@ -393,89 +461,172 @@ func (a Api) UpdateInflightStatus(c *gin.Context) {
 	id, passed := c.Params.Get("txID")
 	var req model2.InflightUpdate
 	if !passed {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "id is required. pass id in the route /:id"})
+		respondCode(c, apierror.ErrGenMissingParameter, "id is required. pass id in the route /:id", nil)
 		return
 	}
 	err := c.BindJSON(&req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondCode(c, apierror.ErrGenMalformedRequest, sanitizeBindError(err), nil)
 		return
-	}
-
-	cnf, err := config.Fetch()
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	ds, err := database.GetDBConnection(cnf)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	amount := model.ApplyPrecisionWithDBLookup(&model.Transaction{Amount: req.Amount, TransactionID: id}, ds.Conn)
-
-	if req.PreciseAmount != nil {
-		amount = req.PreciseAmount
 	}
 
 	status := req.Status
-	if status == "commit" {
+	if status != ledgerforge.InflightActionCommit && status != ledgerforge.InflightActionVoid {
+		respondCode(c, apierror.ErrTxnInvalidStatusAction, "status not supported. use either commit or void", nil)
+		return
+	}
+
+	amount, err := a.resolveInflightAmount(c.Request.Context(), id, req.Amount, req.ExactAmount(), req.PreciseAmount)
+	if err != nil {
+		respondError(c, err, withDefault(apierror.ErrTxnInvalidAmount))
+		return
+	}
+
+	if req.DryRun {
+		preview, err := a.ledgerforge.PreviewInflightAction(c.Request.Context(), id, status, amount)
+		a.respondPreview(c, preview, err)
+		return
+	}
+
+	// Default: route the action through the inflight-commit queue. The response
+	// is the still-inflight parent plus a queued marker; the worker applies it.
+	if !req.SkipQueue {
+		parent, err := a.ledgerforge.QueueInflightAction(c.Request.Context(), id, amount, status)
+		if err != nil {
+			if errors.Is(err, ledgerforge.ErrInflightActionQueued) {
+				respondCode(c, apierror.ErrGenConflict, "a commit or void is already queued for this transaction", nil)
+				return
+			}
+			respondError(c, err, withUpgrade(apierror.ErrGenNotFound, apierror.ErrTxnNotFound), withDefault(apierror.ErrGenBadRequest))
+			return
+		}
+		c.JSON(http.StatusOK, queuedInflightResponse{Transaction: transformTransaction(parent), Queued: true})
+		return
+	}
+
+	// skip_queue: process synchronously (legacy behavior).
+	if status == ledgerforge.InflightActionCommit {
 		transaction, err := a.ledgerforge.ProcessTransactionInBatches(c.Request.Context(), id, amount, 1, false, a.ledgerforge.GetInflightTransactionsByParentID, a.ledgerforge.CommitWorker)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			respondError(c, err, withUpgrade(apierror.ErrGenNotFound, apierror.ErrTxnNotFound), withDefault(apierror.ErrGenBadRequest))
 			return
 		}
 		if len(transaction) == 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "no transaction to commit"})
-			return
-		}
-		resp = transformTransaction(transaction[0])
-	} else if status == "void" {
-		transaction, err := a.ledgerforge.ProcessTransactionInBatches(c.Request.Context(), id, amount, 1, false, a.ledgerforge.GetInflightTransactionsByParentID, a.ledgerforge.VoidWorker)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		if len(transaction) == 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "no transaction to void"})
+			respondCode(c, apierror.ErrTxnNotInflight, "no transaction to commit", nil)
 			return
 		}
 		resp = transformTransaction(transaction[0])
 	} else {
-		c.JSON(http.StatusBadRequest, gin.H{"error": errors.New("status not supported. use either commit or void")})
-		return
+		transaction, err := a.ledgerforge.ProcessTransactionInBatches(c.Request.Context(), id, amount, 1, false, a.ledgerforge.GetInflightTransactionsByParentID, a.ledgerforge.VoidWorker)
+		if err != nil {
+			respondError(c, err, withUpgrade(apierror.ErrGenNotFound, apierror.ErrTxnNotFound), withDefault(apierror.ErrGenBadRequest))
+			return
+		}
+		if len(transaction) == 0 {
+			respondCode(c, apierror.ErrTxnNotInflight, "no transaction to void", nil)
+			return
+		}
+		resp = transformTransaction(transaction[0])
 	}
 
 	c.JSON(http.StatusOK, resp)
+}
+
+// queuedInflightResponse is the body returned when a commit/void is queued. The
+// embedded transaction promotes all its fields to the top level (unchanged for
+// existing clients); `queued` marks that the action was accepted but not yet
+// applied (the transaction is still INFLIGHT).
+type queuedInflightResponse struct {
+	*model.Transaction
+	Queued bool `json:"queued"`
 }
 
 // CreateBulkTransactions handles the creation of multiple transactions in a batch.
 // It parses the request, calls the LedgerForge service to handle the core logic,
 // and returns the appropriate HTTP response based on the result.
 func (a Api) CreateBulkTransactions(c *gin.Context) {
-	// Parse the request into the model struct
-	var req model.BulkTransactionRequest
+	var req model2.BulkTransactionRequest
 	if err := c.BindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body: " + err.Error()})
+		respondCode(c, apierror.ErrGenMalformedRequest, "Invalid request body: "+sanitizeBindError(err), nil)
+		return
+	}
+
+	if len(req.Transactions) == 0 {
+		respondCode(c, apierror.ErrTxnBulkEmpty, "transactions cannot be empty", nil)
+		return
+	}
+	if len(req.Transactions) > model2.MaxBulkTransactionItems {
+		respondCode(c, apierror.ErrTxnBulkLimitExceeded,
+			"too many transactions; max is "+strconv.Itoa(model2.MaxBulkTransactionItems), nil)
+		return
+	}
+
+	for i, transaction := range req.Transactions {
+		if transaction == nil {
+			respondCode(c, apierror.ErrTxnValidation, "transactions["+strconv.Itoa(i)+"] is required",
+				gin.H{"index": i}, withLegacyKey("errors"))
+			return
+		}
+
+		if err := transaction.ValidateRecordTransaction(); err != nil {
+			respondCode(c, apierror.ErrTxnValidation, "transactions["+strconv.Itoa(i)+"]: "+err.Error(),
+				gin.H{"index": i}, withLegacyKey("errors"))
+			return
+		}
+	}
+
+	bulkReq := req.ToBulkTransactionRequest()
+
+	// Projected after the per-item validation above, so a dry run is held to
+	// the same input rules as a real batch, but before anything is dispatched.
+	if req.DryRun {
+		preview, err := a.ledgerforge.PreviewBulkTransactions(c.Request.Context(), bulkReq)
+		if err != nil {
+			respondError(c, err,
+				withUpgrade(apierror.ErrGenNotFound, apierror.ErrTxnNotFound),
+				withDefault(apierror.ErrTxnValidation))
+			return
+		}
+		resolvePreviewRejectionCodes(preview.Results)
+		c.JSON(http.StatusOK, preview)
 		return
 	}
 
 	// Call the service layer method to handle bulk transaction creation
-	result, err := a.ledgerforge.CreateBulkTransactions(c.Request.Context(), &req)
+	result, err := a.ledgerforge.CreateBulkTransactions(c.Request.Context(), bulkReq)
 	// Handle the response based on the result and error from the service layer
 	if err != nil {
-		// If there was an error during synchronous processing
+		// Some failures (e.g. async-bulk semaphore saturation) return a nil
+		// result alongside a typed API error; surface that error's own status
+		// code instead of dereferencing the nil result.
+		if result == nil {
+			respondError(c, err, withDefault(apierror.ErrGenBadRequest))
+			return
+		}
+		// If there was an error during synchronous processing.
+		// The code is resolved from the error itself, not from result.Error:
+		// the batch error wraps whatever the failing item raised, so a typed
+		// APIError — BAL_NOT_FOUND for a missing source balance, say —
+		// resolves to its own code here exactly as it does on the single-
+		// transaction route. Matching on the flattened message instead would
+		// hit the broad "transaction ... not found" pattern first and report
+		// TXN_NOT_FOUND for a balance that does not exist. batch_id stays a
+		// top-level sibling field.
 		logrus.WithError(err).WithField("batch_id", result.BatchID).Error("bulk transaction API error")
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":    result.Error, // Use the detailed error from the result
-			"batch_id": result.BatchID,
+		code, ok := resolveErrorCode(err)
+		if !ok {
+			code = apierror.ErrGenBadRequest
+		}
+		c.JSON(apierror.StatusForCode(code), gin.H{
+			"error":        clientErrorMessage(err, code),
+			"batch_id":     result.BatchID,
+			"error_detail": apierror.NewErrorResponse(code, clientErrorMessage(err, code), gin.H{"batch_id": result.BatchID}).Error,
 		})
 		return
 	}
 
 	// Handle successful responses
-	if req.RunAsync {
+	if bulkReq.RunAsync {
 		// Async request acknowledged
 		c.JSON(http.StatusAccepted, gin.H{
 			"message":  "Bulk transaction processing started",
@@ -495,13 +646,13 @@ func (a Api) CreateBulkTransactions(c *gin.Context) {
 func (a Api) GetTransactionLineage(c *gin.Context) {
 	id, passed := c.Params.Get("id")
 	if !passed {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "id is required. pass id in the route /:id"})
+		respondCode(c, apierror.ErrGenMissingParameter, "id is required. pass id in the route /:id", nil)
 		return
 	}
 
 	lineage, err := a.ledgerforge.GetTransactionLineage(c.Request.Context(), id)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, err, withUpgrade(apierror.ErrGenNotFound, apierror.ErrTxnNotFound))
 		return
 	}
 
@@ -517,7 +668,7 @@ func (a Api) RecoverQueuedTransactions(c *gin.Context) {
 	if thresholdStr := c.Query("threshold"); thresholdStr != "" {
 		parsed, err := time.ParseDuration(thresholdStr)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid threshold duration: " + err.Error()})
+			respondCode(c, apierror.ErrGenValidation, "invalid threshold duration: "+err.Error(), nil)
 			return
 		}
 		threshold = parsed
@@ -525,9 +676,281 @@ func (a Api) RecoverQueuedTransactions(c *gin.Context) {
 
 	recovered, err := a.ledgerforge.RecoverQueuedTransactions(c.Request.Context(), threshold)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondError(c, err)
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"recovered": recovered, "threshold": threshold.String()})
+}
+
+// respondBulkInflightPreview projects a bulk commit or void and writes the
+// result, without settling anything.
+//
+// Items are projected independently rather than cumulatively, because that
+// is how BulkInflightUpdate really runs them: across a worker pool with no
+// ordering between items, so no item can be said to observe another's
+// effect. Each item is therefore projected against the balances as they
+// stand, and the batch-level balances a cumulative projection would report
+// are deliberately omitted.
+//
+// A per-item projection failure is reported as that item's rejection rather
+// than failing the whole request, mirroring BulkInflightUpdate, whose
+// per-item failures do not abort the rest of the batch. Only an
+// infrastructure error aborts.
+func (a Api) respondBulkInflightPreview(c *gin.Context, action string, items []ledgerforge.BulkInflightItem, resolutionErrors []error) {
+	preview := model.BulkTransactionPreview{
+		DryRun:     true,
+		WouldApply: true,
+		Cumulative: false,
+		Results:    make([]model.TransactionPreview, 0, len(items)),
+	}
+	preview.Notes = append(preview.Notes,
+		"items are dispatched across a worker pool, so each is projected independently against current balances and real execution order is not guaranteed")
+
+	// A transaction id repeated in one batch is projected once per occurrence,
+	// and each occurrence sees the hold still standing — so every one of them
+	// reports would_apply. Really running that batch settles the hold once and
+	// fails the rest, against a hold that is gone or already taken.
+	//
+	// The duplicate is reported rather than resolved. Which occurrence wins is
+	// decided by the worker pool, so marking a particular one as the loser
+	// would assert an ordering the ledger does not provide — the same reason
+	// the batch above is projected independently rather than cumulatively.
+	// Saying that only one can settle is both true and all that is knowable.
+	seen := make(map[string]bool, len(items))
+	dupes := make([]string, 0)
+	for _, item := range items {
+		if seen[item.TransactionID] {
+			dupes = append(dupes, item.TransactionID)
+			continue
+		}
+		seen[item.TransactionID] = true
+	}
+	if len(dupes) > 0 {
+		preview.AddNote(fmt.Sprintf(
+			"transaction id appears more than once in this batch (%s); the occurrences settle the same hold, so only one of them can succeed and which one is not determined",
+			strings.Join(uniqueStrings(dupes), ", ")))
+	}
+
+	for i, item := range items {
+		var itemPreview *model.TransactionPreview
+		var err error
+		if resolutionErrors != nil {
+			err = resolutionErrors[i]
+		}
+		if err == nil {
+			itemPreview, err = a.ledgerforge.PreviewInflightAction(c.Request.Context(), item.TransactionID, action, item.Amount)
+		}
+		if err != nil {
+			// The id could not be resolved at all (missing, or an
+			// infrastructure failure). Report it against the item rather than
+			// discarding the projections already gathered.
+			code, ok := resolveErrorCode(err)
+			if !ok {
+				code = apierror.ErrGenInternal
+			}
+			var amountErr inflightAmountError
+			if errors.As(err, &amountErr) {
+				code = apierror.ErrTxnInvalidAmount
+			}
+			itemPreview = &model.TransactionPreview{
+				DryRun:     true,
+				WouldApply: false,
+				Operation:  action,
+				Rejection:  &model.PreviewRejection{Code: string(code), Message: clientErrorMessage(err, code)},
+			}
+		}
+		if !itemPreview.WouldApply {
+			preview.WouldApply = false
+		}
+		preview.Results = append(preview.Results, *itemPreview)
+	}
+
+	resolvePreviewRejectionCodes(preview.Results)
+	c.JSON(http.StatusOK, preview)
+}
+
+// uniqueStrings returns in, de-duplicated, preserving first-seen order.
+func uniqueStrings(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
+}
+
+// bulkInflightMaxWorkers caps the worker-pool size used by the bulk handlers.
+// 8 is a deliberate compromise: large enough to win meaningful concurrency
+// vs sequential N round-trips, small enough not to flood the lock service or
+// connection pool when many bulk calls are in flight.
+const bulkInflightMaxWorkers = 8
+
+// toAPIResults converts service-layer BulkInflightOutcome values to the
+// public BulkInflightResult shape returned by the handlers.
+func toAPIResults(outcomes []ledgerforge.BulkInflightOutcome) (model2.BulkInflightResponse, int) {
+	resp := model2.BulkInflightResponse{
+		Results: make([]model2.BulkInflightResult, len(outcomes)),
+	}
+	for i, o := range outcomes {
+		r := model2.BulkInflightResult{TransactionID: o.TransactionID}
+		if o.Err == nil {
+			r.Status = "succeeded"
+			resp.Succeeded++
+		} else {
+			r.Status = "failed"
+			r.Code = o.Code
+			code, ok := resolveErrorCode(o.Err)
+			if !ok {
+				code = apierror.ErrGenInternal
+			}
+			r.Message = clientErrorMessage(o.Err, code)
+			resp.Failed++
+		}
+		resp.Results[i] = r
+	}
+	return resp, resp.Failed
+}
+
+// BulkVoidInflight voids many independently-created inflight transactions
+// in a single call. Each id is processed in its own worker; per-item
+// failures are reported in the response body and do not abort the rest of
+// the batch. Returns 200 with the breakdown even when some items fail.
+//
+// Responses:
+// - 400 Bad Request: malformed payload, empty list, or > MaxBulkInflightItems.
+// - 200 OK: bulk processed; see succeeded/failed counts in body.
+func (a Api) BulkVoidInflight(c *gin.Context) {
+	var req model2.BulkInflightVoidRequest
+	if err := c.BindJSON(&req); err != nil {
+		respondCode(c, apierror.ErrGenMalformedRequest, sanitizeBindError(err), nil)
+		return
+	}
+	if len(req.TransactionIDs) == 0 {
+		respondCode(c, apierror.ErrTxnBulkEmpty, "transaction_ids cannot be empty", nil)
+		return
+	}
+	if len(req.TransactionIDs) > model2.MaxBulkInflightItems {
+		respondCode(c, apierror.ErrTxnBulkLimitExceeded, "too many transaction_ids; max is "+strconv.Itoa(model2.MaxBulkInflightItems), nil)
+		return
+	}
+
+	items := make([]ledgerforge.BulkInflightItem, len(req.TransactionIDs))
+	for i, id := range req.TransactionIDs {
+		items[i] = ledgerforge.BulkInflightItem{TransactionID: id}
+	}
+
+	// Ahead of both the queueing and the synchronous branch: a dry run must
+	// not release a hold on either path.
+	if req.DryRun {
+		a.respondBulkInflightPreview(c, ledgerforge.InflightActionVoid, items, nil)
+		return
+	}
+
+	if !req.SkipQueue {
+		c.JSON(http.StatusOK, a.queueBulkInflight(c.Request.Context(), ledgerforge.InflightActionVoid, items))
+		return
+	}
+
+	outcomes, err := a.ledgerforge.BulkInflightUpdate(c.Request.Context(), ledgerforge.BulkInflightVoid, items, bulkInflightMaxWorkers)
+	if err != nil {
+		respondError(c, err, withDefault(apierror.ErrGenBadRequest))
+		return
+	}
+	resp, _ := toAPIResults(outcomes)
+	c.JSON(http.StatusOK, resp)
+}
+
+// queueBulkInflight enqueues a commit/void per item and builds the per-item
+// response: QUEUED on success, ALREADY_QUEUED when one is already in flight
+// (both count as accepted), and a classified failure code if pre-validation
+// rejects the item synchronously.
+func (a Api) queueBulkInflight(ctx context.Context, action string, items []ledgerforge.BulkInflightItem) model2.BulkInflightResponse {
+	resp := model2.BulkInflightResponse{Results: make([]model2.BulkInflightResult, 0, len(items))}
+	for _, it := range items {
+		_, err := a.ledgerforge.QueueInflightAction(ctx, it.TransactionID, it.Amount, action)
+		switch {
+		case err == nil:
+			resp.Results = append(resp.Results, model2.BulkInflightResult{TransactionID: it.TransactionID, Status: "queued", Code: "QUEUED"})
+			resp.Succeeded++
+		case errors.Is(err, ledgerforge.ErrInflightActionQueued):
+			resp.Results = append(resp.Results, model2.BulkInflightResult{TransactionID: it.TransactionID, Status: "queued", Code: "ALREADY_QUEUED", Message: clientErrorMessage(err, apierror.ErrTxnValidation)})
+			resp.Succeeded++
+		default:
+			resp.Results = append(resp.Results, model2.BulkInflightResult{TransactionID: it.TransactionID, Status: "failed", Code: ledgerforge.ClassifyInflightError(err), Message: clientErrorMessage(err, apierror.ErrTxnValidation)})
+			resp.Failed++
+		}
+	}
+	return resp
+}
+
+// BulkCommitInflight commits many independently-created inflight
+// transactions in a single call. Unlike the void variant, each item may
+// carry an optional `amount` / `precise_amount` for partial commits; zero
+// or missing means commit the full remaining inflight amount.
+//
+// Responses:
+// - 400 Bad Request: malformed payload, empty list, or > MaxBulkInflightItems.
+// - 200 OK: bulk processed; see succeeded/failed counts in body.
+func (a Api) BulkCommitInflight(c *gin.Context) {
+	var req model2.BulkInflightCommitRequest
+	if err := c.BindJSON(&req); err != nil {
+		respondCode(c, apierror.ErrGenMalformedRequest, sanitizeBindError(err), nil)
+		return
+	}
+	if len(req.Transactions) == 0 {
+		respondCode(c, apierror.ErrTxnBulkEmpty, "transactions cannot be empty", nil)
+		return
+	}
+	if len(req.Transactions) > model2.MaxBulkInflightItems {
+		respondCode(c, apierror.ErrTxnBulkLimitExceeded, "too many transactions; max is "+strconv.Itoa(model2.MaxBulkInflightItems), nil)
+		return
+	}
+
+	items := make([]ledgerforge.BulkInflightItem, len(req.Transactions))
+	resolutionErrors := make([]error, len(req.Transactions))
+	validItems := make([]ledgerforge.BulkInflightItem, 0, len(req.Transactions))
+	positions := make([]int, 0, len(req.Transactions))
+	response := model2.BulkInflightResponse{Results: make([]model2.BulkInflightResult, len(req.Transactions))}
+	for i, it := range req.Transactions {
+		amount, err := a.resolveInflightAmount(c.Request.Context(), it.TransactionID, it.Amount, it.ExactAmount(), it.PreciseAmount)
+		items[i] = ledgerforge.BulkInflightItem{TransactionID: it.TransactionID, Amount: amount}
+		resolutionErrors[i] = err
+		if err != nil {
+			response.Results[i] = inflightResolutionFailure(it.TransactionID, err)
+			response.Failed++
+			continue
+		}
+		validItems = append(validItems, items[i])
+		positions = append(positions, i)
+	}
+
+	if req.DryRun {
+		a.respondBulkInflightPreview(c, ledgerforge.InflightActionCommit, items, resolutionErrors)
+		return
+	}
+
+	var processed model2.BulkInflightResponse
+	if len(validItems) > 0 {
+		if !req.SkipQueue {
+			processed = a.queueBulkInflight(c.Request.Context(), ledgerforge.InflightActionCommit, validItems)
+		} else {
+			outcomes, err := a.ledgerforge.BulkInflightUpdate(c.Request.Context(), ledgerforge.BulkInflightCommit, validItems, bulkInflightMaxWorkers)
+			if err != nil {
+				respondError(c, err, withDefault(apierror.ErrGenBadRequest))
+				return
+			}
+			processed, _ = toAPIResults(outcomes)
+		}
+	}
+	for i, result := range processed.Results {
+		response.Results[positions[i]] = result
+	}
+	response.Succeeded += processed.Succeeded
+	response.Failed += processed.Failed
+	c.JSON(http.StatusOK, response)
 }

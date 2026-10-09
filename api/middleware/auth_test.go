@@ -24,7 +24,7 @@ func setupLedgerForge(t *testing.T) (*ledgerforge.LedgerForge, error) {
 
 	config.MockConfig(&config.Configuration{
 		Redis:      config.RedisConfig{Dns: "localhost:6379"},
-		DataSource: config.DataSourceConfig{Dns: "postgres://postgres:@localhost:5432/ledgerforge?sslmode=disable"},
+		DataSource: config.DataSourceConfig{Dns: "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable"},
 	})
 	cnf, err := config.Fetch()
 	if err != nil {
@@ -77,6 +77,18 @@ func TestAuthMiddleware_Authenticate(t *testing.T) {
 	}
 
 	comprehensiveKey, err := ledgerforgeService.CreateAPIKey(context.Background(), "comprehensive-key", "test-owner", allPermissionsScopes, time.Now().Add(24*time.Hour))
+	assert.NoError(t, err)
+
+	metadataWriterKey, err := ledgerforgeService.CreateAPIKey(context.Background(), "metadata-writer", "test-owner", []string{"metadata:write"}, time.Now().Add(24*time.Hour))
+	assert.NoError(t, err)
+
+	wildcardAllKey, err := ledgerforgeService.CreateAPIKey(context.Background(), "wildcard-all", "test-owner", []string{"*:*"}, time.Now().Add(24*time.Hour))
+	assert.NoError(t, err)
+
+	wildcardWriteKey, err := ledgerforgeService.CreateAPIKey(context.Background(), "wildcard-write", "test-owner", []string{"*:write"}, time.Now().Add(24*time.Hour))
+	assert.NoError(t, err)
+
+	metadataWildcardActionKey, err := ledgerforgeService.CreateAPIKey(context.Background(), "metadata-wildcard-action", "test-owner", []string{"metadata:*"}, time.Now().Add(24*time.Hour))
 	assert.NoError(t, err)
 
 	tests := []struct {
@@ -525,6 +537,123 @@ func TestAuthMiddleware_Authenticate(t *testing.T) {
 			apiKey:       comprehensiveKey.Key,
 			expectedCode: http.StatusOK,
 		},
+		{
+			name:   "Near-miss master key is rejected",
+			path:   "/ledgers",
+			method: "GET",
+			apiKey: "master-keX", // differs from SecretKey by one char
+			setupConfig: func() *config.Configuration {
+				return &config.Configuration{
+					Server: config.ServerConfig{
+						Secure:    true,
+						SecretKey: "master-key",
+					},
+				}
+			},
+			expectedCode:  http.StatusUnauthorized,
+			expectedError: "Invalid API key",
+		},
+		{
+			name:   "Empty configured secret key does not grant master access",
+			path:   "/ledgers",
+			method: "GET",
+			apiKey: "anything", // no SecretKey configured -> must not be treated as master
+			setupConfig: func() *config.Configuration {
+				return &config.Configuration{
+					Server: config.ServerConfig{
+						Secure:    true,
+						SecretKey: "",
+					},
+				}
+			},
+			expectedCode:  http.StatusUnauthorized,
+			expectedError: "Invalid API key",
+		},
+		{
+			name:   "metadata:write scoped key allows POST /:id/metadata",
+			path:   "/:id/metadata",
+			method: "POST",
+			apiKey: metadataWriterKey.Key,
+			setupConfig: func() *config.Configuration {
+				return &config.Configuration{
+					Server: config.ServerConfig{
+						Secure: true,
+					},
+				}
+			},
+			expectedCode: http.StatusOK,
+		},
+		{
+			name:   "scoped key without metadata:write gets insufficient permissions not unknown resource",
+			path:   "/:id/metadata",
+			method: "POST",
+			apiKey: insufficientKey.Key,
+			setupConfig: func() *config.Configuration {
+				return &config.Configuration{
+					Server: config.ServerConfig{
+						Secure: true,
+					},
+				}
+			},
+			expectedCode:  http.StatusForbidden,
+			expectedError: "Insufficient permissions for metadata:write",
+		},
+		{
+			name:   "*:* wildcard scoped key allows POST /:id/metadata",
+			path:   "/:id/metadata",
+			method: "POST",
+			apiKey: wildcardAllKey.Key,
+			setupConfig: func() *config.Configuration {
+				return &config.Configuration{
+					Server: config.ServerConfig{
+						Secure: true,
+					},
+				}
+			},
+			expectedCode: http.StatusOK,
+		},
+		{
+			name:   "*:write wildcard scoped key allows POST /:id/metadata",
+			path:   "/:id/metadata",
+			method: "POST",
+			apiKey: wildcardWriteKey.Key,
+			setupConfig: func() *config.Configuration {
+				return &config.Configuration{
+					Server: config.ServerConfig{
+						Secure: true,
+					},
+				}
+			},
+			expectedCode: http.StatusOK,
+		},
+		{
+			name:   "metadata:* wildcard scoped key allows POST /:id/metadata",
+			path:   "/:id/metadata",
+			method: "POST",
+			apiKey: metadataWildcardActionKey.Key,
+			setupConfig: func() *config.Configuration {
+				return &config.Configuration{
+					Server: config.ServerConfig{
+						Secure: true,
+					},
+				}
+			},
+			expectedCode: http.StatusOK,
+		},
+		{
+			name:   "*:* wildcard scoped key allows POST /ldg_123/metadata",
+			path:   "/ldg_123/metadata",
+			method: "POST",
+			apiKey: wildcardAllKey.Key,
+			setupConfig: func() *config.Configuration {
+				return &config.Configuration{
+					Server: config.ServerConfig{
+						Secure: true,
+					},
+				}
+			},
+			expectedCode: http.StatusOK,
+		},
 	}
 
 	for _, tt := range tests {
@@ -631,6 +760,16 @@ func TestGetResourceFromPath(t *testing.T) {
 		{
 			name:     "Valid metadata path",
 			path:     "/metadata",
+			expected: ResourceMetadata,
+		},
+		{
+			name:     "/:id/metadata path",
+			path:     "/:id/metadata",
+			expected: ResourceMetadata,
+		},
+		{
+			name:     "/ldg_123/metadata entity path",
+			path:     "/ldg_123/metadata",
 			expected: ResourceMetadata,
 		},
 		{
@@ -889,6 +1028,106 @@ func TestParseScope(t *testing.T) {
 			resource, action := ParseScope(tt.scope)
 			assert.Equal(t, tt.expectedResource, resource)
 			assert.Equal(t, tt.expectedAction, action)
+		})
+	}
+}
+
+func TestScopeCovers(t *testing.T) {
+	tests := []struct {
+		name           string
+		grantedScope   string
+		requestedScope string
+		expected       bool
+	}{
+		{
+			name:           "Exact scope match",
+			grantedScope:   "ledgers:read",
+			requestedScope: "ledgers:read",
+			expected:       true,
+		},
+		{
+			name:           "Resource wildcard covers exact scope",
+			grantedScope:   "*:write",
+			requestedScope: "accounts:write",
+			expected:       true,
+		},
+		{
+			name:           "Action wildcard covers resource action",
+			grantedScope:   "ledgers:*",
+			requestedScope: "ledgers:delete",
+			expected:       true,
+		},
+		{
+			name:           "Exact resource scope does not cover wildcard request",
+			grantedScope:   "ledgers:read",
+			requestedScope: "ledgers:*",
+			expected:       false,
+		},
+		{
+			name:           "Different action is denied",
+			grantedScope:   "ledgers:read",
+			requestedScope: "ledgers:write",
+			expected:       false,
+		},
+		{
+			name:           "Invalid requested scope is denied",
+			grantedScope:   "ledgers:*",
+			requestedScope: "not-a-scope",
+			expected:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ScopeCovers(tt.grantedScope, tt.requestedScope)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestCanGrantScopes(t *testing.T) {
+	tests := []struct {
+		name            string
+		callerScopes    []string
+		requestedScopes []string
+		expected        bool
+	}{
+		{
+			name:            "All requested scopes are covered",
+			callerScopes:    []string{"api-keys:read", "api-keys:write", "ledgers:*"},
+			requestedScopes: []string{"api-keys:read", "ledgers:delete"},
+			expected:        true,
+		},
+		{
+			name:            "Wildcard caller can grant wildcard request",
+			callerScopes:    []string{"*:*"},
+			requestedScopes: []string{"accounts:delete"},
+			expected:        true,
+		},
+		{
+			name:            "Broader requested scope is denied",
+			callerScopes:    []string{"api-keys:write"},
+			requestedScopes: []string{"*:*"},
+			expected:        false,
+		},
+		{
+			name:            "Different resource is denied",
+			callerScopes:    []string{"ledgers:*"},
+			requestedScopes: []string{"accounts:read"},
+			expected:        false,
+		},
+		{
+			name:            "Invalid requested scope is denied",
+			callerScopes:    []string{"ledgers:*"},
+			requestedScopes: []string{"invalid"},
+			expected:        false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := CanGrantScopes(tt.callerScopes, tt.requestedScopes)
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }

@@ -14,52 +14,64 @@
 services:
   server:
     image: ${LEDGERFORGE_IMAGE:-ghcr.io/devaccuracy/ledgerforge:main}
-    container_name: server
     restart: on-failure
-    entrypoint: [ "/bin/sh", "-c" ]
+    entrypoint: ["/bin/sh", "-c"]
     command:
       - "ledgerforge migrate up && ledgerforge start"
     environment:
       TZ: ${TZ:-Etc/UTC}
-      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://jaeger:4318/v1/traces
     ports:
-      - "5001:5001"
-      - "80:80"
-      - "443:443"
+      - "127.0.0.1:${LEDGERFORGE_API_PORT:-5001}:5001"
     depends_on:
-      - redis
-      - postgres
-      - jaeger
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     volumes:
-      - ./ledgerforge.json:/ledgerforge.json
+      - type: bind
+        source: ./ledgerforge.json
+        target: /ledgerforge.json
+        read_only: true
+        bind:
+          create_host_path: false
+
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5001; printf 'GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3; head -n 1 <&3 | grep -q '200'"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
 
   worker:
     image: ${LEDGERFORGE_IMAGE:-ghcr.io/devaccuracy/ledgerforge:main}
-    container_name: worker
     restart: on-failure
-    entrypoint: [ "ledgerforge", "workers" ]
-    environment:
-      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://jaeger:4318/v1/traces
+    entrypoint: ["ledgerforge", "workers"]
     ports:
-      - "5004:5004"
+      - "127.0.0.1:5004:5004"
     depends_on:
-      - redis
-      - postgres
-      - jaeger
+      server:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     volumes:
-      - ./ledgerforge.json:/ledgerforge.json
+      - type: bind
+        source: ./ledgerforge.json
+        target: /ledgerforge.json
+        read_only: true
+        bind:
+          create_host_path: false
 
   redis:
     image: redis:7.2.4
-    container_name: redis
     restart: on-failure
 
   postgres:
     image: ${POSTGRES_IMAGE:-postgres:16}
-    container_name: ${POSTGRES_CONTAINER:-postgres}
     restart: on-failure
     ports:
-      - "${POSTGRES_OUTER_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_OUTER_PORT:-55432}:5432"
     environment:
       TZ: ${TZ:-Etc/UTC}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
@@ -68,47 +80,53 @@ services:
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: [ "CMD", "pg_isready", "-U", "${POSTGRES_USER:-postgres}" ]
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER:-postgres}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   typesense:
     image: typesense/typesense:29.0
-    container_name: typesense
-    command: [ "--data-dir", "/data", "--api-key=ledgerforge-api-key", "--listen-port", "8108" ]
+    profiles:
+      - search
+    command:
+      ["--data-dir", "/data", "--api-key=ledgerforge-api-key", "--listen-port", "8108"]
+    environment:
+      TYPESENSE_MEMORY_USED_MAX_PERCENTAGE: "${TYPESENSE_MEMORY_USED_MAX_PERCENTAGE:-85}"
+    ports:
+      - "127.0.0.1:8108:8108"
     volumes:
       - typesense_data:/data
     logging:
       driver: "none"
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8108/health" ]
+      test: ["CMD", "curl", "-f", "http://localhost:8108/health"]
       interval: 30s
       timeout: 10s
       retries: 5
 
   jaeger:
     image: jaegertracing/all-in-one:latest
-    container_name: jaeger
+    profiles:
+      - tracing
     ports:
-      - "16686:16686" # Jaeger UI
-      - "4317:4317" # OTLP gRPC
-      - "4318:4318" # OTLP HTTP
+      - "127.0.0.1:16686:16686" # Jaeger UI
+      - "127.0.0.1:4317:4317" # OTLP gRPC
+      - "127.0.0.1:4318:4318" # OTLP HTTP
     environment:
       - COLLECTOR_OTLP_ENABLED=true
     healthcheck:
-      test: [ "CMD", "wget", "--spider", "http://localhost:16686" ]
+      test: ["CMD", "wget", "--spider", "http://localhost:16686"]
       interval: 10s
       timeout: 5s
       retries: 3
 
   prometheus:
     image: prom/prometheus:latest
-    container_name: prometheus
     profiles:
       - monitoring
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
     depends_on:

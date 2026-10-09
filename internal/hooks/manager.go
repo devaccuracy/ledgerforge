@@ -34,6 +34,10 @@ const (
 	hookKeyPrefix     = "hooks:"
 	preHookKeyPrefix  = "hooks:pre"
 	postHookKeyPrefix = "hooks:post"
+
+	// maxHookRetryCount caps a hook's retry count so a misconfigured hook can't
+	// schedule an unbounded number of retries (asynq.MaxRetry(hook.RetryCount)).
+	maxHookRetryCount = 10
 )
 
 type redisHookManager struct {
@@ -74,13 +78,16 @@ func NewHookManager(redisClient redis.UniversalClient, queue *asynq.Client) Hook
 // Returns:
 // - error: An error if registration fails.
 func (m *redisHookManager) RegisterHook(ctx context.Context, hook *Hook) error {
+	if hook == nil {
+		return fmt.Errorf("hook is required")
+	}
 	if hook.ID == "" {
 		hook.ID = model.GenerateUUIDWithSuffix("hook")
 	}
 	hook.CreatedAt = time.Now()
 
 	// Validate hook
-	if err := validateHook(hook); err != nil {
+	if err := m.validateHook(ctx, hook); err != nil {
 		return err
 	}
 
@@ -117,6 +124,9 @@ func (m *redisHookManager) RegisterHook(ctx context.Context, hook *Hook) error {
 // Returns:
 // - error: An error if the hook is not found or the update fails.
 func (m *redisHookManager) UpdateHook(ctx context.Context, hookID string, hook *Hook) error {
+	if err := m.validateHook(ctx, hook); err != nil {
+		return err
+	}
 	existing, err := m.GetHook(ctx, hookID)
 	if err != nil {
 		return fmt.Errorf("hook not found: %s", hookID)
@@ -217,10 +227,28 @@ func (m *redisHookManager) GetHook(ctx context.Context, hookID string) (*Hook, e
 // - []*Hook: A slice of retrieved hooks.
 // - error: An error if retrieval fails.
 func (m *redisHookManager) ListHooks(ctx context.Context, hookType HookType) ([]*Hook, error) {
-	typeKey := getTypeKey(hookType)
-	hookIDs, err := m.client.SMembers(ctx, typeKey).Result()
-	if err != nil {
-		return nil, err
+	var hookIDs []string
+	if hookType == "" {
+		seen := make(map[string]struct{})
+		for _, typeKey := range []string{preHookKeyPrefix, postHookKeyPrefix} {
+			ids, err := m.client.SMembers(ctx, typeKey).Result()
+			if err != nil {
+				return nil, err
+			}
+			for _, id := range ids {
+				if _, exists := seen[id]; exists {
+					continue
+				}
+				seen[id] = struct{}{}
+				hookIDs = append(hookIDs, id)
+			}
+		}
+	} else {
+		var err error
+		hookIDs, err = m.client.SMembers(ctx, getTypeKey(hookType)).Result()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	hooks := make([]*Hook, 0, len(hookIDs))
@@ -361,8 +389,14 @@ func (m *redisHookManager) queueHook(ctx context.Context, hook *Hook, payload Ho
 // Returns:
 // - error: An error if validation fails.
 func validateHook(hook *Hook) error {
+	if hook == nil {
+		return fmt.Errorf("hook is required")
+	}
 	if hook.URL == "" {
 		return fmt.Errorf("hook URL is required")
+	}
+	if err := ValidateURL(context.Background(), hook.URL, false); err != nil {
+		return err
 	}
 	if hook.Type != PreTransaction && hook.Type != PostTransaction {
 		return fmt.Errorf("invalid hook type: %s", hook.Type)
@@ -370,8 +404,14 @@ func validateHook(hook *Hook) error {
 	if hook.Timeout <= 0 {
 		hook.Timeout = 30 // Default timeout
 	}
+	if hook.Timeout > 120 {
+		hook.Timeout = 120
+	}
 	if hook.RetryCount < 0 {
 		hook.RetryCount = 3 // Default retry count
+	}
+	if hook.RetryCount > maxHookRetryCount {
+		hook.RetryCount = maxHookRetryCount
 	}
 	return nil
 }
@@ -392,4 +432,16 @@ func getTypeKey(hookType HookType) string {
 	default:
 		return hookKeyPrefix
 	}
+}
+
+func (m *redisHookManager) validateHook(ctx context.Context, hook *Hook) error {
+	if err := validateHook(hook); err != nil {
+		return err
+	}
+	if m.config != nil && m.config.Notification.Webhook.BlockPrivateDestinations {
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		return ValidateURL(ctx, hook.URL, true)
+	}
+	return nil
 }

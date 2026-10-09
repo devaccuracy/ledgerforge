@@ -226,6 +226,20 @@ func (t *TypesenseClient) MultiSearch(ctx context.Context, searchRequests api.Mu
 	return t.Client.MultiSearch.Perform(ctx, &api.MultiSearchParams{}, searchRequests)
 }
 
+// NormalizeTransactionDocument applies the same field normalization as a
+// transactions upsert (metadata coercion, bigint strings, required defaults,
+// time fields) without writing to Typesense. Used by tests to verify reindex
+// payloads retain indexed fields.
+func NormalizeTransactionDocument(data map[string]interface{}) map[string]interface{} {
+	config := collectionConfigs[CollectionTransactions]
+	tc := &TypesenseClient{}
+	_ = tc.processMetadata(data)
+	tc.convertLargeNumbers(config, data)
+	tc.ensureSchemaFields(config, data)
+	tc.normalizeTimeFields(config, data)
+	return data
+}
+
 // HandleNotification processes incoming notifications and updates Typesense collections based on the table and data.
 // It ensures the required fields exist and upserts the data into Typesense.
 func (t *TypesenseClient) HandleNotification(ctx context.Context, table string, data map[string]interface{}) error {
@@ -576,14 +590,13 @@ func getTransactionSchema() *api.CollectionSchema {
 	facet := true
 	sortBy := "created_at"
 	enableNested := true
-	sourceId := "balances.balance_id"
-	destinationId := "balances.balance_id"
+	sourceId := "balances.id"
+	destinationId := "balances.id"
 	return &api.CollectionSchema{
 		Name: "transactions",
 		Fields: []api.Field{
 			{Name: "precise_amount", Type: "string", Facet: &facet},
 			{Name: "amount", Type: "float", Facet: &facet},
-			{Name: "rate", Type: "float", Facet: &facet},
 			{Name: "precision", Type: "float", Facet: &facet},
 			{Name: "transaction_id", Type: "string", Facet: &facet},
 			{Name: "parent_transaction", Type: "string", Facet: &facet},

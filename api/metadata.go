@@ -1,9 +1,11 @@
 package api
 
 import (
-	"errors"
 	"net/http"
+	"strings"
 
+	"github.com/devaccuracy/ledgerforge/internal/apierror"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/gin-gonic/gin"
 )
 
@@ -28,23 +30,29 @@ func (a Api) UpdateMetadata(c *gin.Context) {
 	entityID := c.Param("entity-id")
 
 	if entityID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "entity ID is required"})
+		respondCode(c, apierror.ErrMetaInvalidEntityID, "entity ID is required", nil)
 		return
 	}
 
 	var req MetadataRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondCode(c, apierror.ErrGenMalformedRequest, err.Error(), nil)
 		return
 	}
 
-	updatedMetadata, err := a.ledgerforge.UpdateMetadata(c.Request.Context(), entityID, req.Metadata)
-	if err != nil {
-		if errors.Is(err, errors.New("entity not found")) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "entity not found"})
+	if strings.HasPrefix(entityID, "txn_") || strings.HasPrefix(entityID, "bulk_") {
+		if err := model.ValidateCustomerTransactionMetadata(req.Metadata); err != nil {
+			respondCode(c, apierror.ErrGenValidation, err.Error(), nil)
 			return
 		}
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	}
+
+	// Known conditions (entity not found, unsupported entity type, invalid
+	// entity ID) classify to META_* codes; anything else is an internal
+	// failure (e.g. database error) and falls back to a sanitized 500.
+	updatedMetadata, err := a.ledgerforge.UpdateMetadata(c.Request.Context(), entityID, req.Metadata)
+	if err != nil {
+		respondError(c, err)
 		return
 	}
 

@@ -1,0 +1,79 @@
+# Metadata update webhooks
+
+Public `POST /:entity-id/metadata` enqueues one webhook after the metadata merge
+commits. `PUT /identities/:id` enqueues `identity.metadata.updated` when the
+body includes `meta_data` (that write replaces metadata; it does not merge).
+Internal writers (`updateEntityMetadata`, reconciliation, queue recovery,
+field tokenization) do not emit these events.
+
+## Events
+
+| Event | When |
+| --- | --- |
+| `ledger.metadata.updated` | Ledger metadata merged |
+| `balance.metadata.updated` | Balance metadata merged |
+| `identity.metadata.updated` | Identity metadata merged by `POST /:entity-id/metadata`, or replaced by `PUT /identities/:id` |
+| `transaction.metadata.updated` | Transaction metadata merged |
+
+Each payload includes `event_id` and `timestamp` at the top of `data` for
+consumer deduplication.
+
+## Payload shape
+
+**Ledger, balance** — full resource snapshot with merged `meta_data` for
+this write. Resource fields sit at the top of `data` (same shape as
+`* .created` events).
+
+**Identity** — full stored resource, not the partial request body. `POST`
+sends merged `meta_data`. `PUT /identities/:id` sends the `meta_data` object
+from that request, which replaces what was stored.
+
+**Transaction** — patch only:
+
+```json
+{
+  "event": "transaction.metadata.updated",
+  "data": {
+    "transaction_id": "bulk_… or txn_…",
+    "meta_data_patch": { "key": "value" },
+    "event_id": "…",
+    "timestamp": "…"
+  }
+}
+```
+
+The DB JSONB-merges `meta_data_patch` onto every matching row. The event does
+not re-read merged `meta_data`.
+
+Transaction patches reject reserved execution/lineage keys and `policy_` or
+`recovery_` prefixes. Customer fields remain mutable; accepted execution controls
+are stored separately and cannot be changed through metadata. See
+[security](security.md) for the boundary.
+
+## Consumer notes
+
+- **Bulk IDs (`bulk_…`)** — one event is emitted for the request, but the DB
+  update applies to every row where `transaction_id = bulk_id OR
+  parent_transaction = bulk_id`. The event's `transaction_id` is the scope ID,
+  not a list of child rows.
+- **Balance amounts** — `balance.metadata.updated` carries monetary fields as
+  read before the merge. They may already be stale; read the balance back if
+  position matters.
+- **Ordering** — not guaranteed per entity under concurrent updates.
+- **`event_id`** — deduplicates asynq redeliveries of the same enqueued payload.
+  It does not collapse separate commits or client retries that each produce a
+  new event.
+- **Delivery guarantee** — the merge is authoritative once the API returns 200.
+  Webhook delivery is best-effort: if Redis enqueue fails after commit, the
+  notification is permanently dropped (logged and reported via
+  `notification.NotifyError`). These events reduce polling for metadata changes
+  but do not replace the API for critical workflows that require guaranteed
+  notification. A transactional outbox is the upgrade path for lossless
+  delivery.
+- **Search reindex** — metadata updates enqueue an index refresh task (entity
+  ID or transaction scope only). The index worker re-reads Postgres before
+  upserting so queue ordering cannot leave Typesense on an older snapshot.
+  Rows include `effective_date` and flags restored from immutable execution
+  controls. New records persist inflight expiry/commit dates in those controls;
+  older records may lack scheduling evidence. Metadata-only reindex cannot
+  reconstruct dates absent from the original persisted history.

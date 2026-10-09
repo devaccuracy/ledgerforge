@@ -18,9 +18,61 @@ package config
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/sirupsen/logrus"
+	logtest "github.com/sirupsen/logrus/hooks/test"
 )
+
+func TestValidateAndAddDefaults_InsecureWarning(t *testing.T) {
+	baseConfig := func() Configuration {
+		return Configuration{
+			ProjectName: "Test Project",
+			DataSource:  DataSourceConfig{Dns: "some-dns"},
+			Redis:       RedisConfig{Dns: "localhost:6379"},
+		}
+	}
+
+	t.Run("warns when secure is disabled", func(t *testing.T) {
+		hook := logtest.NewGlobal()
+		defer hook.Reset()
+
+		cnf := baseConfig()
+		cnf.Server.Secure = false
+		if err := cnf.validateAndAddDefaults(); err != nil {
+			t.Fatalf("Expected no error, got %v", err)
+		}
+
+		var warned bool
+		for _, entry := range hook.AllEntries() {
+			if entry.Level == logrus.WarnLevel && strings.Contains(entry.Message, "authentication is DISABLED") {
+				warned = true
+			}
+		}
+		if !warned {
+			t.Errorf("Expected a SECURITY warning when server.secure is false")
+		}
+	})
+
+	t.Run("no warning when secure is enabled", func(t *testing.T) {
+		hook := logtest.NewGlobal()
+		defer hook.Reset()
+
+		cnf := baseConfig()
+		cnf.Server.Secure = true
+		if err := cnf.validateAndAddDefaults(); err != nil {
+			t.Fatalf("Expected no error, got %v", err)
+		}
+
+		for _, entry := range hook.AllEntries() {
+			if strings.Contains(entry.Message, "authentication is DISABLED") {
+				t.Errorf("Did not expect a SECURITY warning when server.secure is true")
+			}
+		}
+	})
+}
 
 func TestValidateAndAddDefaults(t *testing.T) {
 	// Test case with empty ProjectName and DataSource DNS
@@ -139,7 +191,7 @@ func TestLoadConfigFromFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unable to create temporary file: %v", err)
 	}
-	defer os.Remove(tmpFile.Name()) // Clean up after the test
+	defer func() { _ = os.Remove(tmpFile.Name()) }() // Clean up after the test
 
 	// Sample configuration to write to the temp file
 	sampleConfig := Configuration{
@@ -157,19 +209,13 @@ func TestLoadConfigFromFile(t *testing.T) {
 	if err := json.NewEncoder(tmpFile).Encode(sampleConfig); err != nil {
 		t.Fatalf("Unable to write to temporary file: %v", err)
 	}
-	if err := tmpFile.Close(); err != nil {
-		t.Fatalf("Failed to close temp file: %v", err)
-	} // Close the file so loadConfigFromFile can open it
-
-	// Set an environment variable to override the project name
-	if err := os.Setenv("LEDGERFORGE_PROJECT_NAME", "Env Project"); err != nil {
-		t.Fatalf("Failed to set env: %v", err)
+	if err := tmpFile.Close(); err != nil { // Close the file so loadConfigFromFile can open it
+		t.Fatalf("Unable to close temporary file: %v", err)
 	}
-	defer func() {
-		if err := os.Unsetenv("LEDGERFORGE_PROJECT_NAME"); err != nil {
-			t.Errorf("Failed to unset env: %v", err)
-		}
-	}() // Clean up after the test
+
+	// Set an environment variable to override the project name. t.Setenv
+	// restores the previous value when the test ends.
+	t.Setenv("LEDGERFORGE_PROJECT_NAME", "Env Project")
 
 	// Load the configuration from the file
 	if err := loadConfigFromFile(tmpFile.Name()); err != nil {
@@ -196,13 +242,54 @@ func TestLoadConfigFromFile(t *testing.T) {
 	}
 }
 
+func TestLoadConfigFromFileMonitoringDSN(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "ledgerforge.json")
+	if err != nil {
+		t.Fatalf("Unable to create temporary file: %v", err)
+	}
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+
+	sampleConfig := Configuration{
+		ProjectName:         "Monitoring DSN Test",
+		MonitoringDSN:       "https://ledgerforge_obs_test@observe.ledgerforge.cloud/monproj_test",
+		EnableObservability: true,
+		DataSource: DataSourceConfig{
+			Dns: "temp-dns",
+		},
+		Redis: RedisConfig{
+			Dns: "temp-redis",
+		},
+	}
+	if err := json.NewEncoder(tmpFile).Encode(sampleConfig); err != nil {
+		t.Fatalf("Unable to write to temporary file: %v", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		t.Fatalf("Unable to close temporary file: %v", err)
+	}
+
+	if err := loadConfigFromFile(tmpFile.Name()); err != nil {
+		t.Fatalf("loadConfigFromFile failed: %v", err)
+	}
+
+	loadedConfig, err := Fetch()
+	if err != nil {
+		t.Fatalf("Fetch failed: %v", err)
+	}
+	if loadedConfig.MonitoringDSN != "https://ledgerforge_obs_test@observe.ledgerforge.cloud/monproj_test" {
+		t.Fatalf("Expected MonitoringDSN from config file, got %q", loadedConfig.MonitoringDSN)
+	}
+	if loadedConfig.RemoteMonitoringDSN() != "https://ledgerforge_obs_test@observe.ledgerforge.cloud/monproj_test" {
+		t.Fatalf("Expected remote monitoring DSN from config file, got %q", loadedConfig.RemoteMonitoringDSN())
+	}
+}
+
 func TestInitConfig(t *testing.T) {
 	// Create a temporary file
 	tmpFile, err := os.CreateTemp("", "ledgerforge.json")
 	if err != nil {
 		t.Fatalf("Unable to create temporary file: %v", err)
 	}
-	defer os.Remove(tmpFile.Name()) // Clean up after the test
+	defer func() { _ = os.Remove(tmpFile.Name()) }() // Clean up after the test
 
 	// Sample configuration to write to the temp file
 	sampleConfig := Configuration{
@@ -216,9 +303,9 @@ func TestInitConfig(t *testing.T) {
 	if err := json.NewEncoder(tmpFile).Encode(sampleConfig); err != nil {
 		t.Fatalf("Unable to write to temporary file: %v", err)
 	}
-	if err := tmpFile.Close(); err != nil {
-		t.Fatalf("Failed to close temp file: %v", err)
-	} // Close the file so InitConfig can open it
+	if err := tmpFile.Close(); err != nil { // Close the file so InitConfig can open it
+		t.Fatalf("Unable to close temporary file: %v", err)
+	}
 
 	// Attempt to initialize the configuration using the temporary file
 	if err := InitConfig(tmpFile.Name()); err != nil {
@@ -237,5 +324,126 @@ func TestInitConfig(t *testing.T) {
 	}
 	if loadedConfig.DataSource.Dns != "init-config-dns" {
 		t.Errorf("Expected DataSource.Dns to be 'init-config-dns', got '%s'", loadedConfig.DataSource.Dns)
+	}
+}
+
+// TestUploadURLTimeoutDefault verifies that an unset/zero upload URL timeout is
+// defaulted to DEFAULT_UPLOAD_URL_TIMEOUT_SEC (30s).
+func TestUploadURLTimeoutDefault(t *testing.T) {
+	cnf := Configuration{
+		ProjectName: "Test Project",
+		DataSource:  DataSourceConfig{Dns: "some-dns"},
+		Redis:       RedisConfig{Dns: "localhost:6379"},
+	}
+	cnf.Server.UploadURLTimeoutSec = 0
+	if err := cnf.validateAndAddDefaults(); err != nil {
+		t.Fatalf("validateAndAddDefaults failed: %v", err)
+	}
+	if cnf.Server.UploadURLTimeoutSec != DEFAULT_UPLOAD_URL_TIMEOUT_SEC {
+		t.Errorf("expected default timeout %d, got %d", DEFAULT_UPLOAD_URL_TIMEOUT_SEC, cnf.Server.UploadURLTimeoutSec)
+	}
+
+	// An explicitly-configured value must be preserved.
+	cnf2 := Configuration{
+		ProjectName: "Test Project",
+		DataSource:  DataSourceConfig{Dns: "some-dns"},
+		Redis:       RedisConfig{Dns: "localhost:6379"},
+	}
+	cnf2.Server.UploadURLTimeoutSec = 7
+	if err := cnf2.validateAndAddDefaults(); err != nil {
+		t.Fatalf("validateAndAddDefaults failed: %v", err)
+	}
+	if cnf2.Server.UploadURLTimeoutSec != 7 {
+		t.Errorf("expected explicit timeout 7 to be preserved, got %d", cnf2.Server.UploadURLTimeoutSec)
+	}
+}
+
+func TestTypeSenseBackpressureRetryIntervalDefault(t *testing.T) {
+	cnf := Configuration{
+		ProjectName: "Test Project",
+		DataSource:  DataSourceConfig{Dns: "some-dns"},
+		Redis:       RedisConfig{Dns: "localhost:6379"},
+	}
+	if err := cnf.validateAndAddDefaults(); err != nil {
+		t.Fatalf("validateAndAddDefaults failed: %v", err)
+	}
+	if cnf.TypeSense.BackpressureRetryInterval != 5*time.Second {
+		t.Fatalf("default Typesense backpressure retry interval = %v, want 5s", cnf.TypeSense.BackpressureRetryInterval)
+	}
+
+	cnf.TypeSense.BackpressureRetryInterval = 2 * time.Second
+	if err := cnf.validateAndAddDefaults(); err != nil {
+		t.Fatalf("validateAndAddDefaults failed: %v", err)
+	}
+	if cnf.TypeSense.BackpressureRetryInterval != 2*time.Second {
+		t.Fatalf("explicit Typesense backpressure retry interval = %v, want 2s", cnf.TypeSense.BackpressureRetryInterval)
+	}
+}
+
+func TestRedisConnMaxIdleTimeDefault(t *testing.T) {
+	cnf := Configuration{
+		ProjectName: "Test Project",
+		DataSource:  DataSourceConfig{Dns: "some-dns"},
+		Redis:       RedisConfig{Dns: "localhost:6379"},
+	}
+	if err := cnf.validateAndAddDefaults(); err != nil {
+		t.Fatalf("validateAndAddDefaults failed: %v", err)
+	}
+	if cnf.Redis.ConnMaxIdleTime != 2*time.Minute {
+		t.Fatalf("default Redis conn max idle time = %v, want 2m", cnf.Redis.ConnMaxIdleTime)
+	}
+
+	cnf.Redis.ConnMaxIdleTime = 45 * time.Second
+	if err := cnf.validateAndAddDefaults(); err != nil {
+		t.Fatalf("validateAndAddDefaults failed: %v", err)
+	}
+	if cnf.Redis.ConnMaxIdleTime != 45*time.Second {
+		t.Fatalf("explicit Redis conn max idle time = %v, want 45s", cnf.Redis.ConnMaxIdleTime)
+	}
+}
+
+// TestUploadWhitelistHostsParsing verifies parsing of the comma-separated
+// whitelist: trimming, scheme-tolerance, case-folding, de-duplication, and
+// deny-by-default (empty -> nil).
+func TestUploadWhitelistHostsParsing(t *testing.T) {
+	cases := []struct {
+		name   string
+		raw    string
+		expect []string
+	}{
+		{
+			name:   "mixed entries with schemes, empties, and dup",
+			raw:    "example.com, https://x.com/path, ,Foo.COM, example.com",
+			expect: []string{"example.com", "x.com", "foo.com"},
+		},
+		{
+			name:   "bare hostnames only",
+			raw:    "a.example.com, b.example.com",
+			expect: []string{"a.example.com", "b.example.com"},
+		},
+		{
+			name:   "empty whitelist is deny-by-default",
+			raw:    "",
+			expect: nil,
+		},
+		{
+			name:   "only whitespace and commas",
+			raw:    " , , ",
+			expect: nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cnf := Configuration{Server: ServerConfig{UploadDomainWhitelist: tc.raw}}
+			got := cnf.UploadDomainWhitelistHosts()
+			if len(got) != len(tc.expect) {
+				t.Fatalf("expected %v, got %v", tc.expect, got)
+			}
+			for i := range got {
+				if got[i] != tc.expect[i] {
+					t.Errorf("entry %d: expected %q, got %q", i, tc.expect[i], got[i])
+				}
+			}
+		})
 	}
 }

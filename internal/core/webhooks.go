@@ -16,16 +16,13 @@ package core
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/devaccuracy/ledgerforge/config"
+	"github.com/devaccuracy/ledgerforge/internal/hooks"
 	"github.com/sirupsen/logrus"
 
 	"github.com/hibiken/asynq"
@@ -77,22 +74,22 @@ func processHTTP(data NewWebhook, client *http.Client) error {
 	if err != nil {
 		return err
 	}
+	return processHTTPContext(context.Background(), data, client, conf)
+}
 
+func processHTTPContext(ctx context.Context, data NewWebhook, client *http.Client, conf *config.Configuration) error {
 	payloadBytes, err := json.Marshal(data)
 	if err != nil {
 		return err
 	}
 
-	secret := conf.Server.SecretKey
+	secret := conf.WebhookSigningSecret()
+	if err := hooks.ValidateURL(ctx, conf.Notification.Webhook.Url, false); err != nil {
+		return err
+	}
 
-	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-
-	signatureData := timestamp + "." + string(payloadBytes)
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(signatureData))
-	signature := hex.EncodeToString(mac.Sum(nil))
-
-	req, err := http.NewRequest(
+	req, err := http.NewRequestWithContext(
+		ctx,
 		"POST",
 		conf.Notification.Webhook.Url,
 		bytes.NewBuffer(payloadBytes),
@@ -102,22 +99,26 @@ func processHTTP(data NewWebhook, client *http.Client) error {
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-LedgerForge-Signature", signature)
-	req.Header.Set("X-LedgerForge-Timestamp", timestamp)
 
 	for key, value := range conf.Notification.Webhook.Headers {
 		req.Header.Set(key, value)
 	}
-
+	hooks.SignRequest(req, payloadBytes, secret)
+	if secret == "" {
+		logrus.Warn("webhook sent unsigned: signing secret is not configured")
+	}
+	client = hooks.HTTPClient(client, conf.Notification.Webhook.TimeoutSec, conf.Notification.Webhook.BlockPrivateDestinations)
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("webhook transport failed")
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		logrus.Warnf("Webhook failed with status %d", resp.StatusCode)
-		return nil
+		// Returning the error lets asynq retry the delivery; swallowing it
+		// would permanently drop the webhook on receiver-side failures.
+		return fmt.Errorf("webhook delivery failed with status %d", resp.StatusCode)
 	}
 
 	return nil
@@ -159,11 +160,8 @@ func (b *LedgerForge) SendWebhook(newWebhook NewWebhook) error {
 //
 // Returns:
 // - error: An error if the webhook processing fails.
-func (b *LedgerForge) ProcessWebhook(_ context.Context, task *asynq.Task) error {
-	conf, err := config.Fetch()
-	if err != nil {
-		return err
-	}
+func (b *LedgerForge) ProcessWebhook(ctx context.Context, task *asynq.Task) error {
+	conf := b.Config()
 
 	if conf.Notification.Webhook.Url == "" {
 		return nil
@@ -173,9 +171,5 @@ func (b *LedgerForge) ProcessWebhook(_ context.Context, task *asynq.Task) error 
 		logrus.Errorf("Error unmarshaling task payload: %v", err)
 		return err
 	}
-	err = processHTTP(payload, b.httpClient)
-	if err != nil {
-		return err
-	}
-	return nil
+	return processHTTPContext(ctx, payload, b.httpClient, conf)
 }

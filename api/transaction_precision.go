@@ -1,0 +1,121 @@
+/*
+Copyright 2026 LedgerForge Contributors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+package api
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"math"
+	"math/big"
+
+	ledgerforge "github.com/devaccuracy/ledgerforge"
+	model2 "github.com/devaccuracy/ledgerforge/api/model"
+	"github.com/devaccuracy/ledgerforge/internal/apierror"
+	"github.com/devaccuracy/ledgerforge/model"
+	"github.com/shopspring/decimal"
+)
+
+// inflightAmountError distinguishes invalid monetary inputs from lookup failures.
+type inflightAmountError struct{ error }
+
+func (e inflightAmountError) Unwrap() error { return e.error }
+
+// Zero means the full remaining hold. Partial major-unit commits must use the
+// original transaction's authoritative scale from the injected datasource.
+func (a Api) resolveInflightAmount(ctx context.Context, id string, amount float64, exact string, precise *big.Int) (*big.Int, error) {
+	if precise != nil {
+		if precise.Sign() <= 0 {
+			return nil, inflightAmountError{errors.New("precise_amount must be positive")}
+		}
+		return new(big.Int).Set(precise), nil
+	}
+	if math.IsNaN(amount) || math.IsInf(amount, 0) || amount < 0 {
+		return nil, inflightAmountError{errors.New("amount must be finite and positive")}
+	}
+	if amount == 0 {
+		if exact == "" {
+			return big.NewInt(0), nil
+		}
+		value, err := decimal.NewFromString(exact)
+		if err != nil {
+			return nil, inflightAmountError{errors.New("invalid decimal amount")}
+		}
+		if value.IsZero() {
+			return big.NewInt(0), nil
+		}
+		// An underflowing positive token is a partial amount, never the full-hold sentinel.
+	}
+	transaction, err := a.ledgerforge.GetTransaction(ctx, id)
+	if err != nil {
+		var apiErr apierror.APIError
+		if !errors.Is(err, sql.ErrNoRows) && (!errors.As(err, &apiErr) || apierror.Normalize(apiErr.Code) != apierror.ErrGenNotFound) {
+			return nil, err
+		}
+		// Synchronous split and bulk parents may exist only as child rows.
+		// Every child must agree on the scale; mixed-scale batches are ambiguous.
+		lookupErr := err
+		var precision float64
+		const batchSize = 100
+		for offset := int64(0); ; offset += batchSize {
+			children, err := a.ledgerforge.GetDataSource().GetTransactionsByParent(ctx, id, batchSize, offset)
+			if err != nil {
+				return nil, err
+			}
+			for _, child := range children {
+				if child == nil || child.Precision == 0 {
+					return nil, errors.New("transaction precision is unavailable")
+				}
+				if err := model.ValidatePrecision(child.Precision); err != nil {
+					return nil, err
+				}
+				if precision != 0 && precision != child.Precision {
+					return nil, errors.New("parent transaction has mixed precisions; use a child ID or precise_amount")
+				}
+				precision = child.Precision
+			}
+			if len(children) < batchSize {
+				break
+			}
+		}
+		if precision == 0 {
+			return nil, lookupErr
+		}
+		transaction = &model.Transaction{Precision: precision}
+	}
+	if transaction == nil || transaction.Precision == 0 {
+		return nil, errors.New("transaction precision is unavailable")
+	}
+	resolved, err := model.ParseAmount(exact, transaction.Precision)
+	if err != nil {
+		return nil, inflightAmountError{err}
+	}
+	return resolved, nil
+}
+
+func inflightResolutionFailure(id string, err error) model2.BulkInflightResult {
+	code, ok := resolveErrorCode(err)
+	if !ok {
+		code = apierror.ErrGenInternal
+	}
+	resultCode := ledgerforge.ClassifyInflightError(err)
+	var amountErr inflightAmountError
+	if errors.As(err, &amountErr) {
+		code = apierror.ErrTxnInvalidAmount
+		resultCode = "INVALID_AMOUNT"
+	}
+	return model2.BulkInflightResult{TransactionID: id, Status: "failed", Code: resultCode, Message: clientErrorMessage(err, code)}
+}

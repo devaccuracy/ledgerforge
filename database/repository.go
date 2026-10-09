@@ -37,6 +37,7 @@ type IDataSource interface {
 	reconciliation // Interface for reconciliation-related operations
 	apikey         // Interface for API key operations
 	lineage        // Interface for fund lineage operations
+	chain          // Interface for hash-chain operations
 }
 
 // transaction defines methods for handling transactions.
@@ -51,7 +52,6 @@ type transaction interface {
 	GetTransactionByRef(cxt context.Context, reference string) (model.Transaction, error)                                                           // Retrieves a transaction by reference
 	TransactionExistsByRef(ctx context.Context, reference string) (bool, error)                                                                     // Checks if a transaction exists by reference
 	GetExistingTransactionReferences(ctx context.Context, references []string) (map[string]struct{}, error)                                         // Gets existing transaction references in bulk
-	UpdateTransactionStatus(cxt context.Context, id string, status string) error                                                                    // Updates the status of a transaction
 	GetAllTransactions(cxt context.Context, limit, offset int) ([]model.Transaction, error)                                                         // Retrieves all transactions
 	GetTotalCommittedTransactions(cxt context.Context, parentID string) (*big.Int, error)                                                           // Gets the total count of committed transactions for a parent
 	GetTransactionsPaginated(ctx context.Context, id string, batchSize int, offset int64) ([]*model.Transaction, error)                             // Retrieves transactions in a paginated manner
@@ -60,6 +60,7 @@ type transaction interface {
 	GroupTransactions(ctx context.Context, groupCriteria string, batchSize int, offset int64) (map[string][]*model.Transaction, error)              // Groups transactions based on specified criteria
 	UpdateLedgerMetadata(id string, metadata map[string]interface{}) error
 	UpdateTransactionMetadata(ctx context.Context, id string, metadata map[string]interface{}) error
+	ListTransactionsByMetadataScope(ctx context.Context, scopeID string, limit int, offset int64) ([]*model.Transaction, error)
 	UpdateBalanceMetadata(ctx context.Context, id string, metadata map[string]interface{}) error
 	UpdateIdentityMetadata(id string, metadata map[string]interface{}) error
 	TransactionExistsByIDOrParentID(ctx context.Context, id string) (bool, error)
@@ -193,4 +194,12 @@ type lineage interface {
 	MarkOutboxFailed(ctx context.Context, id int64, errMsg string) error                                                     // Marks an outbox entry as failed
 	GetOutboxByTransactionID(ctx context.Context, transactionID string) (*model.LineageOutbox, error)                        // Gets outbox entry by transaction ID
 	HasPendingCreditOutbox(ctx context.Context, balanceID string) (bool, error)                                              // Checks if there are pending credit outbox entries for a balance
+}
+
+// chain defines the hash-chain (tamper-evidence) operations.
+type chain interface {
+	ChainPendingTransactions(ctx context.Context, cutoff time.Time, batchSize int) (int, error)                     // Seals the next batch of unchained transactions
+	GetChainState(ctx context.Context) (*model.ChainState, error)                                                   // Returns the global chain bookmark
+	GetChainedTransactionsAfter(ctx context.Context, afterSeq int64, limit int) ([]model.ChainedTransaction, error) // Pages chained transactions in chain order
+	CountUnchainedTransactions(ctx context.Context, cutoff time.Time) (int64, error)                                // Counts the chainer backlog
 }

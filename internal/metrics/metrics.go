@@ -31,6 +31,14 @@ var TransactionRejectedTotal metric.Int64Counter
 // Attributes: queue_name
 var QueueEnqueuedTotal metric.Int64Counter
 
+// QueueBackpressureRejectedTotal counts enqueue attempts rejected by backpressure.
+var QueueBackpressureRejectedTotal metric.Int64Counter
+
+// SearchBackpressureRetryTotal counts indexing operations deferred after
+// Typesense rejects a write at its native memory limit.
+// Attribute: source (worker, reindex)
+var SearchBackpressureRetryTotal metric.Int64Counter
+
 // QueueProcessingDuration records the time spent processing a transaction in the worker.
 // Attributes: result (success, error, retry)
 var QueueProcessingDuration metric.Float64Histogram
@@ -61,6 +69,17 @@ var HotpairsLaneRoutedTotal metric.Int64Counter
 // WorkerRetriesTotal counts worker retry events.
 // Attributes: reason (insufficient_funds, lock_contention, other)
 var WorkerRetriesTotal metric.Int64Counter
+
+// ChainBacklog is the number of transactions still waiting to be sealed into the
+// hash chain (the chainer's backlog).
+var ChainBacklog metric.Int64Gauge
+
+// ChainHeadSeq is the sequence number of the chain head — total transactions sealed.
+var ChainHeadSeq metric.Int64Gauge
+
+// ChainLagSeconds is the age of the chain head: seconds since the chainer last
+// advanced it.
+var ChainLagSeconds metric.Float64Gauge
 
 // Init creates all metric instruments. It should be called once during application
 // startup. Safe to call even when observability is disabled
@@ -94,6 +113,22 @@ func Init() error {
 	QueueEnqueuedTotal, err = meter.Int64Counter("ledgerforge.queue.enqueued.total",
 		metric.WithDescription("Total number of transactions enqueued for processing"),
 		metric.WithUnit("{transaction}"),
+	)
+	if err != nil {
+		return err
+	}
+
+	QueueBackpressureRejectedTotal, err = meter.Int64Counter("ledgerforge.queue.backpressure.rejected.total",
+		metric.WithDescription("Total enqueue attempts rejected by queue backpressure"),
+		metric.WithUnit("{transaction}"),
+	)
+	if err != nil {
+		return err
+	}
+
+	SearchBackpressureRetryTotal, err = meter.Int64Counter("ledgerforge.search.backpressure.retry.total",
+		metric.WithDescription("Total indexing retries caused by Typesense native memory backpressure"),
+		metric.WithUnit("{retry}"),
 	)
 	if err != nil {
 		return err
@@ -166,6 +201,30 @@ func Init() error {
 	WorkerRetriesTotal, err = meter.Int64Counter("ledgerforge.worker.retries.total",
 		metric.WithDescription("Total number of worker retry events by reason"),
 		metric.WithUnit("{retry}"),
+	)
+	if err != nil {
+		return err
+	}
+
+	ChainBacklog, err = meter.Int64Gauge("ledgerforge.chain.backlog",
+		metric.WithDescription("Number of transactions not yet sealed into the hash chain"),
+		metric.WithUnit("{transaction}"),
+	)
+	if err != nil {
+		return err
+	}
+
+	ChainHeadSeq, err = meter.Int64Gauge("ledgerforge.chain.head_seq",
+		metric.WithDescription("Sequence number of the hash-chain head"),
+		metric.WithUnit("{transaction}"),
+	)
+	if err != nil {
+		return err
+	}
+
+	ChainLagSeconds, err = meter.Float64Gauge("ledgerforge.chain.lag_seconds",
+		metric.WithDescription("Seconds since the hash chain last advanced"),
+		metric.WithUnit("s"),
 	)
 	if err != nil {
 		return err
