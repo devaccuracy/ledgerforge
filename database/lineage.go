@@ -189,7 +189,7 @@ func insertLineageOutboxesInTx(ctx context.Context, tx *sql.Tx, outboxes []*mode
 			query.WriteString(",")
 		}
 		base := len(args) + 1
-		query.WriteString(fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)", base, base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9))
+		fmt.Fprintf(&query, "($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)", base, base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9)
 		args = append(args,
 			outbox.TransactionID,
 			outbox.SourceBalanceID,
@@ -277,24 +277,28 @@ func (d Datasource) InsertLineageOutbox(ctx context.Context, outbox *model.Linea
 // ClaimPendingOutboxEntries claims a batch of pending outbox entries for processing.
 // It uses SELECT FOR UPDATE SKIP LOCKED to allow concurrent processors.
 func (d Datasource) ClaimPendingOutboxEntries(ctx context.Context, batchSize int, lockDuration time.Duration) ([]model.LineageOutbox, error) {
-	lockedUntil := time.Now().Add(lockDuration)
-
+	// UPDATE ... RETURNING does not preserve the inner ORDER BY, so the
+	// claimed rows are re-ordered through a CTE to guarantee FIFO delivery
+	// within the batch.
 	query := `
-		UPDATE ledgerforge.lineage_outbox
-		SET status = $1, locked_until = $2
-		WHERE id IN (
-			SELECT id FROM ledgerforge.lineage_outbox
-			WHERE status = 'pending'
-			  AND (locked_until IS NULL OR locked_until < NOW())
-			  AND attempts < max_attempts
-			ORDER BY created_at ASC
-			LIMIT $3
-			FOR UPDATE SKIP LOCKED
+		WITH claimed AS (
+			UPDATE ledgerforge.lineage_outbox
+			SET status = $1, locked_until = NOW() + $2::interval
+			WHERE id IN (
+				SELECT id FROM ledgerforge.lineage_outbox
+				WHERE status IN ('pending', 'processing')
+				  AND (locked_until IS NULL OR locked_until < NOW())
+				  AND attempts < max_attempts
+				ORDER BY created_at ASC
+				LIMIT $3
+				FOR UPDATE SKIP LOCKED
+			)
+			RETURNING id, transaction_id, source_balance_id, destination_balance_id, provider, lineage_type, payload, status, attempts, max_attempts, last_error, created_at, processed_at, locked_until, inflight
 		)
-		RETURNING id, transaction_id, source_balance_id, destination_balance_id, provider, lineage_type, payload, status, attempts, max_attempts, last_error, created_at, processed_at, locked_until, inflight
+		SELECT * FROM claimed ORDER BY created_at ASC
 	`
 
-	rows, err := d.Conn.QueryContext(ctx, query, model.OutboxStatusProcessing, lockedUntil, batchSize)
+	rows, err := d.Conn.QueryContext(ctx, query, model.OutboxStatusProcessing, lockDuration.String(), batchSize)
 	if err != nil {
 		return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to claim pending outbox entries", err)
 	}

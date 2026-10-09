@@ -18,11 +18,13 @@ package middleware
 
 import (
 	"crypto/subtle"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/devaccuracy/ledgerforge/config"
+	"github.com/devaccuracy/ledgerforge/internal/apierror"
 	"github.com/didip/tollbooth/v7"
 	"github.com/didip/tollbooth/v7/limiter"
 	"github.com/gin-gonic/gin"
@@ -46,7 +48,11 @@ func RateLimitMiddleware(conf *config.Configuration) gin.HandlerFunc {
 
 	rps := *conf.RateLimit.RequestsPerSecond
 	burst := *conf.RateLimit.Burst
-	ttl := time.Duration(*conf.RateLimit.CleanupIntervalSec) * time.Second
+	cleanupSec := config.DEFAULT_CLEANUP_SEC
+	if conf.RateLimit.CleanupIntervalSec != nil {
+		cleanupSec = *conf.RateLimit.CleanupIntervalSec
+	}
+	ttl := time.Duration(cleanupSec) * time.Second
 
 	// Create a new Tollbooth limiter with the specified rate and expiration time.
 	lmt := tollbooth.NewLimiter(rps, &limiter.ExpirableOptions{
@@ -59,7 +65,11 @@ func RateLimitMiddleware(conf *config.Configuration) gin.HandlerFunc {
 		httpError := tollbooth.LimitByRequest(lmt, c.Writer, c.Request)
 		if httpError != nil {
 			// Respond with an error if the request exceeds the rate limit.
-			c.AbortWithStatusJSON(httpError.StatusCode, gin.H{"error": httpError.Message})
+			// Tollbooth's status code stays authoritative for the response.
+			c.AbortWithStatusJSON(httpError.StatusCode, gin.H{
+				"error":        httpError.Message,
+				"error_detail": apierror.NewErrorResponse(apierror.ErrGenRateLimited, httpError.Message, nil).Error,
+			})
 			return
 		}
 		c.Next()
@@ -80,9 +90,7 @@ func RateLimitMiddleware(conf *config.Configuration) gin.HandlerFunc {
 func MetricsAuth(secure bool, token string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if secure && token == "" {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-				"error": "Metrics endpoint unavailable: metrics_bearer_token must be configured when secure mode is enabled",
-			})
+			abortWithCode(c, apierror.ErrAuthMetricsDisabled, "Metrics endpoint unavailable: metrics_bearer_token must be configured when secure mode is enabled")
 			return
 		}
 
@@ -93,19 +101,19 @@ func MetricsAuth(secure bool, token string) gin.HandlerFunc {
 
 		auth := c.GetHeader("Authorization")
 		if auth == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization required for metrics endpoint"})
+			abortWithCode(c, apierror.ErrAuthMetricsTokenRequired, "Authorization required for metrics endpoint")
 			return
 		}
 
 		const prefix = "Bearer "
 		if !strings.HasPrefix(auth, prefix) {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Authorization header must use Bearer scheme"})
+			abortWithCode(c, apierror.ErrAuthMetricsTokenRequired, "Authorization header must use Bearer scheme")
 			return
 		}
 
 		provided := auth[len(prefix):]
 		if subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Invalid bearer token"})
+			abortWithCode(c, apierror.ErrAuthInvalidBearerToken, "Invalid bearer token")
 			return
 		}
 
@@ -120,9 +128,7 @@ func MetricsAuth(secure bool, token string) gin.HandlerFunc {
 func MetricsAuthHandler(secure bool, token string, next http.Handler) http.Handler {
 	if secure && token == "" {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusForbidden)
-			_, _ = w.Write([]byte(`{"error":"Metrics endpoint unavailable: metrics_bearer_token must be configured when secure mode is enabled"}`))
+			writeMetricsAuthError(w, apierror.ErrAuthMetricsDisabled, "Metrics endpoint unavailable: metrics_bearer_token must be configured when secure mode is enabled")
 		})
 	}
 
@@ -133,24 +139,37 @@ func MetricsAuthHandler(secure bool, token string, next http.Handler) http.Handl
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
 		if auth == "" {
-			http.Error(w, `{"error":"Authorization required for metrics endpoint"}`, http.StatusUnauthorized)
+			writeMetricsAuthError(w, apierror.ErrAuthMetricsTokenRequired, "Authorization required for metrics endpoint")
 			return
 		}
 
 		const prefix = "Bearer "
 		if !strings.HasPrefix(auth, prefix) {
-			http.Error(w, `{"error":"Authorization header must use Bearer scheme"}`, http.StatusUnauthorized)
+			writeMetricsAuthError(w, apierror.ErrAuthMetricsTokenRequired, "Authorization header must use Bearer scheme")
 			return
 		}
 
 		provided := auth[len(prefix):]
 		if subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
-			http.Error(w, `{"error":"Invalid bearer token"}`, http.StatusUnauthorized)
+			writeMetricsAuthError(w, apierror.ErrAuthInvalidBearerToken, "Invalid bearer token")
 			return
 		}
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// writeMetricsAuthError is the plain net/http counterpart of abortWithCode.
+// It also fixes the previous handler, which sent JSON bodies through
+// http.Error and therefore with a text/plain content type.
+func writeMetricsAuthError(w http.ResponseWriter, code apierror.ErrorCode, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(apierror.StatusForCode(code))
+	payload := map[string]interface{}{
+		"error":        message,
+		"error_detail": apierror.NewErrorResponse(code, message, nil).Error,
+	}
+	_ = json.NewEncoder(w).Encode(payload)
 }
 
 // SecurityHeaders sets security headers to the response.
@@ -182,6 +201,25 @@ func SecurityHeaders() gin.HandlerFunc {
 			c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}
 
+		c.Next()
+	}
+}
+
+// RequestSizeLimit caps the size of non-upload request bodies so a large POST
+// cannot exhaust memory before a handler (or the auth middleware that reads the
+// body to inject the API key) consumes it. Multipart uploads are skipped: the
+// upload handlers apply their own, larger MaxUploadSizeMB limit.
+func RequestSizeLimit(maxBytes int64) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.Body == nil || maxBytes <= 0 {
+			c.Next()
+			return
+		}
+		if strings.HasPrefix(c.GetHeader("Content-Type"), "multipart/form-data") {
+			c.Next()
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
 		c.Next()
 	}
 }

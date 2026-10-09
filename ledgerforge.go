@@ -26,6 +26,7 @@ import (
 	"embed"
 
 	"github.com/hibiken/asynq"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/devaccuracy/ledgerforge/config"
 	"github.com/devaccuracy/ledgerforge/database"
@@ -34,6 +35,11 @@ import (
 )
 
 const (
+	InflightActionCommit  = core.InflightActionCommit
+	InflightActionVoid    = core.InflightActionVoid
+	IndexModeRefresh      = core.IndexModeRefresh
+	BulkInflightCommit    = core.BulkInflightCommit
+	BulkInflightVoid      = core.BulkInflightVoid
 	GeneralLedgerID       = core.GeneralLedgerID
 	LineageProviderKey    = core.LineageProviderKey
 	LineageFundAllocation = core.LineageFundAllocation
@@ -54,6 +60,16 @@ const (
 )
 
 type (
+	RefundOptions                      = core.RefundOptions
+	BulkTransactionError               = core.BulkTransactionError
+	InflightActionPayload              = core.InflightActionPayload
+	ChainProcessor                     = core.ChainProcessor
+	ChainVerifyResult                  = core.ChainVerifyResult
+	IndexTask                          = core.IndexTask
+	IndexUpserter                      = core.IndexUpserter
+	BulkInflightAction                 = core.BulkInflightAction
+	BulkInflightItem                   = core.BulkInflightItem
+	BulkInflightOutcome                = core.BulkInflightOutcome
 	LedgerForge                        = core.LedgerForge
 	Queue                              = core.Queue
 	TransactionTypePayload             = core.TransactionTypePayload
@@ -100,4 +116,32 @@ func NewLineageOutboxProcessor(service *LedgerForge) *LineageOutboxProcessor {
 // NewQueuedTransactionRecoveryProcessor creates the queued-transaction recovery worker.
 func NewQueuedTransactionRecoveryProcessor(service *LedgerForge) *QueuedTransactionRecoveryProcessor {
 	return core.NewQueuedTransactionRecoveryProcessor(service)
+}
+
+// ErrQueueBackpressure indicates that the queue cannot safely accept more work.
+var ErrQueueBackpressure = core.ErrQueueBackpressure
+
+// NewChainProcessor creates the transaction hash-chain worker.
+func NewChainProcessor(service *LedgerForge) *ChainProcessor { return core.NewChainProcessor(service) }
+
+// DocumentToIndexMap converts a search document into its index representation.
+func DocumentToIndexMap(document interface{}) (map[string]interface{}, error) {
+	return core.DocumentToIndexMap(document)
+}
+
+// ClassifyInflightError returns the public error code for an inflight operation.
+func ClassifyInflightError(err error) string { return core.ClassifyInflightError(err) }
+
+// ErrEntityNotFound indicates that a metadata target does not exist.
+var ErrEntityNotFound = core.ErrEntityNotFound
+
+// ErrInflightActionQueued indicates a pending commit or void for a transaction.
+var ErrInflightActionQueued = core.ErrInflightActionQueued
+
+// IsDuplicateReferenceError identifies a transaction reference conflict.
+func IsDuplicateReferenceError(err error) bool { return core.IsDuplicateReferenceError(err) }
+
+// NewQueueWithRedisClient creates a queue with Redis memory backpressure checks.
+func NewQueueWithRedisClient(conf *config.Configuration, client *asynq.Client, redisClient redis.UniversalClient) *Queue {
+	return core.NewQueue(conf, client, redisClient)
 }

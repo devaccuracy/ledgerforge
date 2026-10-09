@@ -2,12 +2,15 @@ package core
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/devaccuracy/ledgerforge/config"
 	"github.com/devaccuracy/ledgerforge/database/mocks"
 	"github.com/devaccuracy/ledgerforge/model"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -272,6 +275,67 @@ func TestValidateQueuedBatchTransactionReferenceUsesPrefetchedSet(t *testing.T) 
 	}, prefetched, existing, batch)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "already been used")
+
+	err = ledgerforgeInstance.validateQueuedBatchTransactionReference(context.Background(), &model.Transaction{
+		Reference: "ref_existing_q",
+	}, prefetched, map[string]struct{}{"ref_existing_q": {}}, map[string]struct{}{})
+	assert.Error(t, err)
+	assert.True(t, IsDuplicateReferenceError(err))
+}
+
+func TestIsDuplicateReferenceError(t *testing.T) {
+	rawPQErr := &pq.Error{
+		Code:       "23505",
+		Constraint: "idx_transactions_reference_unique",
+		Message:    "duplicate key value violates unique constraint \"idx_transactions_reference_unique\"",
+	}
+
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "application duplicate message",
+			err:  errors.New("reference ref_1 has already been used"),
+			want: true,
+		},
+		{
+			name: "raw pq unique violation",
+			err:  rawPQErr,
+			want: true,
+		},
+		{
+			name: "wrapped pq unique violation",
+			err:  fmt.Errorf("failed to persist transaction: %w", rawPQErr),
+			want: true,
+		},
+		{
+			name: "wrapped duplicate string without unwrap chain",
+			err:  errors.New("INTERNAL_SERVER_ERROR: pq: duplicate key value violates unique constraint \"idx_transactions_reference_unique\""),
+			want: true,
+		},
+		{
+			name: "non-reference unique violation",
+			err: &pq.Error{
+				Code:       "23505",
+				Constraint: "transactions_pkey",
+				Message:    "duplicate key value violates unique constraint \"transactions_pkey\"",
+			},
+			want: false,
+		},
+		{
+			name: "nil",
+			err:  nil,
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, IsDuplicateReferenceError(tt.err))
+		})
+	}
 }
 
 func TestBatchReferenceCheckEnabled(t *testing.T) {

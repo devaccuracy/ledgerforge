@@ -122,7 +122,7 @@ func prepareAccountQueries(queryBuilder strings.Builder, include []string) strin
 	if contains(include, "balance") {
 		selectFields = append(selectFields,
 			"b.balance_id", "b.balance", "b.credit_balance", "b.debit_balance",
-			"b.currency", "b.currency_multiplier", "b.ledger_id",
+			"b.currency", "b.ledger_id",
 			"COALESCE(b.identity_id, '') as identity_id", "b.created_at", "b.meta_data")
 	}
 
@@ -188,27 +188,30 @@ func scanAccountRow(row *sql.Row, tx *sql.Tx, include []string) (*model.Account,
 	identity := &model.Identity{}
 	ledger := &model.Ledger{}
 
-	metaDataJSON := []byte{}
+	accountMetaJSON := []byte{}
 	var scanArgs []interface{}
 
 	// Default fields for the account
 	scanArgs = append(scanArgs, &account.AccountID, &account.Name, &account.Number, &account.BankName,
 		&account.Currency,
-		&account.LedgerID, &account.IdentityID, &account.BalanceID, &balance.CreatedAt, &metaDataJSON)
+		&account.LedgerID, &account.IdentityID, &account.BalanceID, &account.CreatedAt, &accountMetaJSON)
 
-	// Add fields for balance if included
+	// Balance NUMERIC columns are scanned as strings and parsed into big.Int,
+	// since database/sql cannot scan directly into *big.Int.
+	var balanceStr, creditBalanceStr, debitBalanceStr string
+	balanceMetaJSON := []byte{}
 	if contains(include, "balance") {
-		scanArgs = append(scanArgs, &balance.BalanceID, &balance.Balance, &balance.CreditBalance,
-			&balance.DebitBalance, &balance.Currency, &balance.CurrencyMultiplier,
-			&balance.LedgerID, &balance.IdentityID, &balance.CreatedAt, &metaDataJSON)
+		scanArgs = append(scanArgs, &balance.BalanceID, &balanceStr, &creditBalanceStr,
+			&debitBalanceStr, &balance.Currency, &balance.LedgerID, &balance.IdentityID, &balance.CreatedAt, &balanceMetaJSON)
 	}
 
 	// Add fields for identity if included
+	identityMetaJSON := []byte{}
 	if contains(include, "identity") {
 		scanArgs = append(scanArgs, &identity.IdentityID, &identity.FirstName, &identity.OrganizationName, &identity.Category, &identity.LastName,
 			&identity.OtherNames, &identity.Gender, &identity.DOB, &identity.EmailAddress,
 			&identity.PhoneNumber, &identity.Nationality, &identity.Street, &identity.Country,
-			&identity.State, &identity.PostCode, &identity.City, &identity.IdentityType, &identity.CreatedAt, &metaDataJSON)
+			&identity.State, &identity.PostCode, &identity.City, &identity.IdentityType, &identity.CreatedAt, &identityMetaJSON)
 	}
 
 	// Add fields for ledger if included
@@ -225,10 +228,39 @@ func scanAccountRow(row *sql.Row, tx *sql.Tx, include []string) (*model.Account,
 	}
 
 	// Unmarshal the account metadata from JSON
-	err = json.Unmarshal(metaDataJSON, &account.MetaData)
+	err = json.Unmarshal(accountMetaJSON, &account.MetaData)
 	if err != nil {
 		_ = tx.Rollback()
 		return nil, err
+	}
+
+	if contains(include, "balance") {
+		balance.Balance, err = parseBigInt(balanceStr)
+		if err != nil {
+			_ = tx.Rollback()
+			return nil, fmt.Errorf("failed to parse balance: %w", err)
+		}
+		balance.CreditBalance, err = parseBigInt(creditBalanceStr)
+		if err != nil {
+			_ = tx.Rollback()
+			return nil, fmt.Errorf("failed to parse credit_balance: %w", err)
+		}
+		balance.DebitBalance, err = parseBigInt(debitBalanceStr)
+		if err != nil {
+			_ = tx.Rollback()
+			return nil, fmt.Errorf("failed to parse debit_balance: %w", err)
+		}
+		if err = json.Unmarshal(balanceMetaJSON, &balance.MetaData); err != nil {
+			_ = tx.Rollback()
+			return nil, err
+		}
+	}
+
+	if contains(include, "identity") {
+		if err = json.Unmarshal(identityMetaJSON, &identity.MetaData); err != nil {
+			_ = tx.Rollback()
+			return nil, err
+		}
 	}
 
 	// Assign related entities if included
@@ -252,7 +284,7 @@ func scanAccountRow(row *sql.Row, tx *sql.Tx, include []string) (*model.Account,
 func (d Datasource) GetAllAccounts() ([]model.Account, error) {
 	// Execute the SQL query to retrieve account data
 	rows, err := d.Conn.QueryContext(context.Background(), `
-		SELECT account_id, name, number, bank_name, currency, created_at, meta_data 
+		SELECT account_id, name, number, bank_name, currency, created_at, meta_data
 		FROM ledgerforge.accounts
 		ORDER BY created_at DESC
 	`)
@@ -298,7 +330,7 @@ func (d Datasource) GetAllAccounts() ([]model.Account, error) {
 func (d Datasource) GetAccountByNumber(number string) (*model.Account, error) {
 	// Query the database for the account with the given number
 	row := d.Conn.QueryRowContext(context.Background(), `
-		SELECT account_id, name, number, bank_name, created_at, meta_data 
+		SELECT account_id, name, number, bank_name, created_at, meta_data
 		FROM ledgerforge.accounts WHERE number = $1
 	`, number)
 

@@ -66,6 +66,7 @@ type transactionProcessor struct {
 	datasource        database.IDataSource
 	progressSaveCount int
 	ledgerforge       *LedgerForge
+	mu                sync.Mutex // guards matches, unmatched, and progress (process runs concurrently)
 }
 
 // reconciler defines the function type for reconciling a batch of transactions.
@@ -456,8 +457,10 @@ func (tp *transactionProcessor) process(ctx context.Context, txn *model.Transact
 	batchMatches, batchUnmatched := tp.reconciler(ctx, []*model.Transaction{txn})
 
 	// Increment the counters for matched and unmatched transactions.
+	tp.mu.Lock()
 	tp.matches += len(batchMatches)
 	tp.unmatched += len(batchUnmatched)
+	tp.mu.Unlock()
 
 	// If the reconciliation is not a dry run, record the matches and unmatched transactions.
 	if !tp.reconciliation.IsDryRun {
@@ -480,12 +483,16 @@ func (tp *transactionProcessor) process(ctx context.Context, txn *model.Transact
 	}
 
 	// Update the progress with the last processed transaction ID and increment the processed count.
+	tp.mu.Lock()
 	tp.progress.LastProcessedExternalTxnID = txn.TransactionID
 	tp.progress.ProcessedCount++
+	shouldSave := tp.progress.ProcessedCount%tp.progressSaveCount == 0
+	progressSnapshot := tp.progress
+	tp.mu.Unlock()
 
 	// Periodically save the reconciliation progress.
-	if tp.progress.ProcessedCount%tp.progressSaveCount == 0 {
-		if err := tp.datasource.SaveReconciliationProgress(ctx, tp.reconciliation.ReconciliationID, tp.progress); err != nil {
+	if shouldSave {
+		if err := tp.datasource.SaveReconciliationProgress(ctx, tp.reconciliation.ReconciliationID, progressSnapshot); err != nil {
 			logrus.Errorf("Error saving reconciliation progress: %v", err)
 		}
 	}
@@ -522,6 +529,8 @@ func (tp *transactionProcessor) updateMatchedTransactionsMetadata(ctx context.Co
 // - int: The count of matched transactions.
 // - int: The count of unmatched transactions.
 func (tp *transactionProcessor) getResults() (int, int) {
+	tp.mu.Lock()
+	defer tp.mu.Unlock()
 	return tp.matches, tp.unmatched
 }
 
@@ -774,6 +783,18 @@ func (s *LedgerForge) manyToOne(ctx context.Context, internalTxns []*model.Trans
 	ctx, span := otel.Tracer("ledgerforge.reconciliation").Start(ctx, "ProcessManyToOne")
 	defer span.End()
 
+	processedAny := false
+	// Every input transaction must end up matched or unmatched; if the loop
+	// exits before any group batch was processed, report them all unmatched
+	// instead of silently dropping them from the reconciliation results.
+	defer func() {
+		if !processedAny {
+			for _, txn := range internalTxns {
+				unMatchChan <- txn.TransactionID
+			}
+		}
+	}()
+
 	// Loop to process transactions in batches.
 	for {
 		groupedExternalTxns, err := s.groupExternalTransactions(ctx, uploadID, groupingCriteria, batchSize, offset)
@@ -785,12 +806,17 @@ func (s *LedgerForge) manyToOne(ctx context.Context, internalTxns []*model.Trans
 			span.AddEvent("No more grouped transactions to process")
 			break
 		}
+		processedAny = true
 		groupMap := s.buildGroupMap(groupedExternalTxns)
-		err = s.processGroupedTransactions(internalTxns, groupedExternalTxns, groupMap, matchingRules, isExternalGrouped, wg, matchChan, unMatchChan)
+		var groupMapMu sync.Mutex
+		err = s.processGroupedTransactions(internalTxns, groupedExternalTxns, groupMap, &groupMapMu, matchingRules, isExternalGrouped, wg, matchChan, unMatchChan)
 		if err != nil {
 			logrus.Errorf("Error processing grouped transactions: %v", err)
 		}
-		if len(groupMap) == 0 {
+		groupMapMu.Lock()
+		groupMapEmpty := len(groupMap) == 0
+		groupMapMu.Unlock()
+		if groupMapEmpty {
 			break
 		}
 		offset += int64(batchSize)
@@ -825,7 +851,7 @@ func (s *LedgerForge) groupExternalTransactions(ctx context.Context, uploadID st
 // - unMatchChan: Channel for collecting unmatched transaction IDs.
 // Returns:
 // - error: If any error occurs during processing.
-func (s *LedgerForge) processGroupedTransactions(singleTxns []*model.Transaction, groupedTxns map[string][]*model.Transaction, groupMap map[string]bool, matchingRules []model.MatchingRule, isExternalGrouped bool, wg *sync.WaitGroup, matchChan chan model.Match, unMatchChan chan string) error {
+func (s *LedgerForge) processGroupedTransactions(singleTxns []*model.Transaction, groupedTxns map[string][]*model.Transaction, groupMap map[string]bool, groupMapMu *sync.Mutex, matchingRules []model.MatchingRule, isExternalGrouped bool, wg *sync.WaitGroup, matchChan chan model.Match, unMatchChan chan string) error {
 	conf, err := config.Fetch()
 	if err != nil {
 		logrus.Errorf("Error fetching configuration: %v", err)
@@ -843,7 +869,7 @@ func (s *LedgerForge) processGroupedTransactions(singleTxns []*model.Transaction
 			sem <- struct{}{}        // Acquire token
 			defer func() { <-sem }() // Release token
 
-			matched := s.matchSingleTransaction(txn, groupedTxns, groupMap, matchingRules, isExternalGrouped, matchChan)
+			matched := s.matchSingleTransaction(txn, groupedTxns, groupMap, groupMapMu, matchingRules, isExternalGrouped, matchChan)
 			if !matched {
 				unMatchChan <- txn.TransactionID
 			}
@@ -864,29 +890,46 @@ func (s *LedgerForge) processGroupedTransactions(singleTxns []*model.Transaction
 // - matchChan: Channel for sending matches.
 // Returns:
 // - bool: True if a match is found, false otherwise.
-func (s *LedgerForge) matchSingleTransaction(singleTxn *model.Transaction, groupedTxns map[string][]*model.Transaction, groupMap map[string]bool, matchingRules []model.MatchingRule, isExternalGrouped bool, matchChan chan model.Match) bool {
-	for groupKey := range groupMap {
-		if s.matchesGroup(singleTxn, groupedTxns[groupKey], matchingRules) {
-			for _, groupedTxn := range groupedTxns[groupKey] {
-				var externalID, internalID string
-				if isExternalGrouped {
-					externalID = groupedTxn.TransactionID
-					internalID = singleTxn.TransactionID
-				} else {
-					externalID = singleTxn.TransactionID
-					internalID = groupedTxn.TransactionID
-				}
-				// Send the match result to the channel.
-				matchChan <- model.Match{
-					ExternalTransactionID: externalID,
-					InternalTransactionID: internalID,
-					Amount:                groupedTxn.Amount,
-					Date:                  groupedTxn.CreatedAt,
-				}
-			}
-			delete(groupMap, groupKey) // Mark the group as processed.
-			return true
+func (s *LedgerForge) matchSingleTransaction(singleTxn *model.Transaction, groupedTxns map[string][]*model.Transaction, groupMap map[string]bool, groupMapMu *sync.Mutex, matchingRules []model.MatchingRule, isExternalGrouped bool, matchChan chan model.Match) bool {
+	// Snapshot the candidate group keys under the lock so concurrent workers
+	// don't iterate the map while another deletes from it.
+	groupMapMu.Lock()
+	keys := make([]string, 0, len(groupMap))
+	for k := range groupMap {
+		keys = append(keys, k)
+	}
+	groupMapMu.Unlock()
+
+	for _, groupKey := range keys {
+		if !s.matchesGroup(singleTxn, groupedTxns[groupKey], matchingRules) {
+			continue
 		}
+		// Claim the group atomically: only the worker that deletes it owns the match.
+		groupMapMu.Lock()
+		if !groupMap[groupKey] {
+			groupMapMu.Unlock()
+			continue // already claimed by another worker
+		}
+		delete(groupMap, groupKey)
+		groupMapMu.Unlock()
+
+		for _, groupedTxn := range groupedTxns[groupKey] {
+			var externalID, internalID string
+			if isExternalGrouped {
+				externalID = groupedTxn.TransactionID
+				internalID = singleTxn.TransactionID
+			} else {
+				externalID = singleTxn.TransactionID
+				internalID = groupedTxn.TransactionID
+			}
+			matchChan <- model.Match{
+				ExternalTransactionID: externalID,
+				InternalTransactionID: internalID,
+				Amount:                groupedTxn.Amount,
+				Date:                  groupedTxn.CreatedAt,
+			}
+		}
+		return true
 	}
 	return false
 }
@@ -900,6 +943,17 @@ func (s *LedgerForge) oneToMany(ctx context.Context, singleTxn []*model.Transact
 	ctx, span := otel.Tracer("ledgerforge.reconciliation").Start(ctx, "ProcessOneToMany")
 	defer span.End()
 
+	processedAny := false
+	// Mirror manyToOne: inputs must never silently vanish when no group
+	// batch was processed.
+	defer func() {
+		if !processedAny {
+			for _, txn := range singleTxn {
+				unMatchChan <- txn.TransactionID
+			}
+		}
+	}()
+
 	for {
 		txns, err := s.groupInternalTransactions(ctx, groupingCriteria, batchSize, offset)
 		if err != nil {
@@ -910,12 +964,17 @@ func (s *LedgerForge) oneToMany(ctx context.Context, singleTxn []*model.Transact
 			span.AddEvent("No more grouped transactions to process")
 			break
 		}
+		processedAny = true
 		groupMap := s.buildGroupMap(txns)
-		err = s.processGroupedTransactions(singleTxn, txns, groupMap, matchingRules, isExternalGrouped, wg, matchChan, unMatchChan)
+		var groupMapMu sync.Mutex
+		err = s.processGroupedTransactions(singleTxn, txns, groupMap, &groupMapMu, matchingRules, isExternalGrouped, wg, matchChan, unMatchChan)
 		if err != nil {
 			logrus.Errorf("Error in one-to-many reconciliation: %v", err)
 		}
-		if len(groupMap) == 0 {
+		groupMapMu.Lock()
+		groupMapEmpty := len(groupMap) == 0
+		groupMapMu.Unlock()
+		if groupMapEmpty {
 			break
 		}
 		offset += int64(batchSize)
@@ -1280,8 +1339,10 @@ func (s *LedgerForge) validateDrift(criteria model.MatchingCriteria) error {
 	if criteria.Operator == "equals" {
 		switch criteria.Field {
 		case "amount":
-			if criteria.AllowableDrift < 0 || criteria.AllowableDrift > 100 {
-				return errors.New("drift for amount must be between 0 and 100 (percentage)")
+			// Amount drift is a fraction of the amount: 0.01 allows 1%
+			// deviation, 1 allows 100%.
+			if criteria.AllowableDrift < 0 || criteria.AllowableDrift > 1 {
+				return errors.New("drift for amount must be between 0 and 1 (fraction, e.g. 0.01 = 1%)")
 			}
 		case "date":
 			if criteria.AllowableDrift < 0 {
@@ -1352,7 +1413,7 @@ func (s *LedgerForge) partialMatch(str1, str2 string, allowableDrift float64) bo
 	}
 
 	// Calculate the Levenshtein distance between the strings.
-	distance := levenshtein.DistanceForStrings([]rune(str1), []rune(str2), levenshtein.DefaultOptions)
+	distance := levenshtein.DistanceForStrings([]rune(str1), []rune(str2), levenshtein.DefaultOptionsWithSub)
 
 	// Calculate the maximum allowable distance based on the length of the longer string.
 	maxLength := float64(max(len(str1), len(str2)))
@@ -1385,7 +1446,7 @@ func (s *LedgerForge) matchesCurrency(externalValue, internalValue string, crite
 func (s *LedgerForge) matchesGroupAmount(externalAmount, groupAmount float64, criteria model.MatchingCriteria) bool {
 	switch criteria.Operator {
 	case "equals":
-		allowableDrift := groupAmount * criteria.AllowableDrift
+		allowableDrift := math.Abs(groupAmount) * criteria.AllowableDrift
 		return math.Abs(externalAmount-groupAmount) <= allowableDrift
 	case "greater_than":
 		return externalAmount > groupAmount
@@ -1405,10 +1466,10 @@ func (s *LedgerForge) matchesGroupDate(externalDate, groupEarliestDate time.Time
 	switch criteria.Operator {
 	case "equals":
 		difference := externalDate.Sub(groupEarliestDate)
-		return math.Abs(float64(difference/time.Second)) <= criteria.AllowableDrift
-	case "after":
+		return math.Abs(difference.Seconds()) <= criteria.AllowableDrift
+	case "after", "greater_than":
 		return externalDate.After(groupEarliestDate)
-	case "before":
+	case "before", "less_than":
 		return externalDate.Before(groupEarliestDate)
 	}
 	return false
@@ -1435,9 +1496,9 @@ func (s *LedgerForge) calculateMatchingBounds(externalTxn *model.Transaction, ma
 	for _, rule := range matchingRules {
 		for _, criteria := range rule.Criteria {
 			if criteria.Field == "amount" && criteria.Operator == "equals" {
-				drift := criteria.AllowableDrift // percentage
+				drift := criteria.AllowableDrift // fraction: 0.01 = 1%
 				amt := externalTxn.Amount
-				delta := amt * (drift / 100.0)
+				delta := math.Abs(amt) * drift
 				low := amt - delta
 				high := amt + delta
 

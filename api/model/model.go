@@ -18,6 +18,7 @@ package model
 import (
 	"errors"
 	"math"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -44,6 +45,62 @@ func validatePrecisionIsInteger(value interface{}) error {
 	return nil
 }
 
+// validatePrecisionNotNegative rejects a negative precision.
+//
+// Precision is a scaling factor — "the number you used to convert the
+// smallest unit to an integer" — so it is only meaningful as a positive
+// value. Zero is left valid because it means "not supplied" and is
+// defaulted to 1 downstream (see model.ApplyPrecision).
+//
+// A negative precision is not merely meaningless, it is load-bearing for
+// the bypass described on validateAmountNotNegative below: it flips the
+// sign of the computed precise amount.
+func validatePrecisionNotNegative(value interface{}) error {
+	precision, ok := value.(float64)
+	if !ok {
+		return errors.New("invalid precision type")
+	}
+
+	if precision < 0 {
+		return errors.New("precision cannot be negative")
+	}
+
+	return nil
+}
+
+// validateAmountNotNegative rejects negative amounts on both the float
+// `amount` field and the big.Int `precise_amount` field.
+//
+// The ledger's intent is that amounts are positive — model.Transaction's own
+// validate() reports "transaction amount must be positive" — but that check
+// runs deep in the apply path and, for `amount`, is unreachable: by the time
+// it runs, PreciseAmount has been computed and its non-nil branch returns
+// early. That left the effective guard against a negative `amount` to be an
+// unrelated split-distribution check firing by accident on a negative total.
+//
+// That accidental guard is bypassable, because precision multiplies:
+//
+//	amount(-25) x precision(-100) = precise_amount(+2500)
+//
+// The product is positive, so every downstream positivity check passes, and
+// the transaction applies — while `amount: -25` and `precision: -100` are
+// persisted as sent. The stored record then reports the opposite sign of the
+// movement it describes, and is invisible to an `amount > 0` filter.
+//
+// Zero amount is still the sentinel for "use precise_amount instead".
+// A zero precise_amount is rejected in ValidateRecordTransaction.
+func validateAmountNotNegative(t *RecordTransaction) validation.RuleFunc {
+	return func(value interface{}) error {
+		if t.Amount < 0 {
+			return errors.New("amount cannot be negative")
+		}
+		if t.PreciseAmount != nil && t.PreciseAmount.Sign() < 0 {
+			return errors.New("precise_amount cannot be negative")
+		}
+		return nil
+	}
+}
+
 func sourceOrSourcesValidation(t *RecordTransaction) validation.RuleFunc {
 	return func(value interface{}) error {
 		if (t.Source == "" && len(t.Sources) == 0) || (t.Source != "" && len(t.Sources) > 0) {
@@ -57,6 +114,69 @@ func destinationOrDestinationsValidation(t *RecordTransaction) validation.RuleFu
 	return func(value interface{}) error {
 		if (t.Destination == "" && len(t.Destinations) == 0) || (t.Destination != "" && len(t.Destinations) > 0) {
 			return errors.New("either destination or destinations is required, not both")
+		}
+		return nil
+	}
+}
+
+// splitOnOneSideValidation rejects a transaction that splits both sides at
+// once.
+//
+// SplitTransactionPrecise distributes over one side only — it takes Sources
+// when they are present and Destinations otherwise — and clears both on the
+// legs it produces. A transaction carrying both therefore has its
+// Destinations silently dropped, and every leg is left with an empty
+// Destination, which surfaces downstream as a lookup for a balance with a
+// blank id:
+//
+//	Balance with ID '' not found
+//
+// That names neither the field at fault nor the reason, for a request the
+// ledger cannot express in the first place. Reject it where the shape is
+// still visible.
+func splitOnOneSideValidation(t *RecordTransaction) validation.RuleFunc {
+	return func(value interface{}) error {
+		if len(t.Sources) > 0 && len(t.Destinations) > 0 {
+			return errors.New("a transaction can split either sources or destinations, not both")
+		}
+		return nil
+	}
+}
+
+// sameBalanceValidation rejects a source and destination that resolve to the
+// same balance, whether directly or through a split.
+//
+// updateBalance guards each row with optimistic locking: UPDATE ... WHERE
+// balance_id = $1 AND version = $N. Source and destination are fetched as
+// two independent balance reads, both carrying the row's version from
+// before either update runs. When they name the same row, the first UPDATE
+// advances the version and the second's WHERE version=<now stale> clause
+// matches nothing — a deterministic conflict every single time this is
+// attempted, not a rare race. Rejecting it here, before any balance is
+// fetched, avoids both the confusing downstream "optimistic locking
+// failure" (which reads as a transient race, not a guaranteed one) and,
+// on the default queued path, several retry cycles spent on a transaction
+// that can never succeed.
+func sameBalanceValidation(t *RecordTransaction) validation.RuleFunc {
+	return func(value interface{}) error {
+		const msg = "source and destination cannot be the same balance"
+
+		if t.Source != "" && t.Destination != "" && t.Source == t.Destination {
+			return errors.New(msg)
+		}
+		if t.Source != "" {
+			for _, d := range t.Destinations {
+				if d.Identifier == t.Source {
+					return errors.New(msg)
+				}
+			}
+		}
+		if t.Destination != "" {
+			for _, s := range t.Sources {
+				if s.Identifier == t.Destination {
+					return errors.New(msg)
+				}
+			}
 		}
 		return nil
 	}
@@ -82,17 +202,42 @@ func validateDateFormat(format, value string) error {
 	return nil
 }
 
+// generalLedgerID is the well-known ledger ID for General Ledger (@) balances.
+// Only balances under this ledger may be pre-provisioned with an explicit indicator.
+const generalLedgerID = "general_ledger_id"
+
+// indicatorPattern validates optional balance indicators: must start with "@"
+// and contain no whitespace
+var indicatorPattern = regexp.MustCompile(`^@\S+$`)
+
 func (b *CreateBalance) ValidateCreateBalance() error {
 	// Normalize allocation strategy: trim and uppercase
 	if b.AllocationStrategy != "" {
 		b.AllocationStrategy = strings.TrimSpace(strings.ToUpper(b.AllocationStrategy))
 	}
 
+	// Trim surrounding whitespace only; internal whitespace remains invalid.
+	if b.Indicator != "" {
+		b.Indicator = strings.TrimSpace(b.Indicator)
+	}
+
+	isGeneralLedger := b.LedgerId == generalLedgerID
+
 	return validation.ValidateStruct(b,
 		validation.Field(&b.LedgerId, validation.Required),
 		validation.Field(&b.Currency, validation.Required),
 		validation.Field(&b.IdentityId, validation.When(b.TrackFundLineage, validation.Required.Error("identity_id is required when track_fund_lineage is enabled"))),
 		validation.Field(&b.AllocationStrategy, validation.When(b.AllocationStrategy != "", validation.In("FIFO", "LIFO", "PROPORTIONAL").Error("allocation_strategy must be one of: FIFO, LIFO, PROPORTIONAL"))),
+		validation.Field(&b.Indicator,
+			validation.When(b.Indicator != "" && !isGeneralLedger,
+				validation.By(func(value interface{}) error {
+					return errors.New("indicator is only allowed for General Ledger balances (ledger_id = general_ledger_id)")
+				}),
+			),
+			validation.When(b.Indicator != "" && isGeneralLedger,
+				validation.Match(indicatorPattern).Error("indicator must start with '@' and contain no whitespace (e.g. '@cash')"),
+			),
+		),
 	)
 }
 
@@ -116,7 +261,7 @@ func (c *MonitorCondition) ValidateMonitorCondition() error {
 	return validation.ValidateStruct(c,
 		validation.Field(&c.Field, validation.Required, validation.In("debit_balance", "credit_balance", "balance", "inflight_debit_balance", "inflight_credit_balance", "inflight_balance")),
 		validation.Field(&c.Operator, validation.Required),
-		validation.Field(&c.Precision, validation.Required),
+		validation.Field(&c.Precision, validation.Required, validation.By(validatePrecisionNotNegative)),
 		validation.Field(&c.Value, validation.Required),
 	)
 }
@@ -129,6 +274,9 @@ func (t *RecordTransaction) ValidateRecordTransaction() error {
 			}
 			if t.Amount == 0 && t.PreciseAmount == nil {
 				return errors.New("either amount or precise_amount is required")
+			}
+			if t.PreciseAmount != nil && t.PreciseAmount.Sign() == 0 {
+				return errors.New("precise_amount must be positive")
 			}
 
 			// Check for high precision amounts that might lead to rounding errors
@@ -152,13 +300,13 @@ func (t *RecordTransaction) ValidateRecordTransaction() error {
 			}
 
 			return nil
-		})),
-		validation.Field(&t.Precision, validation.By(validatePrecisionIsInteger)),
+		}), validation.By(validateAmountNotNegative(t))),
+		validation.Field(&t.Precision, validation.By(validatePrecisionIsInteger), validation.By(validatePrecisionNotNegative)),
 		validation.Field(&t.Currency, validation.Required),
 		validation.Field(&t.Reference, validation.Required),
 		validation.Field(&t.Description, validation.Required),
-		validation.Field(&t.Source, validation.By(sourceOrSourcesValidation(t))),
-		validation.Field(&t.Destination, validation.By(destinationOrDestinationsValidation(t))),
+		validation.Field(&t.Source, validation.By(sourceOrSourcesValidation(t)), validation.By(splitOnOneSideValidation(t))),
+		validation.Field(&t.Destination, validation.By(destinationOrDestinationsValidation(t)), validation.By(sameBalanceValidation(t))),
 		validation.Field(&t.ScheduledFor, validation.When(t.ScheduledFor != "", validation.By(func(value interface{}) error {
 			dateStr, ok := value.(string)
 			if !ok {
@@ -215,7 +363,7 @@ func (b *CreateBalance) ToBalance() model.Balance {
 	if allocationStrategy == "" {
 		allocationStrategy = "FIFO"
 	}
-	return model.Balance{LedgerID: b.LedgerId, IdentityID: b.IdentityId, Currency: b.Currency, MetaData: b.MetaData, CurrencyMultiplier: b.Precision, TrackFundLineage: b.TrackFundLineage, AllocationStrategy: allocationStrategy}
+	return model.Balance{LedgerID: b.LedgerId, IdentityID: b.IdentityId, Currency: b.Currency, MetaData: b.MetaData, CurrencyMultiplier: b.Precision, TrackFundLineage: b.TrackFundLineage, AllocationStrategy: allocationStrategy, Indicator: b.Indicator}
 }
 
 func (b *CreateBalanceMonitor) ToBalanceMonitor() model.BalanceMonitor {
@@ -265,5 +413,6 @@ func (t *RecordTransaction) ToTransaction() *model.Transaction {
 		inflightCommitDate = inflightCommit
 	}
 
-	return &model.Transaction{Currency: t.Currency, Source: t.Source, Description: t.Description, Reference: t.Reference, ScheduledFor: scheduledFor, Destination: t.Destination, Amount: t.Amount, AllowOverdraft: t.AllowOverDraft, MetaData: t.MetaData, Sources: t.Sources, Destinations: t.Destinations, Inflight: t.Inflight, Precision: t.Precision, InflightExpiryDate: inflightExpiryDate, InflightCommitDate: inflightCommitDate, Rate: t.Rate, SkipQueue: t.SkipQueue, EffectiveDate: t.EffectiveDate, OverdraftLimit: t.OverdraftLimit, PreciseAmount: t.PreciseAmount, Atomic: t.Atomic}
+	return &model.Transaction{Currency: t.Currency, Source: t.Source, Description: t.Description, Reference: t.Reference, ScheduledFor: scheduledFor, Destination: t.Destination, Rate: t.Rate,
+		Amount: t.Amount, AllowOverdraft: t.AllowOverDraft, MetaData: t.MetaData, Sources: t.Sources, Destinations: t.Destinations, Inflight: t.Inflight, Precision: t.Precision, InflightExpiryDate: inflightExpiryDate, InflightCommitDate: inflightCommitDate, SkipQueue: t.SkipQueue, EffectiveDate: t.EffectiveDate, OverdraftLimit: t.OverdraftLimit, PreciseAmount: t.PreciseAmount, Atomic: t.Atomic}
 }

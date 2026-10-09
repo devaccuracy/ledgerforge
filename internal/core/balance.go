@@ -19,11 +19,12 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/devaccuracy/ledgerforge/config"
+	"github.com/devaccuracy/ledgerforge/internal/apierror"
 	"github.com/devaccuracy/ledgerforge/internal/filter"
 	"github.com/devaccuracy/ledgerforge/internal/metrics"
 	"github.com/devaccuracy/ledgerforge/internal/notification"
@@ -34,7 +35,25 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// balanceTracer is an OpenTelemetry tracer for tracking balance-related operations.
+// isAlreadyExists reports whether err means the balance already exists
+// (apierror.ErrConflict), e.g. a duplicate (indicator, currency) pair from
+// CreateBalance. Used by get-or-create so a concurrent create race can fall
+// through to a re-fetch instead of failing. Checking the error code (rather
+// than an empty balance ID or a substring of the message) keeps this resilient
+// to message changes.
+func isAlreadyExists(err error) bool {
+	var apiErr apierror.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.Code == apierror.ErrConflict
+	}
+	var apiErrPtr *apierror.APIError
+	if errors.As(err, &apiErrPtr) && apiErrPtr != nil {
+		return apiErrPtr.Code == apierror.ErrConflict
+	}
+	return false
+}
+
+// balanceTracer is an OpenTelemetry tracer for tracking balance-related transactions.
 var (
 	balanceTracer = otel.Tracer("ledgerforge.balances")
 )
@@ -154,7 +173,7 @@ func (l *LedgerForge) getOrCreateBalanceByIndicator(ctx context.Context, indicat
 			Currency:  currency,
 		}
 		_, err := l.CreateBalance(ctx, *balance)
-		if err != nil && !strings.Contains(err.Error(), "Balance already exist") {
+		if err != nil && !isAlreadyExists(err) {
 			span.RecordError(err)
 			return nil, err
 		}
@@ -237,6 +256,7 @@ func (l *LedgerForge) CreateBalance(ctx context.Context, balance model.Balance) 
 		span.RecordError(err)
 		return model.Balance{}, err
 	}
+
 	l.postBalanceActions(ctx, &balance)
 	metrics.BalanceCreatedTotal.Add(ctx, 1)
 	span.AddEvent("Balance created", trace.WithAttributes(attribute.String("balance.id", balance.BalanceID)))

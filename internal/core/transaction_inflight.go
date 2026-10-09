@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"sync"
 	"time"
 
@@ -81,6 +82,17 @@ func IsInflightTransaction(transaction *model.Transaction) bool {
 		(transaction.Status == StatusQueued &&
 			transaction.MetaData != nil &&
 			transaction.MetaData["inflight"] == true)
+}
+
+func clearTerminalInflightMetadata(transaction *model.Transaction) {
+	if transaction == nil || transaction.Status == StatusInflight {
+		return
+	}
+
+	transaction.Inflight = false
+	if transaction.MetaData != nil {
+		delete(transaction.MetaData, "inflight")
+	}
 }
 
 // CommitWorker processes commit transactions from the jobs channel and sends the results to the results channel.
@@ -176,6 +188,15 @@ func (l *LedgerForge) releaseSingleLock(ctx context.Context, locker *redlock.Loc
 // - *model.Transaction: A pointer to the committed Transaction model.
 // - error: An error if the transaction could not be committed.
 func (l *LedgerForge) CommitInflightTransaction(ctx context.Context, transactionID string, amount *big.Int) (*model.Transaction, error) {
+	return l.CommitInflightTransactionWithRef(ctx, transactionID, amount, "")
+}
+
+// CommitInflightTransactionWithRef commits an inflight transaction using a
+// caller-supplied reference for the committed child. A non-empty reference makes
+// asynq retries idempotent: a retry that re-commits the same amount collides on
+// the unique reference index. An empty reference preserves the legacy behavior
+// of generating a random reference.
+func (l *LedgerForge) CommitInflightTransactionWithRef(ctx context.Context, transactionID string, amount *big.Int, reference string) (*model.Transaction, error) {
 	ctx, span := tracer.Start(ctx, "CommitInflightTransaction")
 	defer span.End()
 
@@ -203,12 +224,12 @@ func (l *LedgerForge) CommitInflightTransaction(ctx context.Context, transaction
 	span.AddEvent("Inflight transaction committed", trace.WithAttributes(attribute.String("transaction.id", transaction.TransactionID)))
 	metrics.InflightCommitTotal.Add(ctx, 1)
 
-	committedTxn, err := l.finalizeCommitment(ctx, transaction, false)
+	committedTxn, err := l.finalizeCommitment(ctx, transaction, false, reference)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := l.queueShadowWork(ctx, transactionID, model.LineageTypeShadowCommit); err != nil {
+	if err := l.queueShadowWork(ctx, transactionID, transaction, model.LineageTypeShadowCommit); err != nil {
 		logrus.WithError(err).WithField("transaction_id", transactionID).Error("failed to queue shadow commit")
 	}
 
@@ -242,12 +263,12 @@ func (l *LedgerForge) CommitInflightTransactionWithQueue(ctx context.Context, tr
 
 	span.AddEvent("Inflight transaction committed", trace.WithAttributes(attribute.String("transaction.id", transaction.TransactionID)))
 
-	committedTxn, err := l.finalizeCommitment(ctx, transaction, true)
+	committedTxn, err := l.finalizeCommitment(ctx, transaction, true, "")
 	if err != nil {
 		return nil, err
 	}
 
-	if err := l.queueShadowWork(ctx, transactionID, model.LineageTypeShadowCommit); err != nil {
+	if err := l.queueShadowWork(ctx, transactionID, transaction, model.LineageTypeShadowCommit); err != nil {
 		logrus.WithError(err).WithField("transaction_id", transactionID).Error("failed to queue shadow commit")
 	}
 
@@ -309,27 +330,32 @@ func (l *LedgerForge) checkTransactionCommitStatus(amountLeft *big.Int) error {
 //
 // Parameters:
 // - transaction *model.Transaction: The transaction being validated.
-// - amount float64: The requested amount to commit.
+// - amount *big.Int: The requested precise amount to commit.
 // - amountLeft *big.Int: The remaining amount that can be committed.
 //
 // Returns:
 // - error: An error if the requested amount exceeds allowed limits.
 func (l *LedgerForge) validateRequestedAmount(transaction *model.Transaction, amount *big.Int, amountLeft *big.Int) error {
-	if amount.Cmp(big.NewInt(0)) == 0 {
+	if amount.Sign() < 0 {
+		return fmt.Errorf("commit amount cannot be negative")
+	}
+	// Zero is the sentinel for "commit the full remaining amount".
+	if amount.Sign() == 0 {
 		return nil
 	}
 
 	requestedAmount := amount
+	requestedValue := l.convertPreciseToFloat(requestedAmount, transaction.Precision)
 
 	if requestedAmount.Cmp(transaction.PreciseAmount) > 0 {
 		return fmt.Errorf("cannot commit more than the original transaction amount. Original: %s%.2f, Requested: %s%.2f",
-			transaction.Currency, transaction.Amount, transaction.Currency, amount)
+			transaction.Currency, transaction.Amount, transaction.Currency, requestedValue)
 	}
 
 	if requestedAmount.Cmp(amountLeft) > 0 {
 		amountLeftValue := l.convertPreciseToFloat(amountLeft, transaction.Precision)
 		return fmt.Errorf("cannot commit more than the remaining amount. Available: %s%.2f, Requested: %s%.2f",
-			transaction.Currency, amountLeftValue, transaction.Currency, amount)
+			transaction.Currency, amountLeftValue, transaction.Currency, requestedValue)
 	}
 
 	return nil
@@ -375,18 +401,23 @@ func (l *LedgerForge) convertPreciseToFloat(preciseAmount *big.Int, precision fl
 // Returns:
 // - *model.Transaction: A pointer to the finalized Transaction model.
 // - error: An error if the transaction could not be queued.
-func (l *LedgerForge) finalizeCommitment(ctx context.Context, transaction *model.Transaction, withQueue bool) (*model.Transaction, error) {
+func (l *LedgerForge) finalizeCommitment(ctx context.Context, transaction *model.Transaction, withQueue bool, reference string) (*model.Transaction, error) {
 	ctx, span := tracer.Start(ctx, "FinalizeCommitment")
 	defer span.End()
 
 	transaction.Status = StatusCommit
+	transaction.Inflight = false
 	transaction.ParentTransaction = transaction.TransactionID
 	transaction.CreatedAt = time.Now()
 	if transaction.EffectiveDate == nil {
 		transaction.EffectiveDate = &transaction.CreatedAt
 	}
 	transaction.TransactionID = model.GenerateUUIDWithSuffix("txn")
-	transaction.Reference = model.GenerateUUIDWithSuffix("ref")
+	if reference != "" {
+		transaction.Reference = reference
+	} else {
+		transaction.Reference = model.GenerateUUIDWithSuffix("ref")
+	}
 	transaction.Hash = transaction.HashTxn()
 
 	if withQueue {
@@ -404,6 +435,7 @@ func (l *LedgerForge) finalizeCommitment(ctx context.Context, transaction *model
 		return transaction, nil
 	}
 
+	clearTerminalInflightMetadata(transaction)
 	transaction.Status = StatusApplied
 
 	span.AddEvent("Commitment finalized", trace.WithAttributes(attribute.String("transaction.id", transaction.TransactionID)))
@@ -421,6 +453,13 @@ func (l *LedgerForge) finalizeCommitment(ctx context.Context, transaction *model
 // - *model.Transaction: A pointer to the voided Transaction model.
 // - error: An error if the transaction could not be voided.
 func (l *LedgerForge) VoidInflightTransaction(ctx context.Context, transactionID string) (*model.Transaction, error) {
+	return l.VoidInflightTransactionWithRef(ctx, transactionID, "")
+}
+
+// VoidInflightTransactionWithRef voids an inflight transaction using a
+// caller-supplied reference for the voided child, making asynq retries
+// idempotent. An empty reference preserves the legacy random-reference behavior.
+func (l *LedgerForge) VoidInflightTransactionWithRef(ctx context.Context, transactionID string, reference string) (*model.Transaction, error) {
 	ctx, span := tracer.Start(ctx, "VoidInflightTransaction")
 	defer span.End()
 
@@ -454,12 +493,12 @@ func (l *LedgerForge) VoidInflightTransaction(ctx context.Context, transactionID
 	span.AddEvent("Inflight transaction voided", trace.WithAttributes(attribute.String("transaction.id", transaction.TransactionID)))
 	metrics.InflightVoidTotal.Add(ctx, 1)
 
-	voidedTxn, err := l.finalizeVoidTransaction(ctx, transaction, amountLeft)
+	voidedTxn, err := l.finalizeVoidTransaction(ctx, transaction, amountLeft, reference)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := l.queueShadowWork(ctx, transactionID, model.LineageTypeShadowVoid); err != nil {
+	if err := l.queueShadowWork(ctx, transactionID, transaction, model.LineageTypeShadowVoid); err != nil {
 		logrus.WithError(err).WithField("transaction_id", transactionID).Error("failed to queue shadow void")
 	}
 
@@ -563,11 +602,12 @@ func (l *LedgerForge) calculateRemainingAmount(ctx context.Context, transaction 
 // Returns:
 // - *model.Transaction: A pointer to the voided Transaction model.
 // - error: An error if the transaction could not be queued.
-func (l *LedgerForge) finalizeVoidTransaction(ctx context.Context, transaction *model.Transaction, amountLeft *big.Int) (*model.Transaction, error) {
+func (l *LedgerForge) finalizeVoidTransaction(ctx context.Context, transaction *model.Transaction, amountLeft *big.Int, reference string) (*model.Transaction, error) {
 	ctx, span := tracer.Start(ctx, "FinalizeVoidTransaction")
 	defer span.End()
 
 	transaction.Status = StatusVoid
+	transaction.Inflight = false
 	transaction.PreciseAmount = amountLeft
 	transaction.CreatedAt = time.Now()
 	if transaction.EffectiveDate == nil {
@@ -575,7 +615,11 @@ func (l *LedgerForge) finalizeVoidTransaction(ctx context.Context, transaction *
 	}
 	transaction.ParentTransaction = transaction.TransactionID
 	transaction.TransactionID = model.GenerateUUIDWithSuffix("txn")
-	transaction.Reference = model.GenerateUUIDWithSuffix("ref")
+	if reference != "" {
+		transaction.Reference = reference
+	} else {
+		transaction.Reference = model.GenerateUUIDWithSuffix("ref")
+	}
 	transaction.Hash = transaction.HashTxn()
 	model.ApplyPrecision(transaction)
 
@@ -587,4 +631,385 @@ func (l *LedgerForge) finalizeVoidTransaction(ctx context.Context, transaction *
 
 	span.AddEvent("Void transaction finalized", trace.WithAttributes(attribute.String("transaction.id", transaction.TransactionID)))
 	return transaction, nil
+}
+
+// inflightActionReference derives the deterministic reference for a committed or
+// voided leg from the action ID carried in the queued task. The same actionID
+// on an asynq retry reproduces the same reference, so a re-applied leg collides
+// on the unique reference index. An empty actionID yields "" (random reference).
+func inflightActionReference(legTransactionID, action, actionID string) string {
+	if actionID == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s_%s_%s", legTransactionID, action, actionID)
+}
+
+// isTerminalInflightError reports whether an inflight commit/void error is
+// terminal — the action cannot succeed on retry and the queued task should be
+// acked rather than retried.
+func (l *LedgerForge) isTerminalInflightError(err error) bool {
+	if IsDuplicateReferenceError(err) {
+		return true
+	}
+	switch classifyInflightError(err) {
+	case "ALREADY_COMMITTED", "ALREADY_VOIDED", "NOT_INFLIGHT", "INVALID_AMOUNT":
+		return true
+	default:
+		return false
+	}
+}
+
+// collectInflightLegs snapshots every inflight leg under a parent transaction
+// (transaction_id == parent OR parent_transaction == parent). Committing a leg
+// creates a child row but leaves the leg's own row INFLIGHT, so snapshotting up
+// front avoids re-processing the same legs across pages.
+func (l *LedgerForge) collectInflightLegs(ctx context.Context, parentTransactionID string) ([]*model.Transaction, error) {
+	batchSize := l.Config().Transaction.BatchSize
+	if batchSize <= 0 {
+		batchSize = 100
+	}
+
+	var legs []*model.Transaction
+	for offset := int64(0); ; offset += int64(batchSize) {
+		batch, err := l.GetInflightTransactionsByParentID(ctx, parentTransactionID, batchSize, offset)
+		if err != nil {
+			return nil, err
+		}
+		legs = append(legs, batch...)
+		if len(batch) < batchSize {
+			return legs, nil
+		}
+	}
+}
+
+// applyInflightActionToLeg commits or voids a single inflight leg using the
+// deterministic reference (derived from actionID) that makes asynq retries
+// idempotent.
+func (l *LedgerForge) applyInflightActionToLeg(ctx context.Context, leg *model.Transaction, action string, amount *big.Int, actionID string) error {
+	ref := inflightActionReference(leg.TransactionID, action, actionID)
+	if action == InflightActionVoid {
+		_, err := l.VoidInflightTransactionWithRef(ctx, leg.TransactionID, ref)
+		return err
+	}
+	_, err := l.CommitInflightTransactionWithRef(ctx, leg.TransactionID, amount, ref)
+	return err
+}
+
+// RunInflightActionByParent commits or voids every inflight leg under a parent
+// transaction — the same expansion the synchronous endpoint performs — and is
+// the queued worker's entrypoint.
+//
+// retryable is true when at least one leg failed with a transient error (lock
+// contention, fetch failure, not-yet-visible), so the asynq task should retry;
+// already-finalized legs are terminal, skipped, and never block the ack.
+func (l *LedgerForge) RunInflightActionByParent(ctx context.Context, parentTransactionID, action string, amount *big.Int, actionID string) (retryable bool, err error) {
+	ctx, span := tracer.Start(ctx, "RunInflightActionByParent")
+	defer span.End()
+
+	legs, err := l.collectInflightLegs(ctx, parentTransactionID)
+	if err != nil {
+		span.RecordError(err)
+		return true, err // a fetch failure is transient
+	}
+	if len(legs) == 0 {
+		// Nothing inflight under this parent: already finalized or never existed.
+		span.AddEvent("No inflight legs to process")
+		return false, nil
+	}
+
+	var applied, skipped int
+	var lastTransientErr error
+	for _, leg := range legs {
+		switch err := l.applyInflightActionToLeg(ctx, leg, action, amount, actionID); {
+		case err == nil:
+			applied++
+		case l.isTerminalInflightError(err):
+			// Expected on a retry once a leg is already finalized; benign.
+			skipped++
+			logrus.WithFields(logrus.Fields{
+				"transaction_id": leg.TransactionID,
+				"reason":         classifyInflightError(err),
+			}).Debug("inflight leg already finalized; skipping (idempotent)")
+		default:
+			span.RecordError(err)
+			lastTransientErr = err
+		}
+	}
+
+	if lastTransientErr != nil {
+		return true, lastTransientErr
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"parent_transaction_id": parentTransactionID,
+		"action":                action,
+		"applied":               applied,
+		"skipped":               skipped,
+	}).Info("inflight action processed")
+	return false, nil
+}
+
+// preValidateInflightAction performs the read-only checks an inflight commit/void
+// would perform, without mutating or persisting anything. It lets the API reject
+// an obviously-invalid request (not inflight, already finalized, amount too high)
+// synchronously before enqueuing, while the worker remains the authority.
+//
+// When transactionID is a multi-source / multi-destination parent or a bulk
+// batch_id, there is often no INFLIGHT row for that id itself — only child legs.
+// Sync commit already expands via GetInflightTransactionsByParentID; this
+// pre-check does the same so queued commit does not 404 on a valid parent.
+func (l *LedgerForge) preValidateInflightAction(ctx context.Context, transactionID, action string, amount *big.Int) (*model.Transaction, error) {
+	transaction, err := l.fetchAndValidateInflightTransaction(ctx, transactionID)
+	if err == nil {
+		return l.validateInflightActionAmount(ctx, transaction, action, amount)
+	}
+
+	if !shouldExpandInflightParent(err) {
+		return nil, err
+	}
+
+	legs, legErr := l.collectInflightLegs(ctx, transactionID)
+	if legErr != nil {
+		return nil, legErr
+	}
+	if len(legs) == 0 {
+		return nil, err
+	}
+
+	remaining, remErr := l.anyInflightLegRemaining(ctx, legs)
+	if remErr != nil {
+		return nil, remErr
+	}
+	if !remaining {
+		if action == InflightActionVoid {
+			return nil, errors.New("cannot void: transaction already committed")
+		}
+		return nil, errors.New("cannot commit: transaction already committed")
+	}
+
+	// Response stand-in: first leg's fields, but the id the client committed
+	// against (parent / batch id) so the queued payload matches the request.
+	representative := *legs[0]
+	representative.TransactionID = transactionID
+	return &representative, nil
+}
+
+// shouldExpandInflightParent reports whether a fetch/validate failure should
+// fall back to looking up inflight legs under transactionID as a parent.
+func shouldExpandInflightParent(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return true
+	}
+	switch classifyInflightError(err) {
+	case "NOT_FOUND", "NOT_INFLIGHT":
+		return true
+	default:
+		return false
+	}
+}
+
+// anyInflightLegRemaining reports whether at least one leg still has an
+// uncommitted amount left.
+func (l *LedgerForge) anyInflightLegRemaining(ctx context.Context, legs []*model.Transaction) (bool, error) {
+	for _, leg := range legs {
+		amountLeft, err := l.calculateRemainingAmount(ctx, leg)
+		if err != nil {
+			return false, err
+		}
+		if amountLeft.Sign() != 0 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// validateInflightActionAmount runs the single-transaction amount checks used
+// when the commit/void target is itself an INFLIGHT row.
+func (l *LedgerForge) validateInflightActionAmount(ctx context.Context, transaction *model.Transaction, action string, amount *big.Int) (*model.Transaction, error) {
+	amountLeft, err := l.calculateRemainingAmount(ctx, transaction)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := l.checkTransactionCommitStatus(amountLeft); err != nil {
+		return nil, err
+	}
+
+	if action == InflightActionCommit && amount != nil {
+		if err := l.validateRequestedAmount(transaction, amount, amountLeft); err != nil {
+			return nil, err
+		}
+	}
+
+	return transaction, nil
+}
+
+// QueueInflightAction pre-validates a commit/void and enqueues it for the worker.
+// It returns the still-inflight parent transaction (for the API response) and
+// ErrInflightActionQueued if an action for the same transaction is already queued.
+func (l *LedgerForge) QueueInflightAction(ctx context.Context, transactionID string, amount *big.Int, action string) (*model.Transaction, error) {
+	ctx, span := tracer.Start(ctx, "QueueInflightAction")
+	defer span.End()
+
+	transaction, err := l.preValidateInflightAction(ctx, transactionID, action, amount)
+	if err != nil {
+		span.RecordError(err)
+		return nil, err
+	}
+
+	preciseAmount := "0"
+	if amount != nil {
+		preciseAmount = amount.String()
+	}
+
+	payload := InflightActionPayload{
+		TransactionID: transactionID,
+		Action:        action,
+		PreciseAmount: preciseAmount,
+		ActionID:      model.GenerateUUIDWithSuffix("act"),
+	}
+	if err := l.queue.EnqueueInflightAction(ctx, payload); err != nil {
+		span.RecordError(err)
+		return nil, err
+	}
+
+	return transaction, nil
+}
+
+// BulkInflightAction discriminates between the two operations supported by
+// BulkInflightUpdate.
+type BulkInflightAction int
+
+const (
+	BulkInflightVoid BulkInflightAction = iota
+	BulkInflightCommit
+)
+
+// BulkInflightItem is the internal per-item shape consumed by
+// BulkInflightUpdate. For void calls only TransactionID is used.
+type BulkInflightItem struct {
+	TransactionID string
+	Amount        *big.Int
+}
+
+// BulkInflightOutcome is the per-item outcome from BulkInflightUpdate.
+// On success Err is nil; on failure Code carries a stable classification
+// (see classifyInflightError) and Err preserves the original message.
+type BulkInflightOutcome struct {
+	TransactionID string
+	Txn           *model.Transaction
+	Err           error
+	Code          string
+}
+
+// classifyInflightError maps the unstructured errors emitted by
+// CommitInflightTransaction / VoidInflightTransaction to stable codes so
+// bulk callers can branch on them programmatically instead of regex-matching
+// human-readable messages.
+//
+// Codes are intentionally action-agnostic where possible. ALREADY_VOIDED and
+// ALREADY_COMMITTED are reported as observed — a void on an already-committed
+// txn surfaces ALREADY_COMMITTED, and vice versa.
+// ClassifyInflightError maps an inflight commit/void error to a stable code
+// (see classifyInflightError) so callers outside this package — e.g. the queued
+// bulk API path — can report per-item codes without regex-matching messages.
+func ClassifyInflightError(err error) string {
+	return classifyInflightError(err)
+}
+
+func classifyInflightError(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "transaction not found"),
+		strings.Contains(msg, "no rows in result set"),
+		strings.Contains(msg, "not found"):
+		return "NOT_FOUND"
+	case strings.Contains(msg, "has already been voided"):
+		return "ALREADY_VOIDED"
+	case strings.Contains(msg, "transaction already committed"):
+		return "ALREADY_COMMITTED"
+	case strings.Contains(msg, "not in inflight status"):
+		return "NOT_INFLIGHT"
+	case strings.Contains(msg, "cannot commit more than"):
+		return "INVALID_AMOUNT"
+	case strings.Contains(msg, "failed to acquire lock"):
+		return "LOCKED"
+	default:
+		return "INTERNAL_ERROR"
+	}
+}
+
+// BulkInflightUpdate voids or commits a list of independently-created
+// inflight transactions in parallel.
+//
+// Each id is processed in its own goroutine via a worker pool of size
+// `maxWorkers` (clamped to [1, 16]). Per-item failures are reported in the
+// returned result slice and do not abort the rest of the batch; the returned
+// error is non-nil only for input validation failures (empty list, too many
+// items).
+//
+// Idempotency: bulk has no batch-wide idempotency key. Retries that include
+// already-processed ids will see those ids surface as ALREADY_VOIDED /
+// ALREADY_COMMITTED, which callers should treat as success-equivalent for
+// retry semantics.
+//
+// Results are returned in the same order as the input.
+func (l *LedgerForge) BulkInflightUpdate(ctx context.Context, action BulkInflightAction, items []BulkInflightItem, maxWorkers int) ([]BulkInflightOutcome, error) {
+	if len(items) == 0 {
+		return nil, errors.New("transaction_ids cannot be empty")
+	}
+	if maxWorkers < 1 {
+		maxWorkers = 4
+	}
+	if maxWorkers > 16 {
+		maxWorkers = 16
+	}
+	if maxWorkers > len(items) {
+		maxWorkers = len(items)
+	}
+
+	results := make([]BulkInflightOutcome, len(items))
+	type job struct {
+		idx  int
+		item BulkInflightItem
+	}
+	jobs := make(chan job, len(items))
+	for i, it := range items {
+		jobs <- job{idx: i, item: it}
+	}
+	close(jobs)
+
+	var wg sync.WaitGroup
+	for w := 0; w < maxWorkers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				var txn *model.Transaction
+				var err error
+				switch action {
+				case BulkInflightCommit:
+					txn, err = l.CommitInflightTransaction(ctx, j.item.TransactionID, j.item.Amount)
+				case BulkInflightVoid:
+					txn, err = l.VoidInflightTransaction(ctx, j.item.TransactionID)
+				default:
+					err = fmt.Errorf("unknown bulk inflight action: %d", action)
+				}
+				results[j.idx] = BulkInflightOutcome{
+					TransactionID: j.item.TransactionID,
+					Txn:           txn,
+					Err:           err,
+					Code:          classifyInflightError(err),
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	return results, nil
 }

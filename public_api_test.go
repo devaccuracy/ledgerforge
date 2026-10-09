@@ -33,3 +33,17 @@ func TestPublicAPIFacadePreservesLegacyImportPath(t *testing.T) {
 		t.Fatalf("migration files are not available through the public facade: %v", err)
 	}
 }
+
+// These additions must remain reachable through the stable root facade.
+var (
+	_ func(*ledgerforge.LedgerForge) *ledgerforge.ChainProcessor = ledgerforge.NewChainProcessor
+	_ func(interface{}) (map[string]interface{}, error)          = ledgerforge.DocumentToIndexMap
+	_ func(error) string                                         = ledgerforge.ClassifyInflightError
+	_ func(error) bool                                           = ledgerforge.IsDuplicateReferenceError
+	_                                                            = ledgerforge.IndexTask{}
+	_                                                            = ledgerforge.RefundOptions{}
+	_                                                            = ledgerforge.BulkInflightItem{}
+	_                                                            = ledgerforge.BulkInflightOutcome{}
+	_                                                            = ledgerforge.BulkTransactionError{}
+	_                                                            = ledgerforge.InflightActionPayload{}
+)

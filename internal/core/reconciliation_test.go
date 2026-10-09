@@ -28,59 +28,6 @@ import (
 	"github.com/devaccuracy/ledgerforge/model"
 )
 
-// func TestOneToOneReconciliation(t *testing.T) {
-// 	cnf := &config.Configuration{
-// 		Transaction: config.TransactionConfig{
-// 			BatchSize:  100000,
-// 			MaxWorkers: 1,
-// 		},
-// 		Queue: config.QueueConfig{
-// 			TransactionQueue: "transaction_queue",
-// 		},
-// 	}
-// 	config.ConfigStore.Store(cnf)
-// 	mockDS := new(mocks.MockDataSource)
-// 	ledgerforge := &LedgerForge{datasource: mockDS}
-
-// 	ctx := context.Background()
-// 	externalTxns := []*model.Transaction{
-// 		{TransactionID: "ext1", Amount: 100, CreatedAt: time.Now()},
-// 		{TransactionID: "ext2", Amount: 200, CreatedAt: time.Now()},
-// 	}
-// 	internalTxns := []*model.Transaction{
-// 		{TransactionID: "int1", Amount: 100, CreatedAt: time.Now()},
-// 		{TransactionID: "int2", Amount: 200, CreatedAt: time.Now()},
-// 	}
-
-// 	mockDS.On("GetTransactionsPaginated", mock.Anything, "", 100000, int64(0)).Return(internalTxns, nil)
-// 	mockDS.On("GetTransactionsPaginated", mock.Anything, "", 100000, int64(2)).Return([]*model.Transaction{}, nil)
-
-// 	matchingRules := []model.MatchingRule{
-// 		{
-// 			RuleID: "rule1",
-// 			Criteria: []model.MatchingCriteria{
-// 				{Field: "amount", Operator: "equals", AllowableDrift: 0},
-// 			},
-// 		},
-// 	}
-
-// 	matches, unmatched := ledgerforge.oneToOneReconciliation(ctx, externalTxns, matchingRules)
-// 	assert.Equal(t, 2, len(matches), "Expected 2 matches")
-// 	assert.Equal(t, 0, len(unmatched), "Expected 0 unmatched transactions")
-
-// 	// Create a map to easily check for expected matches
-// 	matchMap := make(map[string]string)
-// 	for _, match := range matches {
-// 		matchMap[match.ExternalTransactionID] = match.InternalTransactionID
-// 	}
-
-// 	// Check if all expected matches are present
-// 	assert.Equal(t, "int1", matchMap["ext1"], "Expected ext1 to match with int1")
-// 	assert.Equal(t, "int2", matchMap["ext2"], "Expected ext2 to match with int2")
-
-// 	mockDS.AssertExpectations(t)
-// }
-
 // TestOneToManyReconciliation tests the one-to-many reconciliation strategy
 func TestOneToManyReconciliation(t *testing.T) {
 	cnf := &config.Configuration{
@@ -254,10 +201,15 @@ func TestManyToOneReconciliationUsesUploadID(t *testing.T) {
 func TestMatchingRules(t *testing.T) {
 	ledgerforge := &LedgerForge{}
 
+	// A single captured timestamp keeps the date-drift case exactly at the
+	// 3600s boundary; two time.Now() calls would add nanoseconds and
+	// (correctly) fail the fractional-seconds comparison.
+	now := time.Now()
+
 	externalTxn := &model.Transaction{
 		TransactionID: "ext1",
 		Amount:        100,
-		CreatedAt:     time.Now(),
+		CreatedAt:     now,
 		Description:   "Test transaction",
 		Reference:     "REF123",
 		Currency:      "USD",
@@ -266,7 +218,7 @@ func TestMatchingRules(t *testing.T) {
 	internalTxn := model.Transaction{
 		TransactionID: "int1",
 		Amount:        101,
-		CreatedAt:     time.Now().Add(1 * time.Hour),
+		CreatedAt:     now.Add(1 * time.Hour),
 		Description:   "Internal test transaction",
 		Reference:     "INT-REF123",
 		Currency:      "USD",
@@ -471,7 +423,9 @@ func TestReconciliationEdgeCases(t *testing.T) {
 		matches, unmatched := ledgerforge.oneToManyReconciliation(ctx, externalTxns, "", matchingRules, false)
 
 		assert.Equal(t, 0, len(matches), "Expected 0 matches")
-		assert.Equal(t, 0, len(unmatched), "Expected 1 unmatched transaction")
+		// Inputs that never get a group batch must be reported unmatched,
+		// not silently dropped from the reconciliation results.
+		assert.Equal(t, 1, len(unmatched), "Expected 1 unmatched transaction")
 
 		mockDS.AssertExpectations(t)
 	})

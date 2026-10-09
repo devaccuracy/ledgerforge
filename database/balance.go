@@ -63,13 +63,13 @@ func prepareQueries(queryBuilder strings.Builder, include []string) string {
 	// Default fields for balances
 	selectFields = append(selectFields,
 		"b.balance_id", "b.balance", "b.credit_balance", "b.debit_balance",
-		"b.currency", "b.currency_multiplier", "b.ledger_id",
+		"b.currency", "b.ledger_id",
 		"COALESCE(b.identity_id, '') as identity_id", "b.created_at", "b.meta_data", "b.inflight_balance", "b.inflight_credit_balance", "b.inflight_debit_balance", "b.version", "b.indicator", "b.track_fund_lineage", "COALESCE(b.allocation_strategy, 'FIFO') as allocation_strategy")
 
 	// Conditionally include identity fields
 	if contains(include, "identity") {
 		selectFields = append(selectFields,
-			"i.identity_id", "i.first_name", "i_name", "i.category", "i.last_name", "i.other_names",
+			"i.identity_id", "i.first_name", "i.organization_name", "i.category", "i.last_name", "i.other_names",
 			"i.gender", "i.dob", "i.email_address", "i.phone_number",
 			"i.nationality", "i.street", "i.country", "i.state",
 			"i.post_code", "i.city", "i.created_at")
@@ -107,7 +107,7 @@ func prepareQueries(queryBuilder strings.Builder, include []string) string {
 
 // Scans a SQL row result and maps it into a Balance object, including optional identity and ledger data.
 // Converts string representations of big.Int fields into actual big.Int objects.
-func scanRow(row *sql.Row, tx *sql.Tx, include []string) (*model.Balance, error) {
+func scanRow(row *sql.Row, include []string) (*model.Balance, error) {
 	balance := &model.Balance{}
 	identity := &model.Identity{}
 	ledger := &model.Ledger{}
@@ -120,8 +120,7 @@ func scanRow(row *sql.Row, tx *sql.Tx, include []string) (*model.Balance, error)
 	var scanArgs []interface{}
 	// Add scan arguments for default balance fields
 	scanArgs = append(scanArgs, &balance.BalanceID, &balanceStr, &creditBalanceStr,
-		&debitBalanceStr, &balance.Currency, &balance.CurrencyMultiplier,
-		&balance.LedgerID, &balance.IdentityID, &balance.CreatedAt, &metaDataJSON,
+		&debitBalanceStr, &balance.Currency, &balance.LedgerID, &balance.IdentityID, &balance.CreatedAt, &metaDataJSON,
 		&inflightBalanceStr, &inflightCreditBalanceStr, &inflightDebitBalanceStr, &balance.Version, &indicator, &balance.TrackFundLineage, &balance.AllocationStrategy)
 
 	// Conditionally scan for identity fields
@@ -139,41 +138,32 @@ func scanRow(row *sql.Row, tx *sql.Tx, include []string) (*model.Balance, error)
 
 	err := row.Scan(scanArgs...)
 	if err != nil {
-		if rollbackErr := tx.Rollback(); rollbackErr != nil {
-			return nil, fmt.Errorf("scanRow: failed to rollback transaction: %v, original error: %v", rollbackErr, err)
-		}
 		return nil, err
 	}
 
 	// Convert string representations to big.Int
 	balance.Balance, err = parseBigInt(balanceStr)
 	if err != nil {
-		_ = tx.Rollback()
 		return nil, fmt.Errorf("failed to parse balance: %w", err)
 	}
 	balance.CreditBalance, err = parseBigInt(creditBalanceStr)
 	if err != nil {
-		_ = tx.Rollback()
 		return nil, fmt.Errorf("failed to parse credit_balance: %w", err)
 	}
 	balance.DebitBalance, err = parseBigInt(debitBalanceStr)
 	if err != nil {
-		_ = tx.Rollback()
 		return nil, fmt.Errorf("failed to parse debit_balance: %w", err)
 	}
 	balance.InflightBalance, err = parseBigInt(inflightBalanceStr)
 	if err != nil {
-		_ = tx.Rollback()
 		return nil, fmt.Errorf("failed to parse inflight_balance: %w", err)
 	}
 	balance.InflightCreditBalance, err = parseBigInt(inflightCreditBalanceStr)
 	if err != nil {
-		_ = tx.Rollback()
 		return nil, fmt.Errorf("failed to parse inflight_credit_balance: %w", err)
 	}
 	balance.InflightDebitBalance, err = parseBigInt(inflightDebitBalanceStr)
 	if err != nil {
-		_ = tx.Rollback()
 		return nil, fmt.Errorf("failed to parse inflight_debit_balance: %w", err)
 	}
 
@@ -187,9 +177,6 @@ func scanRow(row *sql.Row, tx *sql.Tx, include []string) (*model.Balance, error)
 	// Unmarshal metadata JSON
 	err = json.Unmarshal(metaDataJSON, &balance.MetaData)
 	if err != nil {
-		if rollbackErr := tx.Rollback(); rollbackErr != nil {
-			return nil, fmt.Errorf("scanRow: failed to rollback transaction: %v, original error: %v", rollbackErr, err)
-		}
 		return nil, err
 	}
 
@@ -263,9 +250,9 @@ func (d Datasource) CreateBalance(balance model.Balance) (model.Balance, error) 
 
 	// Insert the balance into the database
 	_, err = d.Conn.ExecContext(context.Background(), `
-		INSERT INTO ledgerforge.balances (balance_id, balance, credit_balance, debit_balance, currency, currency_multiplier, ledger_id, identity_id, indicator, created_at, meta_data, track_fund_lineage, allocation_strategy)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-	`, balance.BalanceID, balance.Balance.String(), balance.CreditBalance.String(), balance.DebitBalance.String(), balance.Currency, balance.CurrencyMultiplier, balance.LedgerID, identityID, indicator, balance.CreatedAt, &metaDataJSON, balance.TrackFundLineage, allocationStrategy)
+		INSERT INTO ledgerforge.balances (balance_id, balance, credit_balance, debit_balance, currency, ledger_id, identity_id, indicator, created_at, meta_data, track_fund_lineage, allocation_strategy)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+	`, balance.BalanceID, balance.Balance.String(), balance.CreditBalance.String(), balance.DebitBalance.String(), balance.Currency, balance.LedgerID, identityID, indicator, balance.CreatedAt, &metaDataJSON, balance.TrackFundLineage, allocationStrategy)
 	if err != nil {
 		// Handle specific PostgreSQL errors (e.g., unique or foreign key violations)
 		pqErr, ok := err.(*pq.Error)
@@ -273,7 +260,7 @@ func (d Datasource) CreateBalance(balance model.Balance) (model.Balance, error) 
 			switch pqErr.Code.Name() {
 			case "unique_violation":
 				if strings.Contains(pqErr.Message, "unique_indicator_currency") {
-					return model.Balance{}, nil
+					return model.Balance{}, apierror.NewAPIError(apierror.ErrConflict, fmt.Sprintf("Balance already exists for indicator '%s' and '%s'", balance.Indicator, balance.Currency), err)
 				}
 				return model.Balance{}, apierror.NewAPIError(apierror.ErrConflict, fmt.Sprintf("Balance already exists: %s", balance.BalanceID), err)
 			case "foreign_key_violation":
@@ -306,30 +293,18 @@ func (d Datasource) GetBalanceByID(id string, include []string, withQueued bool)
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
 	defer cancel()
 
-	// Start a transaction
-	tx, err := d.Conn.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to begin transaction", err)
-	}
-	defer func() {
-		if err != nil {
-			if rollbackErr := tx.Rollback(); rollbackErr != nil {
-				err = fmt.Errorf("GetBalanceByID: failed to rollback transaction: %v, original error: %v", rollbackErr, err)
-			}
-		}
-	}()
-
-	// Prepare and execute the query
+	// Prepare and execute the query. No explicit DB transaction is needed for
+	// these independent reads; avoiding one keeps pool connections free.
 	var queryBuilder strings.Builder
 	query := prepareQueries(queryBuilder, include)
-	row := tx.QueryRow(query, id)
+	row := d.Conn.QueryRowContext(ctx, query, id)
 
 	// Scan the result into a Balance object
-	balance, err := scanRow(row, tx, include)
+	balance, err := scanRow(row, include)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			// If no balance is found
-			return nil, apierror.NewAPIError(apierror.ErrNotFound, fmt.Sprintf("Balance with ID '%s' not found", id), err)
+			return nil, apierror.NewAPIError(apierror.ErrBalNotFound, fmt.Sprintf("Balance with ID '%s' not found", id), err)
 		} else {
 			// Handle other errors
 			return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to scan balance data", err)
@@ -338,18 +313,12 @@ func (d Datasource) GetBalanceByID(id string, include []string, withQueued bool)
 
 	// Get queued amounts only if requested
 	if withQueued {
-		queuedDebit, queuedCredit, err := d.GetQueuedAmounts(context.Background(), id)
+		queuedDebit, queuedCredit, err := d.GetQueuedAmounts(ctx, id)
 		if err != nil {
 			return nil, err
 		}
 		balance.QueuedDebitBalance = queuedDebit
 		balance.QueuedCreditBalance = queuedCredit
-	}
-
-	// Commit the transaction
-	err = tx.Commit()
-	if err != nil {
-		return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to commit transaction", err)
 	}
 
 	return balance, nil
@@ -371,10 +340,11 @@ func (d Datasource) GetBalanceByIDLite(id string) (*model.Balance, error) {
 	var inflightBalanceValue, inflightCreditBalanceValue, inflightDebitBalanceValue string
 	var indicator sql.NullString
 	var allocationStrategy sql.NullString
+	var metaDataJSON []byte
 
 	// Execute the query
 	row := d.Conn.QueryRowContext(context.Background(), `
-       SELECT balance_id, indicator, currency, currency_multiplier, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE(allocation_strategy, 'FIFO') as allocation_strategy, COALESCE(identity_id, '') as identity_id
+       SELECT balance_id, indicator, currency, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE(allocation_strategy, 'FIFO') as allocation_strategy, COALESCE(identity_id, '') as identity_id, meta_data
        FROM ledgerforge.balances
        WHERE balance_id = $1
     `, id)
@@ -384,7 +354,6 @@ func (d Datasource) GetBalanceByIDLite(id string) (*model.Balance, error) {
 		&balance.BalanceID,
 		&indicator,
 		&balance.Currency,
-		&balance.CurrencyMultiplier,
 		&balance.LedgerID,
 		&balanceValue,
 		&creditBalanceValue,
@@ -397,6 +366,7 @@ func (d Datasource) GetBalanceByIDLite(id string) (*model.Balance, error) {
 		&balance.TrackFundLineage,
 		&allocationStrategy,
 		&balance.IdentityID,
+		&metaDataJSON,
 	)
 
 	// Handle null indicator field
@@ -416,7 +386,7 @@ func (d Datasource) GetBalanceByIDLite(id string) (*model.Balance, error) {
 	if err != nil {
 		logrus.WithError(err).Error("balance lite lookup failed")
 		if err == sql.ErrNoRows {
-			return nil, apierror.NewAPIError(apierror.ErrNotFound, fmt.Sprintf("Balance with ID '%s' not found", id), err)
+			return nil, apierror.NewAPIError(apierror.ErrBalNotFound, fmt.Sprintf("Balance with ID '%s' not found", id), err)
 		} else {
 			return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to scan balance data", err)
 		}
@@ -448,6 +418,13 @@ func (d Datasource) GetBalanceByIDLite(id string) (*model.Balance, error) {
 		return nil, fmt.Errorf("failed to parse inflight_debit_balance: %w", err)
 	}
 
+	// Parse the metadata JSON into the MetaData map field (may be NULL)
+	if len(metaDataJSON) > 0 {
+		if err := json.Unmarshal(metaDataJSON, &balance.MetaData); err != nil {
+			return nil, fmt.Errorf("failed to parse meta_data: %w", err)
+		}
+	}
+
 	return &balance, nil
 }
 
@@ -468,7 +445,7 @@ func (d Datasource) GetBalancesByIDsLite(ctx context.Context, ids []string) (map
 	}
 
 	rows, err := d.Conn.QueryContext(ctx, `
-		SELECT balance_id, indicator, currency, currency_multiplier, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE(allocation_strategy, 'FIFO') as allocation_strategy, COALESCE(identity_id, '') as identity_id
+		SELECT balance_id, indicator, currency, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE(allocation_strategy, 'FIFO') as allocation_strategy, COALESCE(identity_id, '') as identity_id
 		FROM ledgerforge.balances
 		WHERE balance_id = ANY($1)
 	`, pq.Array(ids))
@@ -490,7 +467,6 @@ func (d Datasource) GetBalancesByIDsLite(ctx context.Context, ids []string) (map
 			&balance.BalanceID,
 			&indicator,
 			&balance.Currency,
-			&balance.CurrencyMultiplier,
 			&balance.LedgerID,
 			&balanceValue,
 			&creditBalanceValue,
@@ -575,7 +551,7 @@ func (d Datasource) GetBalanceByIndicator(indicator, currency string) (*model.Ba
 
 	// Execute query to find the balance with the given indicator and currency
 	row := d.Conn.QueryRowContext(context.Background(), `
-       SELECT balance_id, indicator, currency, currency_multiplier, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE(allocation_strategy, 'FIFO') as allocation_strategy, COALESCE(identity_id, '') as identity_id
+       SELECT balance_id, indicator, currency, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE(allocation_strategy, 'FIFO') as allocation_strategy, COALESCE(identity_id, '') as identity_id
        FROM ledgerforge.balances
        WHERE indicator = $1 AND currency = $2
     `, indicator, currency)
@@ -585,7 +561,6 @@ func (d Datasource) GetBalanceByIndicator(indicator, currency string) (*model.Ba
 		&balance.BalanceID,
 		&balance.Indicator,
 		&balance.Currency,
-		&balance.CurrencyMultiplier,
 		&balance.LedgerID,
 		&balanceValue,
 		&creditBalanceValue,
@@ -667,7 +642,7 @@ func (d Datasource) GetBalanceByIndicator(indicator, currency string) (*model.Ba
 func (d Datasource) GetAllBalances(limit, offset int) ([]model.Balance, error) {
 	var indicator sql.NullString
 	rows, err := d.Conn.QueryContext(context.Background(), `
-        SELECT balance_id, indicator, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, currency, currency_multiplier, ledger_id, COALESCE(identity_id, '') as identity_id, created_at, meta_data
+        SELECT balance_id, indicator, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, currency, ledger_id, COALESCE(identity_id, '') as identity_id, created_at, meta_data
         FROM ledgerforge.balances
         ORDER BY created_at DESC
         LIMIT $1 OFFSET $2
@@ -700,7 +675,6 @@ func (d Datasource) GetAllBalances(limit, offset int) ([]model.Balance, error) {
 			&inflightCreditBalanceValue,
 			&inflightDebitBalanceValue,
 			&balance.Currency,
-			&balance.CurrencyMultiplier,
 			&balance.LedgerID,
 			&balance.IdentityID,
 			&balance.CreatedAt,
@@ -767,7 +741,9 @@ func (d Datasource) GetAllBalances(limit, offset int) ([]model.Balance, error) {
 func (d Datasource) GetSourceDestination(sourceId, destinationId string) ([]*model.Balance, error) {
 	// Execute SQL query to select balances for source and destination using a stored procedure
 	rows, err := d.Conn.QueryContext(context.Background(), `
-		SELECT ledgerforge.get_balances_by_id($1,$2)
+		SELECT balance_id, balance, credit_balance, debit_balance, currency, ledger_id, created_at, meta_data
+		FROM ledgerforge.balances
+		WHERE balance_id IN ($1, $2)
 	`, sourceId, destinationId)
 	if err != nil {
 		// Return an error if the query execution fails
@@ -787,16 +763,16 @@ func (d Datasource) GetSourceDestination(sourceId, destinationId string) ([]*mod
 	// Iterate through the result set and scan each row into a Balance object
 	for rows.Next() {
 		balance := model.Balance{}
+		var balanceValue, creditBalanceValue, debitBalanceValue string
 		var metaDataJSON []byte
 
-		// Scan the values from the current row into the balance object and temporary metadata variable
+		// Scan the values from the current row into the balance object and temporary variables
 		err = rows.Scan(
 			&balance.BalanceID,
-			&balance.Balance,
-			&balance.CreditBalance,
-			&balance.DebitBalance,
+			&balanceValue,
+			&creditBalanceValue,
+			&debitBalanceValue,
 			&balance.Currency,
-			&balance.CurrencyMultiplier,
 			&balance.LedgerID,
 			&balance.CreatedAt,
 			&metaDataJSON,
@@ -806,15 +782,34 @@ func (d Datasource) GetSourceDestination(sourceId, destinationId string) ([]*mod
 			return nil, err
 		}
 
-		// Parse the metadata JSON into the MetaData map field
-		err = json.Unmarshal(metaDataJSON, &balance.MetaData)
+		// Parse string values to big.Int
+		balance.Balance, err = parseBigInt(balanceValue)
 		if err != nil {
-			// Return an error if JSON parsing fails
-			return nil, err
+			return nil, fmt.Errorf("failed to parse balance: %w", err)
+		}
+		balance.CreditBalance, err = parseBigInt(creditBalanceValue)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse credit balance: %w", err)
+		}
+		balance.DebitBalance, err = parseBigInt(debitBalanceValue)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse debit balance: %w", err)
+		}
+
+		// Parse the metadata JSON into the MetaData map field (may be NULL)
+		if len(metaDataJSON) > 0 {
+			err = json.Unmarshal(metaDataJSON, &balance.MetaData)
+			if err != nil {
+				// Return an error if JSON parsing fails
+				return nil, err
+			}
 		}
 
 		// Append the balance to the slice of balances
 		balances = append(balances, &balance)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	// Return the slice of balances containing the source and destination balances
@@ -882,12 +877,12 @@ func updateBalance(ctx context.Context, tx *sql.Tx, balance *model.Balance) erro
 	// SQL query to update the balance
 	query := `
         UPDATE ledgerforge.balances
-        SET balance = $2, credit_balance = $3, debit_balance = $4, inflight_balance = $5, inflight_credit_balance = $6, inflight_debit_balance = $7, currency = $8, currency_multiplier = $9, ledger_id = $10, created_at = $11, version = version + 1
-        WHERE balance_id = $1 AND version = $12
+        SET balance = $2, credit_balance = $3, debit_balance = $4, inflight_balance = $5, inflight_credit_balance = $6, inflight_debit_balance = $7, currency = $8, ledger_id = $9, created_at = $10, version = version + 1
+        WHERE balance_id = $1 AND version = $11
     `
 
 	// Execute the update query within the provided transaction context
-	result, err := tx.ExecContext(ctx, query, balance.BalanceID, balance.Balance.String(), balance.CreditBalance.String(), balance.DebitBalance.String(), balance.InflightBalance.String(), balance.InflightCreditBalance.String(), balance.InflightDebitBalance.String(), balance.Currency, balance.CurrencyMultiplier, balance.LedgerID, balance.CreatedAt, balance.Version)
+	result, err := tx.ExecContext(ctx, query, balance.BalanceID, balance.Balance.String(), balance.CreditBalance.String(), balance.DebitBalance.String(), balance.InflightBalance.String(), balance.InflightCreditBalance.String(), balance.InflightDebitBalance.String(), balance.Currency, balance.LedgerID, balance.CreatedAt, balance.Version)
 	if err != nil {
 		// Return an error if the query execution fails
 		return apierror.NewAPIError(apierror.ErrInternalServer, "Failed to update balance", err)
@@ -963,21 +958,20 @@ func updateBalanceChunk(ctx context.Context, tx *sql.Tx, balances []*model.Balan
 		    inflight_credit_balance = v.inflight_credit_balance,
 		    inflight_debit_balance = v.inflight_debit_balance,
 		    currency = v.currency,
-		    currency_multiplier = v.currency_multiplier,
 		    ledger_id = v.ledger_id,
 		    created_at = v.created_at,
 		    version = b.version + 1
 		FROM (VALUES
 	`)
 
-	args := make([]interface{}, 0, len(balances)*12)
+	args := make([]interface{}, 0, len(balances)*11)
 	for i, balance := range balances {
 		if i > 0 {
 			query.WriteString(",")
 		}
-		base := i*12 + 1
-		query.WriteString(fmt.Sprintf(
-			"($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+		base := i*11 + 1
+		fmt.Fprintf(&query,
+			"($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
 			base,
 			base+1,
 			base+2,
@@ -989,8 +983,7 @@ func updateBalanceChunk(ctx context.Context, tx *sql.Tx, balances []*model.Balan
 			base+8,
 			base+9,
 			base+10,
-			base+11,
-		))
+		)
 		args = append(args,
 			balance.BalanceID,
 			balance.Balance.String(),
@@ -1000,7 +993,6 @@ func updateBalanceChunk(ctx context.Context, tx *sql.Tx, balances []*model.Balan
 			balance.InflightCreditBalance.String(),
 			balance.InflightDebitBalance.String(),
 			balance.Currency,
-			balance.CurrencyMultiplier,
 			balance.LedgerID,
 			balance.CreatedAt,
 			balance.Version,
@@ -1017,7 +1009,6 @@ func updateBalanceChunk(ctx context.Context, tx *sql.Tx, balances []*model.Balan
 			inflight_credit_balance,
 			inflight_debit_balance,
 			currency,
-			currency_multiplier,
 			ledger_id,
 			created_at,
 			expected_version
@@ -1032,7 +1023,6 @@ func updateBalanceChunk(ctx context.Context, tx *sql.Tx, balances []*model.Balan
 				raw.inflight_credit_balance::numeric AS inflight_credit_balance,
 				raw.inflight_debit_balance::numeric AS inflight_debit_balance,
 				raw.currency::text AS currency,
-				raw.currency_multiplier::numeric AS currency_multiplier,
 				raw.ledger_id::text AS ledger_id,
 				raw.created_at::timestamp AS created_at,
 				raw.expected_version::integer AS expected_version
@@ -1077,7 +1067,7 @@ func updateBalanceChunk(ctx context.Context, tx *sql.Tx, balances []*model.Balan
 // It handles both the balance data and the associated metadata.
 //
 // Parameters:
-// - balance: A pointer to the balance object containing the updated balance information. This includes fields such as `balance`, `credit_balance`, `debit_balance`, `currency`, `currency_multiplier`, and `meta_data`.
+// - balance: A pointer to the balance object containing the updated balance information. This includes fields such as `balance`, `credit_balance`, `debit_balance`, `currency`, and `meta_data`.
 //
 // Returns:
 // - error: If the update operation encounters an error, such as a database failure or if the balance ID is not found, an `APIError` is returned.
@@ -1091,9 +1081,9 @@ func (d Datasource) UpdateBalance(balance *model.Balance) error {
 	// Execute the SQL query to update the balance in the database
 	result, err := d.Conn.ExecContext(context.Background(), `
 		UPDATE ledgerforge.balances
-		SET balance = $2, credit_balance = $3, debit_balance = $4, currency = $5, currency_multiplier = $6, ledger_id = $7, created_at = $8, meta_data = $9
+		SET balance = $2, credit_balance = $3, debit_balance = $4, currency = $5, ledger_id = $6, created_at = $7, meta_data = $8
 		WHERE balance_id = $1
-	`, balance.BalanceID, balance.Balance.String(), balance.CreditBalance.String(), balance.DebitBalance.String(), balance.Currency, balance.CurrencyMultiplier, balance.LedgerID, balance.CreatedAt, metaDataJSON)
+	`, balance.BalanceID, balance.Balance.String(), balance.CreditBalance.String(), balance.DebitBalance.String(), balance.Currency, balance.LedgerID, balance.CreatedAt, metaDataJSON)
 	// Handle SQL execution errors
 	if err != nil {
 		return apierror.NewAPIError(apierror.ErrInternalServer, "Failed to update balance", err)
@@ -1107,7 +1097,7 @@ func (d Datasource) UpdateBalance(balance *model.Balance) error {
 
 	// If no rows were updated, return a not-found error
 	if rowsAffected == 0 {
-		return apierror.NewAPIError(apierror.ErrNotFound, fmt.Sprintf("Balance with ID '%s' not found", balance.BalanceID), nil)
+		return apierror.NewAPIError(apierror.ErrBalNotFound, fmt.Sprintf("Balance with ID '%s' not found", balance.BalanceID), nil)
 	}
 
 	// Return nil indicating a successful update
@@ -1192,7 +1182,7 @@ func (d Datasource) GetMonitorByID(id string) (*model.BalanceMonitor, error) {
 	if err != nil {
 		// Handle the case where the monitor with the specified ID is not found
 		if err == sql.ErrNoRows {
-			return nil, apierror.NewAPIError(apierror.ErrNotFound, fmt.Sprintf("Monitor with ID '%s' not found", id), err)
+			return nil, apierror.NewAPIError(apierror.ErrBalMonitorNotFound, fmt.Sprintf("Monitor with ID '%s' not found", id), err)
 		}
 		// Return an internal server error for other query issues
 		return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to retrieve monitor", err)
@@ -1341,7 +1331,7 @@ func (d Datasource) UpdateMonitor(monitor *model.BalanceMonitor) error {
 
 	// If no rows were affected, return a not found error indicating the monitor does not exist
 	if rowsAffected == 0 {
-		return apierror.NewAPIError(apierror.ErrNotFound, fmt.Sprintf("Monitor with ID '%s' not found", monitor.MonitorID), nil)
+		return apierror.NewAPIError(apierror.ErrBalMonitorNotFound, fmt.Sprintf("Monitor with ID '%s' not found", monitor.MonitorID), nil)
 	}
 
 	// Return nil if the update was successful
@@ -1375,7 +1365,7 @@ func (d Datasource) DeleteMonitor(id string) error {
 
 	// If no rows were affected, return a not found error indicating the monitor does not exist
 	if rowsAffected == 0 {
-		return apierror.NewAPIError(apierror.ErrNotFound, fmt.Sprintf("Monitor with ID '%s' not found", id), nil)
+		return apierror.NewAPIError(apierror.ErrBalMonitorNotFound, fmt.Sprintf("Monitor with ID '%s' not found", id), nil)
 	}
 
 	// Return nil if the deletion was successful
@@ -1432,7 +1422,7 @@ func (d Datasource) getBalanceInfo(ctx context.Context, tx *sql.Tx, balanceID st
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return "", time.Time{}, apierror.NewAPIError(
-				apierror.ErrNotFound,
+				apierror.ErrBalNotFound,
 				fmt.Sprintf("Balance '%s' not found", balanceID),
 				err,
 			)
@@ -1446,7 +1436,7 @@ func (d Datasource) getBalanceInfo(ctx context.Context, tx *sql.Tx, balanceID st
 // getMostRecentSnapshot finds the most recent balance snapshot before the target time
 func (d Datasource) getMostRecentSnapshot(ctx context.Context, tx *sql.Tx, balanceID string, targetTime time.Time) (creditBalance, debitBalance *big.Int, snapshotTime time.Time, err error) {
 	snapshot := tx.QueryRowContext(ctx, `
-		SELECT 
+		SELECT
 			balance,
 			credit_balance,
 			debit_balance,
@@ -1462,7 +1452,8 @@ func (d Datasource) getMostRecentSnapshot(ctx context.Context, tx *sql.Tx, balan
 
 	err = snapshot.Scan(&snapshotBalance, &snapshotCredit, &snapshotDebit, &snapshotTime)
 
-	if err == nil {
+	switch err {
+	case nil:
 		// Snapshot found, use it as starting point
 		creditBalance, err = parseBigInt(snapshotCredit)
 		if err != nil {
@@ -1478,8 +1469,21 @@ func (d Datasource) getMostRecentSnapshot(ctx context.Context, tx *sql.Tx, balan
 			"credit":     snapshotCredit,
 			"debit":      snapshotDebit,
 		}).Debug("found snapshot for balance")
-		return creditBalance, debitBalance, snapshotTime, nil
-	} else if err == sql.ErrNoRows {
+		// snapshot_time is the one TIMESTAMPTZ in the ledger's time arithmetic,
+		// so the driver hands it back in the session's zone. The caller passes
+		// it straight to fetchTransactions as the lower bound of a range over
+		// ledgerforge.transactions.created_at / effective_date, which are plain
+		// TIMESTAMP holding UTC wall clocks -- every writer normalises with
+		// txn.CreatedAt.UTC() before the insert. A plain TIMESTAMP comparison
+		// discards the offset rather than applying it, so an unconverted bound
+		// arrives shifted by the session's UTC offset and the range silently
+		// moves: east of UTC it narrows and post-snapshot transactions are
+		// dropped, west of UTC it widens and pre-snapshot transactions are
+		// applied on top of the snapshot that already accounts for them. No
+		// error either way -- just a wrong historical balance. Converting here
+		// puts the bound on the same clock as the columns it bounds.
+		return creditBalance, debitBalance, snapshotTime.UTC(), nil
+	case sql.ErrNoRows:
 		// No snapshot found, calculate from genesis (all transactions)
 		logrus.WithField("balance_id", balanceID).Debug("no snapshot found, calculating from genesis")
 		return new(big.Int).SetInt64(0), new(big.Int).SetInt64(0), time.Time{}, nil
@@ -1498,7 +1502,7 @@ func fetchTransactions(ctx context.Context, tx *sql.Tx, balanceID string, startT
 		"end_time":   targetTime,
 	}).Debug("querying transactions")
 	rows, err := tx.QueryContext(ctx, `
-        SELECT precise_amount, source, destination, created_at, 
+        SELECT precise_amount, source, destination, created_at,
                COALESCE(effective_date, created_at) as effective_date
         FROM ledgerforge.transactions
         WHERE (source = $1 OR destination = $1)
@@ -1613,6 +1617,20 @@ func (d Datasource) GetBalanceAtTime(ctx context.Context, balanceID string, targ
 		return nil, err
 	}
 
+	// targetTime is the upper bound of a range over ledgerforge.transactions.created_at
+	// / effective_date, which are plain TIMESTAMP holding UTC wall clocks
+	// because every writer normalises to UTC before the insert.
+	//
+	// A TIMESTAMP comparison discards the offset on whatever it is given, so a
+	// caller's zone would otherwise be dropped rather than applied:
+	// ?timestamp=2024-01-01T15:00:00+05:30 would cut off at 15:00 UTC, five and
+	// a half hours after the instant that was actually asked for, and quietly
+	// include transactions from the gap. Converting first keeps the instant and
+	// makes the answer identical for every way of writing the same moment.
+	// Unlike the snapshot bound this one is wrong on a UTC session too — it
+	// depends on the caller's offset, not the server's.
+	targetTime = targetTime.UTC()
+
 	// Start transaction
 	tx, err := d.Conn.BeginTx(ctx, &sql.TxOptions{
 		ReadOnly:  true,
@@ -1717,7 +1735,7 @@ func (d Datasource) UpdateBalanceIdentity(balanceID string, identityID string) e
 
 	if rowsAffected == 0 {
 		// No rows were updated – the balance record does not exist
-		return apierror.NewAPIError(apierror.ErrNotFound, fmt.Sprintf("Balance with ID '%s' not found", balanceID), nil)
+		return apierror.NewAPIError(apierror.ErrBalNotFound, fmt.Sprintf("Balance with ID '%s' not found", balanceID), nil)
 	}
 
 	return nil
@@ -1772,7 +1790,7 @@ func (d Datasource) GetAllBalancesWithFilterAndOptions(ctx context.Context, filt
 	}
 
 	// Determine select fields based on whether count is requested
-	selectFields := "balance_id, indicator, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, currency, currency_multiplier, ledger_id, COALESCE(identity_id, '') as identity_id, created_at, meta_data"
+	selectFields := "balance_id, indicator, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, currency, ledger_id, COALESCE(identity_id, '') as identity_id, created_at, meta_data"
 	if opts != nil && opts.IncludeCount {
 		selectFields += ", COUNT(*) OVER() AS total_count"
 	}
@@ -1831,7 +1849,6 @@ func (d Datasource) GetAllBalancesWithFilterAndOptions(ctx context.Context, filt
 				&inflightCreditBalanceValue,
 				&inflightDebitBalanceValue,
 				&balance.Currency,
-				&balance.CurrencyMultiplier,
 				&balance.LedgerID,
 				&balance.IdentityID,
 				&balance.CreatedAt,
@@ -1852,7 +1869,6 @@ func (d Datasource) GetAllBalancesWithFilterAndOptions(ctx context.Context, filt
 				&inflightCreditBalanceValue,
 				&inflightDebitBalanceValue,
 				&balance.Currency,
-				&balance.CurrencyMultiplier,
 				&balance.LedgerID,
 				&balance.IdentityID,
 				&balance.CreatedAt,

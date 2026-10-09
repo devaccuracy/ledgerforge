@@ -38,37 +38,44 @@ import (
 // The function retrieves configuration for the Slack webhook URL, formats the error,
 // and sends it as a JSON payload to the Slack webhook.
 func SlackNotification(err error) {
-	// Format the Slack message payload using the error message and the current time
-	data := json.RawMessage(fmt.Sprintf(`{
-		"blocks": [
+	// Build the Slack message payload with typed structs and json.Marshal so
+	// error text containing quotes, backslashes, or newlines is safely
+	// encoded instead of corrupting (or injecting into) the JSON template.
+	type slackText struct {
+		Type  string `json:"type"`
+		Text  string `json:"text"`
+		Emoji bool   `json:"emoji,omitempty"`
+	}
+	type slackBlock struct {
+		Type   string      `json:"type"`
+		Text   *slackText  `json:"text,omitempty"`
+		Fields []slackText `json:"fields,omitempty"`
+	}
+	payloadStruct := struct {
+		Blocks []slackBlock `json:"blocks"`
+	}{
+		Blocks: []slackBlock{
 			{
-				"type": "header",
-				"text": {
-					"type": "plain_text",
-					"text": "Error From LedgerForge 🐞",
-					"emoji": true
-				}
+				Type: "header",
+				Text: &slackText{Type: "plain_text", Text: "Error From LedgerForge 🐞", Emoji: true},
 			},
 			{
-				"type": "section",
-				"fields": [
-					{
-						"type": "mrkdwn",
-						"text": "*Error:*\n%v"
-					}
-				]
+				Type:   "section",
+				Fields: []slackText{{Type: "mrkdwn", Text: fmt.Sprintf("*Error:*\n%v", err.Error())}},
 			},
 			{
-				"type": "section",
-				"fields": [
-					{
-						"type": "mrkdwn",
-						"text": "*Time:*\n%v"
-					}
-				]
-			}
-		]
-	}`, err.Error(), time.Now().Format(time.RFC822)))
+				Type:   "section",
+				Fields: []slackText{{Type: "mrkdwn", Text: fmt.Sprintf("*Time:*\n%v", time.Now().Format(time.RFC822))}},
+			},
+		},
+	}
+
+	encoded, err := json.Marshal(payloadStruct)
+	if err != nil {
+		logrus.Error(err)
+		return
+	}
+	data := json.RawMessage(encoded)
 
 	// Fetch the configuration, including the Slack webhook URL
 	conf, err := config.Fetch()
@@ -103,22 +110,21 @@ func SlackNotification(err error) {
 type WebhookSender func(event string, payload interface{}) error
 
 var (
-	webhookSender   WebhookSender
 	webhookSenderMu sync.RWMutex
+	webhookSender   WebhookSender
 )
 
 // RegisterWebhookSender registers a function to handle webhook sending.
 func RegisterWebhookSender(sender WebhookSender) {
 	webhookSenderMu.Lock()
-	defer webhookSenderMu.Unlock()
-
 	webhookSender = sender
+	webhookSenderMu.Unlock()
 }
 
-func registeredWebhookSender() WebhookSender {
+// getWebhookSender returns the currently registered webhook sender, if any.
+func getWebhookSender() WebhookSender {
 	webhookSenderMu.RLock()
 	defer webhookSenderMu.RUnlock()
-
 	return webhookSender
 }
 
@@ -147,7 +153,7 @@ func NotifyError(systemError error) {
 		}
 
 		// If a webhook sender is registered and webhook URL is configured, send the webhook
-		sender := registeredWebhookSender()
+		sender := getWebhookSender()
 		if sender != nil && conf.Notification.Webhook.Url != "" {
 			payload := map[string]interface{}{
 				"error": systemError.Error(),

@@ -18,6 +18,7 @@ package api
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/typesense/typesense-go/typesense/api"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
@@ -25,7 +26,9 @@ import (
 	"github.com/devaccuracy/ledgerforge"
 	"github.com/devaccuracy/ledgerforge/api/middleware"
 	"github.com/devaccuracy/ledgerforge/config"
+	"github.com/devaccuracy/ledgerforge/internal/apierror"
 	"github.com/gin-gonic/gin"
+	"github.com/sirupsen/logrus"
 )
 
 // Api represents the API structure for handling requests.
@@ -69,6 +72,7 @@ func (a Api) Router() *gin.Engine {
 	router.GET("/balance-monitors", a.GetAllBalanceMonitors)
 	router.GET("/balance-monitors/balances/:balance_id", a.GetBalanceMonitorsByBalanceID)
 	router.PUT("/balance-monitors/:id", a.UpdateBalanceMonitor)
+	router.DELETE("/balance-monitors/:id", a.DeleteBalanceMonitor)
 
 	// Transaction routes
 	router.POST("/transactions", a.QueueTransaction)
@@ -79,6 +83,8 @@ func (a Api) Router() *gin.Engine {
 	router.GET("/transactions/:id", a.GetTransaction)
 	router.GET("/transactions/reference/:reference", a.GetTransactionByRef)
 	router.PUT("/transactions/inflight/:txID", a.UpdateInflightStatus)
+	router.POST("/transactions/inflight/bulk/void", a.BulkVoidInflight)
+	router.POST("/transactions/inflight/bulk/commit", a.BulkCommitInflight)
 	router.GET("/transactions/:id/lineage", a.GetTransactionLineage)
 
 	// Recovery routes
@@ -89,6 +95,7 @@ func (a Api) Router() *gin.Engine {
 	router.GET("/identities/:id", a.GetIdentity)
 	router.PUT("/identities/:id", a.UpdateIdentity)
 	router.GET("/identities", a.GetAllIdentities)
+	router.DELETE("/identities/:id", a.DeleteIdentity)
 	router.POST("/identities/filter", a.FilterIdentities)
 	router.GET("/identities/:id/tokenized-fields", a.GetTokenizedFields)
 	router.POST("/identities/:id/tokenize/:field", a.TokenizeIdentityField)
@@ -156,7 +163,12 @@ func NewAPI(b *ledgerforge.LedgerForge) *Api {
 	if err != nil {
 		return nil
 	}
-	r := gin.Default()
+	r := gin.New()
+
+	r.MaxMultipartMemory = 8 << 20 // 8 MiB
+	r.Use(logrusAccessLogger())
+	r.Use(logrusRecovery())
+	r.Use(middleware.RequestSizeLimit(conf.Server.MaxRequestBodySizeMB * 1024 * 1024))
 	auth := middleware.NewAuthMiddleware(b)
 	r.Use(middleware.RateLimitMiddleware(conf))
 	r.Use(middleware.SecurityHeaders())
@@ -175,6 +187,39 @@ func NewAPI(b *ledgerforge.LedgerForge) *Api {
 	return &Api{ledgerforge: b, router: r, auth: auth}
 }
 
+func logrusAccessLogger() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		start := time.Now()
+		path := c.Request.URL.Path
+		method := c.Request.Method
+		clientIP := c.ClientIP()
+
+		c.Next()
+
+		logrus.WithFields(logrus.Fields{
+			"method":       method,
+			"path":         path,
+			"status":       c.Writer.Status(),
+			"latency_ms":   time.Since(start).Milliseconds(),
+			"client_ip":    clientIP,
+			"error_count":  len(c.Errors),
+			"response_len": c.Writer.Size(),
+		}).Info("http request")
+	}
+}
+
+func logrusRecovery() gin.HandlerFunc {
+	return gin.CustomRecovery(func(c *gin.Context, recovered interface{}) {
+		logrus.WithFields(logrus.Fields{
+			"method":    c.Request.Method,
+			"path":      c.Request.URL.Path,
+			"client_ip": c.ClientIP(),
+			"panic":     recovered,
+		}).Error("panic recovered")
+		c.AbortWithStatus(http.StatusInternalServerError)
+	})
+}
+
 // Search performs a search query on a specified collection.
 // It binds the incoming JSON request to a SearchCollectionParams object,
 // executes the search query, and responds with the search results.
@@ -188,20 +233,20 @@ func NewAPI(b *ledgerforge.LedgerForge) *Api {
 func (a Api) Search(c *gin.Context) {
 	collection, passed := c.Params.Get("collection")
 	if !passed {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "collection is required. pass id in the route /:collection"})
+		respondCode(c, apierror.ErrGenMissingParameter, "collection is required. pass id in the route /:collection", nil)
 		return
 	}
 
 	var query api.SearchCollectionParams
 	err := c.BindJSON(&query)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondCode(c, apierror.ErrGenMalformedRequest, err.Error(), nil)
 		return
 	}
 
 	resp, err := a.ledgerforge.Search(collection, &query)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, err, withDefault(apierror.ErrSrchQueryInvalid))
 		return
 	}
 
@@ -221,13 +266,13 @@ func (a Api) Search(c *gin.Context) {
 func (a Api) MultiSearch(c *gin.Context) {
 	var searchRequests api.MultiSearchSearchesParameter
 	if err := c.BindJSON(&searchRequests); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondCode(c, apierror.ErrGenMalformedRequest, err.Error(), nil)
 		return
 	}
 
 	resp, err := a.ledgerforge.MultiSearch(&searchRequests)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondError(c, err, withDefault(apierror.ErrSrchQueryInvalid))
 		return
 	}
 

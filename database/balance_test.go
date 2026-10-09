@@ -33,6 +33,7 @@ import (
 	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestContains_Found(t *testing.T) {
@@ -61,12 +62,11 @@ func TestCreateBalance_Success(t *testing.T) {
 	ds := Datasource{Conn: db}
 
 	balance := model.Balance{
-		Balance:            big.NewInt(1000),
-		CreditBalance:      big.NewInt(500),
-		DebitBalance:       big.NewInt(500),
-		Currency:           "USD",
-		CurrencyMultiplier: 100,
-		LedgerID:           "ldg1",
+		Balance:       big.NewInt(1000),
+		CreditBalance: big.NewInt(500),
+		DebitBalance:  big.NewInt(500),
+		Currency:      "USD",
+		LedgerID:      "ldg1",
 		MetaData: map[string]interface{}{
 			"key": "value",
 		},
@@ -76,7 +76,7 @@ func TestCreateBalance_Success(t *testing.T) {
 	assert.NoError(t, err)
 
 	mock.ExpectExec("INSERT INTO ledgerforge.balances").
-		WithArgs(sqlmock.AnyArg(), balance.Balance.String(), balance.CreditBalance.String(), balance.DebitBalance.String(), balance.Currency, balance.CurrencyMultiplier, balance.LedgerID, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), metaDataJSON, false, "FIFO").
+		WithArgs(sqlmock.AnyArg(), balance.Balance.String(), balance.CreditBalance.String(), balance.DebitBalance.String(), balance.Currency, balance.LedgerID, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), metaDataJSON, false, "FIFO").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	createdBalance, err := ds.CreateBalance(balance)
@@ -93,12 +93,11 @@ func TestCreateBalance_UniqueViolation(t *testing.T) {
 	ds := Datasource{Conn: db}
 
 	balance := model.Balance{
-		Balance:            big.NewInt(1000),
-		CreditBalance:      big.NewInt(500),
-		DebitBalance:       big.NewInt(500),
-		Currency:           "USD",
-		CurrencyMultiplier: 100,
-		LedgerID:           "ldg1",
+		Balance:       big.NewInt(1000),
+		CreditBalance: big.NewInt(500),
+		DebitBalance:  big.NewInt(500),
+		Currency:      "USD",
+		LedgerID:      "ldg1",
 		MetaData: map[string]interface{}{
 			"key": "value",
 		},
@@ -108,7 +107,7 @@ func TestCreateBalance_UniqueViolation(t *testing.T) {
 	assert.NoError(t, err)
 
 	mock.ExpectExec("INSERT INTO ledgerforge.balances").
-		WithArgs(sqlmock.AnyArg(), balance.Balance.String(), balance.CreditBalance.String(), balance.DebitBalance.String(), balance.Currency, balance.CurrencyMultiplier, balance.LedgerID, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), metaDataJSON, false, "FIFO").
+		WithArgs(sqlmock.AnyArg(), balance.Balance.String(), balance.CreditBalance.String(), balance.DebitBalance.String(), balance.Currency, balance.LedgerID, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), metaDataJSON, false, "FIFO").
 		WillReturnError(&pq.Error{Code: "23505", Message: "unique_violation"})
 
 	_, err = ds.CreateBalance(balance)
@@ -118,6 +117,38 @@ func TestCreateBalance_UniqueViolation(t *testing.T) {
 	assert.Equal(t, apierror.ErrConflict, apiErr.Code)
 }
 
+func TestCreateBalance_DuplicateIndicatorCurrency(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	assert.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	ds := Datasource{Conn: db}
+
+	balance := model.Balance{
+		Balance:       big.NewInt(0),
+		CreditBalance: big.NewInt(0),
+		DebitBalance:  big.NewInt(0),
+		Currency:      "USD",
+		LedgerID:      "general_ledger_id",
+		Indicator:     "@cash",
+	}
+
+	metaDataJSON, err := json.Marshal(balance.MetaData)
+	assert.NoError(t, err)
+
+	mock.ExpectExec("INSERT INTO ledgerforge.balances").
+		WithArgs(sqlmock.AnyArg(), balance.Balance.String(), balance.CreditBalance.String(), balance.DebitBalance.String(), balance.Currency, balance.LedgerID, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), metaDataJSON, false, "FIFO").
+		WillReturnError(&pq.Error{Code: "23505", Message: `duplicate key value violates unique constraint "unique_indicator_currency"`})
+
+	_, err = ds.CreateBalance(balance)
+	assert.Error(t, err, "a duplicate (indicator, currency) pair must surface as a real error, not a silent empty balance")
+
+	apiErr, ok := err.(apierror.APIError)
+	assert.True(t, ok)
+	assert.Equal(t, apierror.ErrConflict, apiErr.Code)
+	assert.Contains(t, apiErr.Message, "@cash")
+}
+
 func TestGetBalanceByID_Success(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	assert.NoError(t, err)
@@ -125,18 +156,14 @@ func TestGetBalanceByID_Success(t *testing.T) {
 
 	ds := Datasource{Conn: db}
 
-	// Mock the transaction Begin call
-	mock.ExpectBegin()
-
 	balance := model.Balance{
-		BalanceID:          "bln1",
-		Balance:            big.NewInt(1000),
-		CreditBalance:      big.NewInt(500),
-		DebitBalance:       big.NewInt(500),
-		Currency:           "USD",
-		Indicator:          gofakeit.Name(),
-		CurrencyMultiplier: 100,
-		LedgerID:           "ldg1",
+		BalanceID:     "bln1",
+		Balance:       big.NewInt(1000),
+		CreditBalance: big.NewInt(500),
+		DebitBalance:  big.NewInt(500),
+		Currency:      "USD",
+		Indicator:     gofakeit.Name(),
+		LedgerID:      "ldg1",
 		MetaData: map[string]interface{}{
 			"key": "value",
 		},
@@ -147,7 +174,7 @@ func TestGetBalanceByID_Success(t *testing.T) {
 
 	// Use the exact query in your code and fix the typo for 'indicator'
 	query := `
-		SELECT b.balance_id, b.balance, b.credit_balance, b.debit_balance, b.currency, b.currency_multiplier, b.ledger_id, COALESCE(b.identity_id, '') as identity_id, b.created_at, b.meta_data, b.inflight_balance, b.inflight_credit_balance, b.inflight_debit_balance, b.version, b.indicator, b.track_fund_lineage, COALESCE(b.allocation_strategy, 'FIFO') as allocation_strategy
+		SELECT b.balance_id, b.balance, b.credit_balance, b.debit_balance, b.currency, b.ledger_id, COALESCE(b.identity_id, '') as identity_id, b.created_at, b.meta_data, b.inflight_balance, b.inflight_credit_balance, b.inflight_debit_balance, b.version, b.indicator, b.track_fund_lineage, COALESCE(b.allocation_strategy, 'FIFO') as allocation_strategy
 		FROM ( SELECT * FROM ledgerforge.balances WHERE balance_id = $1 ) AS b
 	`
 
@@ -155,11 +182,8 @@ func TestGetBalanceByID_Success(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(query)).
 		WithArgs("bln1").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"balance_id", "balance", "credit_balance", "debit_balance", "currency", "currency_multiplier", "ledger_id", "identity_id", "created_at", "meta_data", "inflight_balance", "inflight_credit_balance", "inflight_debit_balance", "version", "indicator", "track_fund_lineage", "allocation_strategy",
-		}).AddRow(balance.BalanceID, balance.Balance.String(), balance.CreditBalance.String(), balance.DebitBalance.String(), balance.Currency, balance.CurrencyMultiplier, balance.LedgerID, "", time.Now(), metaDataJSON, balance.Balance.String(), balance.CreditBalance.String(), balance.DebitBalance.String(), 1, balance.Indicator, false, "FIFO"))
-
-	// Mock the transaction commit call
-	mock.ExpectCommit()
+			"balance_id", "balance", "credit_balance", "debit_balance", "currency", "ledger_id", "identity_id", "created_at", "meta_data", "inflight_balance", "inflight_credit_balance", "inflight_debit_balance", "version", "indicator", "track_fund_lineage", "allocation_strategy",
+		}).AddRow(balance.BalanceID, balance.Balance.String(), balance.CreditBalance.String(), balance.DebitBalance.String(), balance.Currency, balance.LedgerID, "", time.Now(), metaDataJSON, balance.Balance.String(), balance.CreditBalance.String(), balance.DebitBalance.String(), 1, balance.Indicator, false, "FIFO"))
 
 	retrievedBalance, err := ds.GetBalanceByID("bln1", []string{}, false)
 	assert.NoError(t, err)
@@ -177,7 +201,7 @@ func TestGetBalanceByID_NotFound(t *testing.T) {
 
 	ds := Datasource{Conn: db}
 
-	query := `SELECT balance_id, balance, credit_balance, debit_balance, currency, currency_multiplier, ledger_id, created_at, meta_data FROM ledgerforge.balances WHERE balance_id = ?`
+	query := `SELECT balance_id, balance, credit_balance, debit_balance, currency, ledger_id, created_at, meta_data FROM ledgerforge.balances WHERE balance_id = ?`
 
 	mock.ExpectQuery(regexp.QuoteMeta(query)).
 		WithArgs("bln1").
@@ -201,23 +225,21 @@ func TestUpdateBalances_Success(t *testing.T) {
 
 	// Create test balances
 	sourceBalance := &model.Balance{
-		BalanceID:          "bln1",
-		Balance:            big.NewInt(1000),
-		CreditBalance:      big.NewInt(500),
-		DebitBalance:       big.NewInt(500),
-		Version:            1,
-		Currency:           "USD",
-		CurrencyMultiplier: 100,
+		BalanceID:     "bln1",
+		Balance:       big.NewInt(1000),
+		CreditBalance: big.NewInt(500),
+		DebitBalance:  big.NewInt(500),
+		Version:       1,
+		Currency:      "USD",
 	}
 
 	destBalance := &model.Balance{
-		BalanceID:          "bln2",
-		Balance:            big.NewInt(2000),
-		CreditBalance:      big.NewInt(1000),
-		DebitBalance:       big.NewInt(1000),
-		Version:            1,
-		Currency:           "USD",
-		CurrencyMultiplier: 100,
+		BalanceID:     "bln2",
+		Balance:       big.NewInt(2000),
+		CreditBalance: big.NewInt(1000),
+		DebitBalance:  big.NewInt(1000),
+		Version:       1,
+		Currency:      "USD",
 	}
 
 	// Set up expectations
@@ -226,8 +248,8 @@ func TestUpdateBalances_Success(t *testing.T) {
 	// Expect source balance update
 	mock.ExpectExec(regexp.QuoteMeta(`
         UPDATE ledgerforge.balances
-        SET balance = $2, credit_balance = $3, debit_balance = $4, inflight_balance = $5, inflight_credit_balance = $6, inflight_debit_balance = $7, currency = $8, currency_multiplier = $9, ledger_id = $10, created_at = $11, version = version + 1
-        WHERE balance_id = $1 AND version = $12
+        SET balance = $2, credit_balance = $3, debit_balance = $4, inflight_balance = $5, inflight_credit_balance = $6, inflight_debit_balance = $7, currency = $8, ledger_id = $9, created_at = $10, version = version + 1
+        WHERE balance_id = $1 AND version = $11
     `)).WithArgs(
 		sourceBalance.BalanceID,
 		sourceBalance.Balance.String(),
@@ -237,7 +259,6 @@ func TestUpdateBalances_Success(t *testing.T) {
 		sourceBalance.InflightCreditBalance.String(),
 		sourceBalance.InflightDebitBalance.String(),
 		sourceBalance.Currency,
-		sourceBalance.CurrencyMultiplier,
 		sourceBalance.LedgerID,
 		sourceBalance.CreatedAt,
 		sourceBalance.Version,
@@ -246,8 +267,8 @@ func TestUpdateBalances_Success(t *testing.T) {
 	// Expect destination balance update
 	mock.ExpectExec(regexp.QuoteMeta(`
         UPDATE ledgerforge.balances
-        SET balance = $2, credit_balance = $3, debit_balance = $4, inflight_balance = $5, inflight_credit_balance = $6, inflight_debit_balance = $7, currency = $8, currency_multiplier = $9, ledger_id = $10, created_at = $11, version = version + 1
-        WHERE balance_id = $1 AND version = $12
+        SET balance = $2, credit_balance = $3, debit_balance = $4, inflight_balance = $5, inflight_credit_balance = $6, inflight_debit_balance = $7, currency = $8, ledger_id = $9, created_at = $10, version = version + 1
+        WHERE balance_id = $1 AND version = $11
     `)).WithArgs(
 		destBalance.BalanceID,
 		destBalance.Balance.String(),
@@ -257,7 +278,6 @@ func TestUpdateBalances_Success(t *testing.T) {
 		destBalance.InflightCreditBalance.String(),
 		destBalance.InflightDebitBalance.String(),
 		destBalance.Currency,
-		destBalance.CurrencyMultiplier,
 		destBalance.LedgerID,
 		destBalance.CreatedAt,
 		destBalance.Version,
@@ -315,7 +335,6 @@ func TestUpdateBalances_SourceUpdateError(t *testing.T) {
 			"0",              // InflightCreditBalance string
 			"0",              // InflightDebitBalance string
 			"",               // Currency
-			0,                // CurrencyMultiplier
 			"",               // LedgerID
 			sqlmock.AnyArg(), // CreatedAt
 			sourceBalance.Version,
@@ -356,7 +375,6 @@ func TestUpdateBalances_DestUpdateError(t *testing.T) {
 			"0",              // InflightCreditBalance string
 			"0",              // InflightDebitBalance string
 			"",               // Currency
-			0,                // CurrencyMultiplier
 			"",               // LedgerID
 			sqlmock.AnyArg(), // CreatedAt
 			sourceBalance.Version,
@@ -374,7 +392,6 @@ func TestUpdateBalances_DestUpdateError(t *testing.T) {
 			"0",              // InflightCreditBalance string
 			"0",              // InflightDebitBalance string
 			"",               // Currency
-			0,                // CurrencyMultiplier
 			"",               // LedgerID
 			sqlmock.AnyArg(), // CreatedAt
 			destBalance.Version,
@@ -415,7 +432,6 @@ func TestUpdateBalances_CommitError(t *testing.T) {
 			"0",              // InflightCreditBalance string
 			"0",              // InflightDebitBalance string
 			"",               // Currency
-			0,                // CurrencyMultiplier
 			"",               // LedgerID
 			sqlmock.AnyArg(), // CreatedAt
 			sourceBalance.Version,
@@ -433,7 +449,6 @@ func TestUpdateBalances_CommitError(t *testing.T) {
 			"0",              // InflightCreditBalance string
 			"0",              // InflightDebitBalance string
 			"",               // Currency
-			0,                // CurrencyMultiplier
 			"",               // LedgerID
 			sqlmock.AnyArg(), // CreatedAt
 			destBalance.Version,
@@ -456,17 +471,14 @@ func TestGetBalanceByID_WithQueuedTransactions(t *testing.T) {
 
 	ds := Datasource{Conn: db}
 
-	mock.ExpectBegin() // Start transaction
-
 	balance := model.Balance{
-		BalanceID:          "bln1",
-		Balance:            big.NewInt(0),
-		CreditBalance:      big.NewInt(500),
-		DebitBalance:       big.NewInt(500),
-		Currency:           "USD",
-		Indicator:          gofakeit.Name(),
-		CurrencyMultiplier: 100,
-		LedgerID:           "ldg1",
+		BalanceID:     "bln1",
+		Balance:       big.NewInt(0),
+		CreditBalance: big.NewInt(500),
+		DebitBalance:  big.NewInt(500),
+		Currency:      "USD",
+		Indicator:     gofakeit.Name(),
+		LedgerID:      "ldg1",
 		MetaData: map[string]interface{}{
 			"key": "value",
 		},
@@ -477,34 +489,20 @@ func TestGetBalanceByID_WithQueuedTransactions(t *testing.T) {
 
 	// First, expect the balance query
 	mock.ExpectQuery(regexp.QuoteMeta(`
-        SELECT b.balance_id, b.balance, b.credit_balance, b.debit_balance, b.currency, b.currency_multiplier, b.ledger_id, COALESCE(b.identity_id, '') as identity_id, b.created_at, b.meta_data, b.inflight_balance, b.inflight_credit_balance, b.inflight_debit_balance, b.version, b.indicator, b.track_fund_lineage, COALESCE(b.allocation_strategy, 'FIFO') as allocation_strategy
+        SELECT b.balance_id, b.balance, b.credit_balance, b.debit_balance, b.currency, b.ledger_id, COALESCE(b.identity_id, '') as identity_id, b.created_at, b.meta_data, b.inflight_balance, b.inflight_credit_balance, b.inflight_debit_balance, b.version, b.indicator, b.track_fund_lineage, COALESCE(b.allocation_strategy, 'FIFO') as allocation_strategy
         FROM ( SELECT * FROM ledgerforge.balances WHERE balance_id = $1 ) AS b
     `)).WithArgs("bln1").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"balance_id", "balance", "credit_balance", "debit_balance", "currency",
-			"currency_multiplier", "ledger_id", "identity_id", "created_at", "meta_data",
+			"ledger_id", "identity_id", "created_at", "meta_data",
 			"inflight_balance", "inflight_credit_balance", "inflight_debit_balance",
 			"version", "indicator", "track_fund_lineage", "allocation_strategy",
 		}).AddRow(
 			balance.BalanceID, balance.Balance.String(), balance.CreditBalance.String(),
-			balance.DebitBalance.String(), balance.Currency, balance.CurrencyMultiplier,
+			balance.DebitBalance.String(), balance.Currency,
 			balance.LedgerID, "", time.Now(), metaDataJSON, balance.Balance.String(),
 			balance.CreditBalance.String(), balance.DebitBalance.String(), 1, balance.Indicator, false, "FIFO",
 		))
-
-	// Then expect the queued transactions query with the correct SQL
-	queuedTxnQuery := `
-        SELECT t.precise_amount, t.source, t.destination
-        FROM ledgerforge.transactions t
-        WHERE (t.source = $1 OR t.destination = $1)
-        AND t.status = 'QUEUED'
-        AND NOT EXISTS (
-            SELECT 1
-            FROM ledgerforge.transactions child
-            WHERE child.parent_transaction = t.transaction_id
-            AND (child.status = 'APPLIED' OR child.status = 'REJECTED' OR child.status = 'VOID' or child.status = 'INFLIGHT')
-        )
-    `
 
 	queuedTxn := model.Transaction{
 		TransactionID: "txn1",
@@ -521,16 +519,14 @@ func TestGetBalanceByID_WithQueuedTransactions(t *testing.T) {
 		MetaData:      map[string]interface{}{"key": "value"},
 	}
 
-	mock.ExpectQuery(regexp.QuoteMeta(queuedTxnQuery)).
+	// Then expect the aggregated queued amounts query
+	mock.ExpectQuery(regexp.QuoteMeta(`::text AS queued_credit`)).
 		WithArgs("bln1").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"precise_amount", "source", "destination",
+			"queued_debit", "queued_credit",
 		}).AddRow(
-			queuedTxn.PreciseAmount.String(), queuedTxn.Source, queuedTxn.Destination,
+			queuedTxn.PreciseAmount.String(), "0",
 		))
-
-	// Finally, expect the commit
-	mock.ExpectCommit()
 
 	// Execute the function
 	retrievedBalance, err := ds.GetBalanceByID("bln1", []string{}, true)
@@ -559,17 +555,14 @@ func TestGetBalanceByID_WithoutQueuedTransactions(t *testing.T) {
 
 	ds := Datasource{Conn: db}
 
-	mock.ExpectBegin()
-
 	balance := model.Balance{
-		BalanceID:          "bln1",
-		Balance:            big.NewInt(1000),
-		CreditBalance:      big.NewInt(500),
-		DebitBalance:       big.NewInt(500),
-		Currency:           "USD",
-		Indicator:          gofakeit.Name(),
-		CurrencyMultiplier: 100,
-		LedgerID:           "ldg1",
+		BalanceID:     "bln1",
+		Balance:       big.NewInt(1000),
+		CreditBalance: big.NewInt(500),
+		DebitBalance:  big.NewInt(500),
+		Currency:      "USD",
+		Indicator:     gofakeit.Name(),
+		LedgerID:      "ldg1",
 		MetaData: map[string]interface{}{
 			"key": "value",
 		},
@@ -583,22 +576,20 @@ func TestGetBalanceByID_WithoutQueuedTransactions(t *testing.T) {
 
 	// Only expect the balance query, not the queued transactions query
 	mock.ExpectQuery(regexp.QuoteMeta(`
-        SELECT b.balance_id, b.balance, b.credit_balance, b.debit_balance, b.currency, b.currency_multiplier, b.ledger_id, COALESCE(b.identity_id, '') as identity_id, b.created_at, b.meta_data, b.inflight_balance, b.inflight_credit_balance, b.inflight_debit_balance, b.version, b.indicator, b.track_fund_lineage, COALESCE(b.allocation_strategy, 'FIFO') as allocation_strategy
+        SELECT b.balance_id, b.balance, b.credit_balance, b.debit_balance, b.currency, b.ledger_id, COALESCE(b.identity_id, '') as identity_id, b.created_at, b.meta_data, b.inflight_balance, b.inflight_credit_balance, b.inflight_debit_balance, b.version, b.indicator, b.track_fund_lineage, COALESCE(b.allocation_strategy, 'FIFO') as allocation_strategy
         FROM ( SELECT * FROM ledgerforge.balances WHERE balance_id = $1 ) AS b
     `)).WithArgs("bln1").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"balance_id", "balance", "credit_balance", "debit_balance", "currency",
-			"currency_multiplier", "ledger_id", "identity_id", "created_at", "meta_data",
+			"ledger_id", "identity_id", "created_at", "meta_data",
 			"inflight_balance", "inflight_credit_balance", "inflight_debit_balance",
 			"version", "indicator", "track_fund_lineage", "allocation_strategy",
 		}).AddRow(
 			balance.BalanceID, balance.Balance.String(), balance.CreditBalance.String(),
-			balance.DebitBalance.String(), balance.Currency, balance.CurrencyMultiplier,
+			balance.DebitBalance.String(), balance.Currency,
 			balance.LedgerID, "", time.Now(), metaDataJSON, balance.Balance.String(),
 			balance.CreditBalance.String(), balance.DebitBalance.String(), 1, balance.Indicator, false, "FIFO",
 		))
-
-	mock.ExpectCommit()
 
 	// Execute GetBalanceByID with withQueued=false
 	retrievedBalance, err := ds.GetBalanceByID("bln1", []string{}, false)
@@ -629,17 +620,14 @@ func TestGetBalanceByID_WithQueuedTransactions_HasAppliedChild(t *testing.T) {
 
 	ds := Datasource{Conn: db}
 
-	mock.ExpectBegin()
-
 	balance := model.Balance{
-		BalanceID:          "bln1",
-		Balance:            big.NewInt(0),
-		CreditBalance:      big.NewInt(500),
-		DebitBalance:       big.NewInt(500),
-		Currency:           "USD",
-		Indicator:          gofakeit.Name(),
-		CurrencyMultiplier: 100,
-		LedgerID:           "ldg1",
+		BalanceID:     "bln1",
+		Balance:       big.NewInt(0),
+		CreditBalance: big.NewInt(500),
+		DebitBalance:  big.NewInt(500),
+		Currency:      "USD",
+		Indicator:     gofakeit.Name(),
+		LedgerID:      "ldg1",
 		MetaData: map[string]interface{}{
 			"key": "value",
 		},
@@ -650,43 +638,27 @@ func TestGetBalanceByID_WithQueuedTransactions_HasAppliedChild(t *testing.T) {
 
 	// Expect the balance query
 	mock.ExpectQuery(regexp.QuoteMeta(`
-        SELECT b.balance_id, b.balance, b.credit_balance, b.debit_balance, b.currency, b.currency_multiplier, b.ledger_id, COALESCE(b.identity_id, '') as identity_id, b.created_at, b.meta_data, b.inflight_balance, b.inflight_credit_balance, b.inflight_debit_balance, b.version, b.indicator, b.track_fund_lineage, COALESCE(b.allocation_strategy, 'FIFO') as allocation_strategy
+        SELECT b.balance_id, b.balance, b.credit_balance, b.debit_balance, b.currency, b.ledger_id, COALESCE(b.identity_id, '') as identity_id, b.created_at, b.meta_data, b.inflight_balance, b.inflight_credit_balance, b.inflight_debit_balance, b.version, b.indicator, b.track_fund_lineage, COALESCE(b.allocation_strategy, 'FIFO') as allocation_strategy
         FROM ( SELECT * FROM ledgerforge.balances WHERE balance_id = $1 ) AS b
     `)).WithArgs("bln1").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"balance_id", "balance", "credit_balance", "debit_balance", "currency",
-			"currency_multiplier", "ledger_id", "identity_id", "created_at", "meta_data",
+			"ledger_id", "identity_id", "created_at", "meta_data",
 			"inflight_balance", "inflight_credit_balance", "inflight_debit_balance",
 			"version", "indicator", "track_fund_lineage", "allocation_strategy",
 		}).AddRow(
 			balance.BalanceID, balance.Balance.String(), balance.CreditBalance.String(),
-			balance.DebitBalance.String(), balance.Currency, balance.CurrencyMultiplier,
+			balance.DebitBalance.String(), balance.Currency,
 			balance.LedgerID, "", time.Now(), metaDataJSON, balance.Balance.String(),
 			balance.CreditBalance.String(), balance.DebitBalance.String(), 1, balance.Indicator, false, "FIFO",
 		))
 
-	// Set up the queued transactions query that checks for applied children
-	queuedTxnQuery := `
-        SELECT t.precise_amount, t.source, t.destination
-        FROM ledgerforge.transactions t
-        WHERE (t.source = $1 OR t.destination = $1)
-        AND t.status = 'QUEUED'
-        AND NOT EXISTS (
-            SELECT 1
-            FROM ledgerforge.transactions child
-            WHERE child.parent_transaction = t.transaction_id
-            AND (child.status = 'APPLIED' OR child.status = 'REJECTED' OR child.status = 'VOID' or child.status = 'INFLIGHT')
-        )
-    `
-
-	// This should return empty rows because all QUEUED transactions have APPLIED children
-	mock.ExpectQuery(regexp.QuoteMeta(queuedTxnQuery)).
+	// All QUEUED transactions have APPLIED children, so sums are zero
+	mock.ExpectQuery(regexp.QuoteMeta(`::text AS queued_credit`)).
 		WithArgs("bln1").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"precise_amount", "source", "destination",
-		}))
-
-	mock.ExpectCommit()
+			"queued_debit", "queued_credit",
+		}).AddRow("0", "0"))
 
 	// Execute the function
 	retrievedBalance, err := ds.GetBalanceByID("bln1", []string{}, true)
@@ -710,23 +682,26 @@ func TestGetBalanceByIDLite_Success(t *testing.T) {
 	ds := Datasource{Conn: db}
 
 	query := `
-       SELECT balance_id, indicator, currency, currency_multiplier, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE(allocation_strategy, 'FIFO') as allocation_strategy, COALESCE(identity_id, '') as identity_id
+       SELECT balance_id, indicator, currency, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE(allocation_strategy, 'FIFO') as allocation_strategy, COALESCE(identity_id, '') as identity_id, meta_data
        FROM ledgerforge.balances
        WHERE balance_id = $1
     `
 
+	metaDataJSON, err := json.Marshal(map[string]interface{}{"field": "test_value"})
+	assert.NoError(t, err)
+
 	mock.ExpectQuery(regexp.QuoteMeta(query)).
 		WithArgs("bln_123").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"balance_id", "indicator", "currency", "currency_multiplier", "ledger_id",
+			"balance_id", "indicator", "currency", "ledger_id",
 			"balance", "credit_balance", "debit_balance",
 			"inflight_balance", "inflight_credit_balance", "inflight_debit_balance",
-			"created_at", "version", "track_fund_lineage", "allocation_strategy", "identity_id",
+			"created_at", "version", "track_fund_lineage", "allocation_strategy", "identity_id", "meta_data",
 		}).AddRow(
-			"bln_123", "ACC001", "USD", 100, "ldg_001",
+			"bln_123", "ACC001", "USD", "ldg_001",
 			"100000", "60000", "40000",
 			"5000", "3000", "2000",
-			time.Now(), 1, false, "FIFO", "",
+			time.Now(), 1, false, "FIFO", "", metaDataJSON,
 		))
 
 	balance, err := ds.GetBalanceByIDLite("bln_123")
@@ -739,6 +714,46 @@ func TestGetBalanceByIDLite_Success(t *testing.T) {
 	assert.Equal(t, "60000", balance.CreditBalance.String())
 	assert.Equal(t, "40000", balance.DebitBalance.String())
 	assert.Equal(t, "5000", balance.InflightBalance.String())
+	// Regression test for #256: meta_data must be populated from the query,
+	// not silently dropped, since callers persist this struct back to the
+	// search index and would otherwise overwrite existing metadata with nil.
+	assert.Equal(t, "test_value", balance.MetaData["field"])
+
+	err = mock.ExpectationsWereMet()
+	assert.NoError(t, err)
+}
+
+func TestGetBalanceByIDLite_NilMetaData(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	assert.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	ds := Datasource{Conn: db}
+
+	query := `
+       SELECT balance_id, indicator, currency, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE(allocation_strategy, 'FIFO') as allocation_strategy, COALESCE(identity_id, '') as identity_id, meta_data
+       FROM ledgerforge.balances
+       WHERE balance_id = $1
+    `
+
+	mock.ExpectQuery(regexp.QuoteMeta(query)).
+		WithArgs("bln_123").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"balance_id", "indicator", "currency", "ledger_id",
+			"balance", "credit_balance", "debit_balance",
+			"inflight_balance", "inflight_credit_balance", "inflight_debit_balance",
+			"created_at", "version", "track_fund_lineage", "allocation_strategy", "identity_id", "meta_data",
+		}).AddRow(
+			"bln_123", "ACC001", "USD", "ldg_001",
+			"100000", "60000", "40000",
+			"5000", "3000", "2000",
+			time.Now(), 1, false, "FIFO", "", nil,
+		))
+
+	balance, err := ds.GetBalanceByIDLite("bln_123")
+	assert.NoError(t, err)
+	assert.NotNil(t, balance)
+	assert.Nil(t, balance.MetaData)
 
 	err = mock.ExpectationsWereMet()
 	assert.NoError(t, err)
@@ -752,7 +767,7 @@ func TestGetBalanceByIDLite_NotFound(t *testing.T) {
 	ds := Datasource{Conn: db}
 
 	query := `
-       SELECT balance_id, indicator, currency, currency_multiplier, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE(allocation_strategy, 'FIFO') as allocation_strategy, COALESCE(identity_id, '') as identity_id
+       SELECT balance_id, indicator, currency, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE(allocation_strategy, 'FIFO') as allocation_strategy, COALESCE(identity_id, '') as identity_id, meta_data
        FROM ledgerforge.balances
        WHERE balance_id = $1
     `
@@ -766,7 +781,7 @@ func TestGetBalanceByIDLite_NotFound(t *testing.T) {
 	assert.Nil(t, balance)
 	apiErr, ok := err.(apierror.APIError)
 	assert.True(t, ok)
-	assert.Equal(t, apierror.ErrNotFound, apiErr.Code)
+	assert.Equal(t, apierror.ErrBalNotFound, apiErr.Code)
 
 	err = mock.ExpectationsWereMet()
 	assert.NoError(t, err)
@@ -780,7 +795,7 @@ func TestGetBalanceByIDLite_NullIndicator(t *testing.T) {
 	ds := Datasource{Conn: db}
 
 	query := `
-       SELECT balance_id, indicator, currency, currency_multiplier, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE(allocation_strategy, 'FIFO') as allocation_strategy, COALESCE(identity_id, '') as identity_id
+       SELECT balance_id, indicator, currency, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE(allocation_strategy, 'FIFO') as allocation_strategy, COALESCE(identity_id, '') as identity_id, meta_data
        FROM ledgerforge.balances
        WHERE balance_id = $1
     `
@@ -788,15 +803,15 @@ func TestGetBalanceByIDLite_NullIndicator(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(query)).
 		WithArgs("bln_123").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"balance_id", "indicator", "currency", "currency_multiplier", "ledger_id",
+			"balance_id", "indicator", "currency", "ledger_id",
 			"balance", "credit_balance", "debit_balance",
 			"inflight_balance", "inflight_credit_balance", "inflight_debit_balance",
-			"created_at", "version", "track_fund_lineage", "allocation_strategy", "identity_id",
+			"created_at", "version", "track_fund_lineage", "allocation_strategy", "identity_id", "meta_data",
 		}).AddRow(
-			"bln_123", nil, "USD", 100, "ldg_001",
+			"bln_123", nil, "USD", "ldg_001",
 			"100000", "60000", "40000",
 			"5000", "3000", "2000",
-			time.Now(), 1, false, "FIFO", "",
+			time.Now(), 1, false, "FIFO", "", nil,
 		))
 
 	balance, err := ds.GetBalanceByIDLite("bln_123")
@@ -816,7 +831,7 @@ func TestGetBalancesByIDsLite_Success(t *testing.T) {
 	ds := Datasource{Conn: db}
 
 	query := `
-		SELECT balance_id, indicator, currency, currency_multiplier, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE(allocation_strategy, 'FIFO') as allocation_strategy, COALESCE(identity_id, '') as identity_id
+		SELECT balance_id, indicator, currency, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE(allocation_strategy, 'FIFO') as allocation_strategy, COALESCE(identity_id, '') as identity_id
 		FROM ledgerforge.balances
 		WHERE balance_id = ANY($1)
 	`
@@ -824,17 +839,17 @@ func TestGetBalancesByIDsLite_Success(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(query)).
 		WithArgs(pq.Array([]string{"bln_123", "bln_456"})).
 		WillReturnRows(sqlmock.NewRows([]string{
-			"balance_id", "indicator", "currency", "currency_multiplier", "ledger_id",
+			"balance_id", "indicator", "currency", "ledger_id",
 			"balance", "credit_balance", "debit_balance",
 			"inflight_balance", "inflight_credit_balance", "inflight_debit_balance",
 			"created_at", "version", "track_fund_lineage", "allocation_strategy", "identity_id",
 		}).AddRow(
-			"bln_123", "ACC001", "USD", 100, "ldg_001",
+			"bln_123", "ACC001", "USD", "ldg_001",
 			"100000", "60000", "40000",
 			"5000", "3000", "2000",
 			time.Now(), 1, false, "FIFO", "",
 		).AddRow(
-			"bln_456", "ACC002", "USD", 100, "ldg_001",
+			"bln_456", "ACC002", "USD", "ldg_001",
 			"200000", "120000", "80000",
 			"10000", "6000", "4000",
 			time.Now(), 2, true, "LIFO", "idt_001",
@@ -883,7 +898,7 @@ func TestGetBalancesByIDsLite_PartialResults(t *testing.T) {
 	ds := Datasource{Conn: db}
 
 	query := `
-		SELECT balance_id, indicator, currency, currency_multiplier, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE(allocation_strategy, 'FIFO') as allocation_strategy, COALESCE(identity_id, '') as identity_id
+		SELECT balance_id, indicator, currency, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE(allocation_strategy, 'FIFO') as allocation_strategy, COALESCE(identity_id, '') as identity_id
 		FROM ledgerforge.balances
 		WHERE balance_id = ANY($1)
 	`
@@ -892,12 +907,12 @@ func TestGetBalancesByIDsLite_PartialResults(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(query)).
 		WithArgs(pq.Array([]string{"bln_123", "bln_nonexistent"})).
 		WillReturnRows(sqlmock.NewRows([]string{
-			"balance_id", "indicator", "currency", "currency_multiplier", "ledger_id",
+			"balance_id", "indicator", "currency", "ledger_id",
 			"balance", "credit_balance", "debit_balance",
 			"inflight_balance", "inflight_credit_balance", "inflight_debit_balance",
 			"created_at", "version", "track_fund_lineage", "allocation_strategy", "identity_id",
 		}).AddRow(
-			"bln_123", "ACC001", "USD", 100, "ldg_001",
+			"bln_123", "ACC001", "USD", "ldg_001",
 			"100000", "60000", "40000",
 			"5000", "3000", "2000",
 			time.Now(), 1, false, "FIFO", "",
@@ -922,7 +937,7 @@ func TestGetBalanceByIndicator_Success(t *testing.T) {
 	ds := Datasource{Conn: db}
 
 	query := `
-       SELECT balance_id, indicator, currency, currency_multiplier, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE(allocation_strategy, 'FIFO') as allocation_strategy, COALESCE(identity_id, '') as identity_id
+       SELECT balance_id, indicator, currency, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE(allocation_strategy, 'FIFO') as allocation_strategy, COALESCE(identity_id, '') as identity_id
        FROM ledgerforge.balances
        WHERE indicator = $1 AND currency = $2
     `
@@ -930,12 +945,12 @@ func TestGetBalanceByIndicator_Success(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(query)).
 		WithArgs("ACC001", "USD").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"balance_id", "indicator", "currency", "currency_multiplier", "ledger_id",
+			"balance_id", "indicator", "currency", "ledger_id",
 			"balance", "credit_balance", "debit_balance",
 			"inflight_balance", "inflight_credit_balance", "inflight_debit_balance",
 			"created_at", "version", "track_fund_lineage", "allocation_strategy", "identity_id",
 		}).AddRow(
-			"bln_123", "ACC001", "USD", 100, "ldg_001",
+			"bln_123", "ACC001", "USD", "ldg_001",
 			"100000", "60000", "40000",
 			"5000", "3000", "2000",
 			time.Now(), 1, false, "FIFO", "",
@@ -961,7 +976,7 @@ func TestGetBalanceByIndicator_NotFound(t *testing.T) {
 	ds := Datasource{Conn: db}
 
 	query := `
-       SELECT balance_id, indicator, currency, currency_multiplier, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE(allocation_strategy, 'FIFO') as allocation_strategy, COALESCE(identity_id, '') as identity_id
+       SELECT balance_id, indicator, currency, ledger_id, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, created_at, version, track_fund_lineage, COALESCE(allocation_strategy, 'FIFO') as allocation_strategy, COALESCE(identity_id, '') as identity_id
        FROM ledgerforge.balances
        WHERE indicator = $1 AND currency = $2
     `
@@ -991,7 +1006,7 @@ func TestGetAllBalances_Success(t *testing.T) {
 	metaDataJSON, _ := json.Marshal(metaData)
 
 	query := `
-        SELECT balance_id, indicator, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, currency, currency_multiplier, ledger_id, COALESCE(identity_id, '') as identity_id, created_at, meta_data
+        SELECT balance_id, indicator, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, currency, ledger_id, COALESCE(identity_id, '') as identity_id, created_at, meta_data
         FROM ledgerforge.balances
         ORDER BY created_at DESC
         LIMIT $1 OFFSET $2
@@ -1001,10 +1016,10 @@ func TestGetAllBalances_Success(t *testing.T) {
 		WithArgs(10, 0).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"balance_id", "indicator", "balance", "credit_balance", "debit_balance",
-			"inflight_balance", "inflight_credit_balance", "inflight_debit_balance", "currency", "currency_multiplier", "ledger_id", "identity_id", "created_at", "meta_data",
+			"inflight_balance", "inflight_credit_balance", "inflight_debit_balance", "currency", "ledger_id", "identity_id", "created_at", "meta_data",
 		}).
-			AddRow("bln_1", "ACC001", "100000", "60000", "40000", "0", "0", "0", "USD", 100, "ldg_001", "", time.Now(), metaDataJSON).
-			AddRow("bln_2", "ACC002", "200000", "120000", "80000", "0", "0", "0", "EUR", 100, "ldg_001", "", time.Now(), metaDataJSON))
+			AddRow("bln_1", "ACC001", "100000", "60000", "40000", "0", "0", "0", "USD", "ldg_001", "", time.Now(), metaDataJSON).
+			AddRow("bln_2", "ACC002", "200000", "120000", "80000", "0", "0", "0", "EUR", "ldg_001", "", time.Now(), metaDataJSON))
 
 	balances, err := ds.GetAllBalances(10, 0)
 	assert.NoError(t, err)
@@ -1026,7 +1041,7 @@ func TestGetAllBalances_Empty(t *testing.T) {
 	ds := Datasource{Conn: db}
 
 	query := `
-        SELECT balance_id, indicator, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, currency, currency_multiplier, ledger_id, COALESCE(identity_id, '') as identity_id, created_at, meta_data
+        SELECT balance_id, indicator, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, currency, ledger_id, COALESCE(identity_id, '') as identity_id, created_at, meta_data
         FROM ledgerforge.balances
         ORDER BY created_at DESC
         LIMIT $1 OFFSET $2
@@ -1036,7 +1051,7 @@ func TestGetAllBalances_Empty(t *testing.T) {
 		WithArgs(10, 0).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"balance_id", "indicator", "balance", "credit_balance", "debit_balance",
-			"inflight_balance", "inflight_credit_balance", "inflight_debit_balance", "currency", "currency_multiplier", "ledger_id", "identity_id", "created_at", "meta_data",
+			"inflight_balance", "inflight_credit_balance", "inflight_debit_balance", "currency", "ledger_id", "identity_id", "created_at", "meta_data",
 		}))
 
 	balances, err := ds.GetAllBalances(10, 0)
@@ -1055,7 +1070,7 @@ func TestGetAllBalances_QueryError(t *testing.T) {
 	ds := Datasource{Conn: db}
 
 	query := `
-        SELECT balance_id, indicator, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, currency, currency_multiplier, ledger_id, COALESCE(identity_id, '') as identity_id, created_at, meta_data
+        SELECT balance_id, indicator, balance, credit_balance, debit_balance, inflight_balance, inflight_credit_balance, inflight_debit_balance, currency, ledger_id, COALESCE(identity_id, '') as identity_id, created_at, meta_data
         FROM ledgerforge.balances
         ORDER BY created_at DESC
         LIMIT $1 OFFSET $2
@@ -1080,9 +1095,7 @@ func TestGetSourceDestination_QueryError(t *testing.T) {
 
 	ds := Datasource{Conn: db}
 
-	query := `SELECT ledgerforge.get_balances_by_id($1,$2)`
-
-	mock.ExpectQuery(regexp.QuoteMeta(query)).
+	mock.ExpectQuery("SELECT balance_id, balance, credit_balance, debit_balance, currency, ledger_id, created_at, meta_data").
 		WithArgs("bln_source", "bln_dest").
 		WillReturnError(fmt.Errorf("stored procedure error"))
 
@@ -1102,11 +1115,9 @@ func TestGetSourceDestination_NoResults(t *testing.T) {
 
 	ds := Datasource{Conn: db}
 
-	query := `SELECT ledgerforge.get_balances_by_id($1,$2)`
-
-	mock.ExpectQuery(regexp.QuoteMeta(query)).
+	mock.ExpectQuery("SELECT balance_id, balance, credit_balance, debit_balance, currency, ledger_id, created_at, meta_data").
 		WithArgs("bln_source", "bln_dest").
-		WillReturnRows(sqlmock.NewRows([]string{"balance_id", "balance", "credit_balance", "debit_balance", "currency", "currency_multiplier", "ledger_id", "created_at", "meta_data"}))
+		WillReturnRows(sqlmock.NewRows([]string{"balance_id", "balance", "credit_balance", "debit_balance", "currency", "ledger_id", "created_at", "meta_data"}))
 
 	balances, err := ds.GetSourceDestination("bln_source", "bln_dest")
 	assert.NoError(t, err)
@@ -1273,7 +1284,7 @@ func TestGetMonitorByID_NotFound(t *testing.T) {
 	assert.Nil(t, monitor)
 	apiErr, ok := err.(apierror.APIError)
 	assert.True(t, ok)
-	assert.Equal(t, apierror.ErrNotFound, apiErr.Code)
+	assert.Equal(t, apierror.ErrBalMonitorNotFound, apiErr.Code)
 
 	err = mock.ExpectationsWereMet()
 	assert.NoError(t, err)
@@ -1458,7 +1469,7 @@ func TestUpdateMonitor_NotFound(t *testing.T) {
 	assert.Error(t, err)
 	apiErr, ok := err.(apierror.APIError)
 	assert.True(t, ok)
-	assert.Equal(t, apierror.ErrNotFound, apiErr.Code)
+	assert.Equal(t, apierror.ErrBalMonitorNotFound, apiErr.Code)
 
 	err = mock.ExpectationsWereMet()
 	assert.NoError(t, err)
@@ -1505,7 +1516,7 @@ func TestDeleteMonitor_NotFound(t *testing.T) {
 	assert.Error(t, err)
 	apiErr, ok := err.(apierror.APIError)
 	assert.True(t, ok)
-	assert.Equal(t, apierror.ErrNotFound, apiErr.Code)
+	assert.Equal(t, apierror.ErrBalMonitorNotFound, apiErr.Code)
 
 	err = mock.ExpectationsWereMet()
 	assert.NoError(t, err)
@@ -1519,22 +1530,21 @@ func TestUpdateBalance_Success(t *testing.T) {
 	ds := Datasource{Conn: db}
 
 	balance := &model.Balance{
-		BalanceID:          "bln_test_123",
-		Balance:            big.NewInt(10000),
-		CreditBalance:      big.NewInt(15000),
-		DebitBalance:       big.NewInt(5000),
-		Currency:           "USD",
-		CurrencyMultiplier: 100,
-		LedgerID:           "ldg_123",
-		CreatedAt:          time.Now(),
-		MetaData:           map[string]interface{}{"key": "value"},
+		BalanceID:     "bln_test_123",
+		Balance:       big.NewInt(10000),
+		CreditBalance: big.NewInt(15000),
+		DebitBalance:  big.NewInt(5000),
+		Currency:      "USD",
+		LedgerID:      "ldg_123",
+		CreatedAt:     time.Now(),
+		MetaData:      map[string]interface{}{"key": "value"},
 	}
 
 	metaDataJSON, _ := json.Marshal(balance.MetaData)
 
 	query := `
 		UPDATE ledgerforge.balances
-		SET balance = $2, credit_balance = $3, debit_balance = $4, currency = $5, currency_multiplier = $6, ledger_id = $7, created_at = $8, meta_data = $9
+		SET balance = $2, credit_balance = $3, debit_balance = $4, currency = $5, ledger_id = $6, created_at = $7, meta_data = $8
 		WHERE balance_id = $1
 	`
 
@@ -1545,7 +1555,6 @@ func TestUpdateBalance_Success(t *testing.T) {
 			balance.CreditBalance.String(),
 			balance.DebitBalance.String(),
 			balance.Currency,
-			balance.CurrencyMultiplier,
 			balance.LedgerID,
 			balance.CreatedAt,
 			metaDataJSON,
@@ -1567,22 +1576,21 @@ func TestUpdateBalance_NotFound(t *testing.T) {
 	ds := Datasource{Conn: db}
 
 	balance := &model.Balance{
-		BalanceID:          "bln_nonexistent",
-		Balance:            big.NewInt(10000),
-		CreditBalance:      big.NewInt(15000),
-		DebitBalance:       big.NewInt(5000),
-		Currency:           "USD",
-		CurrencyMultiplier: 100,
-		LedgerID:           "ldg_123",
-		CreatedAt:          time.Now(),
-		MetaData:           map[string]interface{}{},
+		BalanceID:     "bln_nonexistent",
+		Balance:       big.NewInt(10000),
+		CreditBalance: big.NewInt(15000),
+		DebitBalance:  big.NewInt(5000),
+		Currency:      "USD",
+		LedgerID:      "ldg_123",
+		CreatedAt:     time.Now(),
+		MetaData:      map[string]interface{}{},
 	}
 
 	metaDataJSON, _ := json.Marshal(balance.MetaData)
 
 	query := `
 		UPDATE ledgerforge.balances
-		SET balance = $2, credit_balance = $3, debit_balance = $4, currency = $5, currency_multiplier = $6, ledger_id = $7, created_at = $8, meta_data = $9
+		SET balance = $2, credit_balance = $3, debit_balance = $4, currency = $5, ledger_id = $6, created_at = $7, meta_data = $8
 		WHERE balance_id = $1
 	`
 
@@ -1593,7 +1601,6 @@ func TestUpdateBalance_NotFound(t *testing.T) {
 			balance.CreditBalance.String(),
 			balance.DebitBalance.String(),
 			balance.Currency,
-			balance.CurrencyMultiplier,
 			balance.LedgerID,
 			balance.CreatedAt,
 			metaDataJSON,
@@ -1604,7 +1611,7 @@ func TestUpdateBalance_NotFound(t *testing.T) {
 	assert.Error(t, err)
 	apiErr, ok := err.(apierror.APIError)
 	assert.True(t, ok)
-	assert.Equal(t, apierror.ErrNotFound, apiErr.Code)
+	assert.Equal(t, apierror.ErrBalNotFound, apiErr.Code)
 
 	err = mock.ExpectationsWereMet()
 	assert.NoError(t, err)
@@ -1618,22 +1625,21 @@ func TestUpdateBalance_QueryError(t *testing.T) {
 	ds := Datasource{Conn: db}
 
 	balance := &model.Balance{
-		BalanceID:          "bln_test_123",
-		Balance:            big.NewInt(10000),
-		CreditBalance:      big.NewInt(15000),
-		DebitBalance:       big.NewInt(5000),
-		Currency:           "USD",
-		CurrencyMultiplier: 100,
-		LedgerID:           "ldg_123",
-		CreatedAt:          time.Now(),
-		MetaData:           map[string]interface{}{},
+		BalanceID:     "bln_test_123",
+		Balance:       big.NewInt(10000),
+		CreditBalance: big.NewInt(15000),
+		DebitBalance:  big.NewInt(5000),
+		Currency:      "USD",
+		LedgerID:      "ldg_123",
+		CreatedAt:     time.Now(),
+		MetaData:      map[string]interface{}{},
 	}
 
 	metaDataJSON, _ := json.Marshal(balance.MetaData)
 
 	query := `
 		UPDATE ledgerforge.balances
-		SET balance = $2, credit_balance = $3, debit_balance = $4, currency = $5, currency_multiplier = $6, ledger_id = $7, created_at = $8, meta_data = $9
+		SET balance = $2, credit_balance = $3, debit_balance = $4, currency = $5, ledger_id = $6, created_at = $7, meta_data = $8
 		WHERE balance_id = $1
 	`
 
@@ -1644,7 +1650,6 @@ func TestUpdateBalance_QueryError(t *testing.T) {
 			balance.CreditBalance.String(),
 			balance.DebitBalance.String(),
 			balance.Currency,
-			balance.CurrencyMultiplier,
 			balance.LedgerID,
 			balance.CreatedAt,
 			metaDataJSON,
@@ -1706,7 +1711,7 @@ func TestUpdateBalanceIdentity_NotFound(t *testing.T) {
 	assert.Error(t, err)
 	apiErr, ok := err.(apierror.APIError)
 	assert.True(t, ok)
-	assert.Equal(t, apierror.ErrNotFound, apiErr.Code)
+	assert.Equal(t, apierror.ErrBalNotFound, apiErr.Code)
 
 	err = mock.ExpectationsWereMet()
 	assert.NoError(t, err)
@@ -1814,7 +1819,7 @@ func TestGetBalanceAtTime_BalanceNotFound(t *testing.T) {
 	assert.Nil(t, balance)
 	apiErr, ok := err.(apierror.APIError)
 	assert.True(t, ok)
-	assert.Equal(t, apierror.ErrNotFound, apiErr.Code)
+	assert.Equal(t, apierror.ErrBalNotFound, apiErr.Code)
 
 	err = mock.ExpectationsWereMet()
 	assert.NoError(t, err)
@@ -1899,7 +1904,12 @@ func TestGetMostRecentSnapshot_Found(t *testing.T) {
 	assert.NotNil(t, debitBalance)
 	assert.Equal(t, big.NewInt(500), creditBalance)
 	assert.Equal(t, big.NewInt(500), debitBalance)
-	assert.Equal(t, snapshotTime, resultTime)
+	// The bound is an instant, and it is returned normalised to UTC so it can
+	// be compared against the UTC wall clocks in ledgerforge.transactions. Equal
+	// compares the instant; assert.Equal would compare the zone too.
+	assert.True(t, snapshotTime.Equal(resultTime),
+		"expected the same instant as %s, got %s", snapshotTime, resultTime)
+	assert.Equal(t, time.UTC, resultTime.Location())
 }
 
 func TestGetMostRecentSnapshot_NotFound(t *testing.T) {
@@ -2179,4 +2189,29 @@ func TestCalculateBalanceFromTransactions_QueryError(t *testing.T) {
 
 	_, _, err = ds.calculateBalanceFromTransactions(ctx, tx, balanceID, startTime, targetTime, initialCredit, initialDebit)
 	assert.Error(t, err)
+}
+
+// TestParseBigInt covers the helper used by GetTransactionsByShadowFor: a
+// malformed precise amount must surface an error instead of silently yielding
+// a nil/zero amount (which previously corrupted lineage records).
+func TestParseBigInt(t *testing.T) {
+	t.Run("valid integer string", func(t *testing.T) {
+		got, err := parseBigInt("10050")
+		require.NoError(t, err)
+		assert.Equal(t, "10050", got.String())
+	})
+
+	t.Run("negative integer", func(t *testing.T) {
+		got, err := parseBigInt("-42")
+		require.NoError(t, err)
+		assert.Equal(t, "-42", got.String())
+	})
+
+	for _, bad := range []string{"", "abc", "10.5", "1e3", " 12"} {
+		t.Run("rejects "+bad, func(t *testing.T) {
+			got, err := parseBigInt(bad)
+			require.Error(t, err, "malformed precise amount %q must error", bad)
+			assert.Nil(t, got)
+		})
+	}
 }

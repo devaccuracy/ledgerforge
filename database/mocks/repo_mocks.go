@@ -69,6 +69,9 @@ func (m *MockDataSource) RecordTransactionsWithBalanceSetAndOutboxes(ctx context
 
 func (m *MockDataSource) GetTransaction(ctx context.Context, id string) (*model.Transaction, error) {
 	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
 	return args.Get(0).(*model.Transaction), args.Error(1)
 }
 
@@ -93,11 +96,6 @@ func (m *MockDataSource) GetExistingTransactionReferences(ctx context.Context, r
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(map[string]struct{}), args.Error(1)
-}
-
-func (m *MockDataSource) UpdateTransactionStatus(ctx context.Context, id string, status string) error {
-	args := m.Called(ctx, id, status)
-	return args.Error(0)
 }
 
 func (m *MockDataSource) GetAllTransactions(ctx context.Context, limit, offset int) ([]model.Transaction, error) {
@@ -248,6 +246,14 @@ func (m *MockDataSource) UpdateLedgerMetadata(id string, metadata map[string]int
 func (m *MockDataSource) UpdateTransactionMetadata(ctx context.Context, id string, metadata map[string]interface{}) error {
 	args := m.Called(ctx, id, metadata)
 	return args.Error(0)
+}
+
+func (m *MockDataSource) ListTransactionsByMetadataScope(ctx context.Context, scopeID string, limit int, offset int64) ([]*model.Transaction, error) {
+	args := m.Called(ctx, scopeID, limit, offset)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*model.Transaction), args.Error(1)
 }
 
 func (m *MockDataSource) UpdateBalanceMetadata(ctx context.Context, id string, metadata map[string]interface{}) error {
@@ -679,4 +685,30 @@ func (m *MockDataSource) GetOutboxByTransactionID(ctx context.Context, transacti
 func (m *MockDataSource) HasPendingCreditOutbox(ctx context.Context, balanceID string) (bool, error) {
 	args := m.Called(ctx, balanceID)
 	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockDataSource) ChainPendingTransactions(ctx context.Context, cutoff time.Time, batchSize int) (int, error) {
+	args := m.Called(ctx, cutoff, batchSize)
+	return args.Int(0), args.Error(1)
+}
+
+func (m *MockDataSource) GetChainState(ctx context.Context) (*model.ChainState, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*model.ChainState), args.Error(1)
+}
+
+func (m *MockDataSource) GetChainedTransactionsAfter(ctx context.Context, afterSeq int64, limit int) ([]model.ChainedTransaction, error) {
+	args := m.Called(ctx, afterSeq, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]model.ChainedTransaction), args.Error(1)
+}
+
+func (m *MockDataSource) CountUnchainedTransactions(ctx context.Context, cutoff time.Time) (int64, error) {
+	args := m.Called(ctx, cutoff)
+	return args.Get(0).(int64), args.Error(1)
 }

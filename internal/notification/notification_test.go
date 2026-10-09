@@ -37,7 +37,7 @@ func TestRegisterWebhookSender(t *testing.T) {
 	RegisterWebhookSender(mockSender)
 
 	// Verify the sender was registered
-	assert.NotNil(t, registeredWebhookSender())
+	assert.NotNil(t, getWebhookSender())
 }
 
 func TestRegisterWebhookSender_CalledCorrectly(t *testing.T) {
@@ -59,7 +59,7 @@ func TestRegisterWebhookSender_CalledCorrectly(t *testing.T) {
 
 	// Call the sender
 	testPayload := map[string]string{"key": "value"}
-	err := registeredWebhookSender()("test.event", testPayload)
+	err := getWebhookSender()("test.event", testPayload)
 
 	assert.NoError(t, err)
 	assert.Equal(t, "test.event", capturedEvent)
@@ -81,7 +81,7 @@ func TestRegisterWebhookSender_ReturnsError(t *testing.T) {
 	RegisterWebhookSender(mockSender)
 
 	// Call the sender
-	err := registeredWebhookSender()("test.event", nil)
+	err := getWebhookSender()("test.event", nil)
 
 	assert.Error(t, err)
 	assert.Equal(t, expectedError, err)
@@ -106,7 +106,7 @@ func TestRegisterWebhookSender_ReplacesPrevious(t *testing.T) {
 	})
 
 	// Call the sender
-	_ = registeredWebhookSender()("test.event", nil)
+	_ = getWebhookSender()("test.event", nil)
 
 	// Second sender should have been called
 	assert.Equal(t, 2, callCount)
@@ -126,10 +126,10 @@ func TestWebhookSenderRegistrationIsConcurrentSafe(t *testing.T) {
 
 		go func() {
 			defer waitGroup.Done()
-			_ = registeredWebhookSender()
+			_ = getWebhookSender()
 		}()
 	}
 
 	waitGroup.Wait()
-	assert.NotNil(t, registeredWebhookSender())
+	assert.NotNil(t, getWebhookSender())
 }

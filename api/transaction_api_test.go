@@ -32,6 +32,7 @@ import (
 	"github.com/devaccuracy/ledgerforge/database"
 	redis_db "github.com/devaccuracy/ledgerforge/internal/redisdb"
 	"github.com/devaccuracy/ledgerforge/internal/request"
+	"github.com/gin-gonic/gin"
 	"github.com/hibiken/asynq"
 
 	"github.com/devaccuracy/ledgerforge/model"
@@ -395,7 +396,7 @@ func TestRecordTransactionPrecisionValidation(t *testing.T) {
 		}
 
 		payloadBytes, _ := request.ToJsonReq(&invalidPayload)
-		response := map[string]string{}
+		response := map[string]interface{}{}
 		testRequest := TestRequest{
 			Payload:  payloadBytes,
 			Response: &response,
@@ -423,6 +424,49 @@ func TestRecordTransactionPrecisionValidation(t *testing.T) {
 		_, txnErr := b.GetTransactionByRef(ctx, ref)
 		assert.Error(t, txnErr, "transaction with fractional precision should not be persisted")
 	})
+}
+
+// TestInflightCommitRejectsNonPositivePreciseAmount asserts the inflight
+// commit/void handler rejects an explicit non-positive precise_amount before any
+// processing, so a zero/negative partial commit can never be applied.
+func TestInflightCommitRejectsNonPositivePreciseAmount(t *testing.T) {
+	cases := []struct {
+		name          string
+		status        string
+		preciseAmount *big.Int
+	}{
+		{"commit negative precise_amount", "commit", big.NewInt(-100)},
+		{"commit zero precise_amount", "commit", big.NewInt(0)},
+		{"void negative precise_amount", "void", big.NewInt(-100)},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			router, _, err := setupRouter(t)
+			if err != nil {
+				t.Fatalf("Failed to setup router: %v", err)
+			}
+
+			payload := model2.InflightUpdate{
+				Status:        tc.status,
+				PreciseAmount: tc.preciseAmount,
+			}
+			payloadBytes, _ := request.ToJsonReq(&payload)
+			response := map[string]interface{}{}
+			resp, reqErr := SetUpTestRequest(TestRequest{
+				Payload:  payloadBytes,
+				Response: &response,
+				Method:   "PUT",
+				Route:    "/transactions/inflight/" + model.GenerateUUIDWithSuffix("txn"),
+				Auth:     "",
+				Router:   router,
+			})
+			require.NoError(t, reqErr)
+			assert.Equal(t, http.StatusBadRequest, resp.Code)
+			bodyBytes, _ := json.Marshal(response)
+			assert.Contains(t, string(bodyBytes), "precise_amount must be positive")
+		})
+	}
 }
 
 func TestRecordTransactionWithExitingRef(t *testing.T) {
@@ -551,6 +595,7 @@ func TestInflightTransaction_Commit_API(t *testing.T) {
 	commitPayload := model2.InflightUpdate{
 		Status:        "commit",
 		PreciseAmount: inflightTxResponse.PreciseAmount,
+		SkipQueue:     true,
 	}
 	commitPayloadBytes, _ := request.ToJsonReq(&commitPayload)
 	var commitTxResponse model.Transaction
@@ -647,7 +692,8 @@ func TestInflightTransaction_Void_API(t *testing.T) {
 
 	// 3. Void Transaction
 	voidPayload := model2.InflightUpdate{
-		Status: "void",
+		Status:    "void",
+		SkipQueue: true,
 		// Amount is not strictly needed for void, but API might expect it or use precise_amount from original txn
 	}
 	voidPayloadBytes, _ := request.ToJsonReq(&voidPayload)
@@ -757,8 +803,9 @@ func TestInflightTransaction_Commit_WithAmount_API(t *testing.T) {
 	// 3. Partially Commit Transaction using Amount (float64)
 	partialAmountFloat := 100.25 // Changed to include decimals
 	commitPartialPayload := model2.InflightUpdate{
-		Status: "commit",
-		Amount: partialAmountFloat, // Using Amount (float64) instead of PreciseAmount
+		Status:    "commit",
+		Amount:    partialAmountFloat, // Using Amount (float64) instead of PreciseAmount
+		SkipQueue: true,
 	}
 	commitPartialPayloadBytes, _ := request.ToJsonReq(&commitPartialPayload)
 	var commitPartialTxResponse model.Transaction
@@ -799,7 +846,8 @@ func TestInflightTransaction_Commit_WithAmount_API(t *testing.T) {
 
 	// 5. Commit Remaining Transaction (by not specifying amount or precise_amount in payload)
 	commitRemainingPayload := model2.InflightUpdate{
-		Status: "commit",
+		Status:    "commit",
+		SkipQueue: true,
 		// Amount: 0.0, // Can be explicit 0.0 or absent due to omitempty
 		// PreciseAmount is nil by default
 	}
@@ -833,4 +881,265 @@ func TestInflightTransaction_Commit_WithAmount_API(t *testing.T) {
 	assert.Equal(t, int64(0), sbAfterFullCommit.InflightBalance.Int64(), "Source inflight balance should be 0 after full commit")
 	assert.Equal(t, originalPreciseAmount.Neg(originalPreciseAmount).String(), dbAfterFullCommit.Balance.String(), "Destination balance incorrect after full commit")
 	assert.Equal(t, int64(0), dbAfterFullCommit.InflightBalance.Int64(), "Destination inflight balance should be 0 after full commit")
+}
+
+// TestRefundTransaction_API exercises the POST /refund-transaction/:id
+// handler — specifically the optional skip_queue body added so callers
+// can request a synchronous refund.
+//
+// Three cases:
+//   - no body  → backward-compatible, refund is queued (default).
+//   - {"skip_queue": true} → refund is processed synchronously (APPLIED).
+//   - malformed body → 400, not a panic or a silent default.
+func TestRefundTransaction_API(t *testing.T) {
+	router, b, err := setupRouter(t)
+	if err != nil {
+		t.Fatalf("Failed to setup router: %v", err)
+	}
+	ctx := context.Background()
+
+	ledger, err := b.CreateLedger(model.Ledger{Name: gofakeit.Name()})
+	require.NoError(t, err)
+
+	// applyTxn records a fresh, immediately-applied transaction and
+	// returns its id — the thing a refund operates on.
+	applyTxn := func(t *testing.T) string {
+		t.Helper()
+		src, err := b.CreateBalance(ctx, model.Balance{LedgerID: ledger.LedgerID, Currency: "EUR"})
+		require.NoError(t, err)
+		dst, err := b.CreateBalance(ctx, model.Balance{LedgerID: ledger.LedgerID, Currency: "EUR"})
+		require.NoError(t, err)
+
+		payload := model2.RecordTransaction{
+			Amount:         100,
+			Precision:      100,
+			Reference:      "refund_api_" + gofakeit.UUID(),
+			Description:    "refund API test",
+			Currency:       "EUR",
+			Source:         src.BalanceID,
+			Destination:    dst.BalanceID,
+			AllowOverDraft: true,
+			SkipQueue:      true,
+		}
+		body, _ := request.ToJsonReq(&payload)
+		var txn model.Transaction
+		resp, err := SetUpTestRequest(TestRequest{
+			Payload: body, Response: &txn, Method: "POST", Route: "/transactions", Router: router,
+		})
+		require.NoError(t, err)
+		require.Equal(t, http.StatusCreated, resp.Code)
+		require.Equal(t, "APPLIED", txn.Status)
+		return txn.TransactionID
+	}
+
+	t.Run("no body keeps the default (queued) behavior", func(t *testing.T) {
+		id := applyTxn(t)
+		var refund model.Transaction
+		resp, err := SetUpTestRequest(TestRequest{
+			Payload:  nil, // bodiless — the historical call shape
+			Response: &refund, Method: "POST",
+			Route: "/refund-transaction/" + id, Router: router,
+		})
+		require.NoError(t, err)
+		require.Equal(t, http.StatusCreated, resp.Code,
+			"a bodiless refund must still succeed")
+		require.Equal(t, id, refund.ParentTransaction,
+			"refund must reference the original as parent")
+	})
+
+	t.Run("skip_queue true processes synchronously", func(t *testing.T) {
+		id := applyTxn(t)
+		body, _ := request.ToJsonReq(&refundBody{SkipQueue: true})
+		var refund model.Transaction
+		resp, err := SetUpTestRequest(TestRequest{
+			Payload: body, Response: &refund, Method: "POST",
+			Route: "/refund-transaction/" + id, Router: router,
+		})
+		require.NoError(t, err)
+		require.Equal(t, http.StatusCreated, resp.Code)
+		require.Equal(t, "APPLIED", refund.Status,
+			"skip_queue=true must apply the refund synchronously")
+		require.Equal(t, id, refund.ParentTransaction)
+	})
+
+	t.Run("malformed body is rejected with 400", func(t *testing.T) {
+		id := applyTxn(t)
+		var out map[string]interface{}
+		resp, err := SetUpTestRequest(TestRequest{
+			Payload:  strings.NewReader(`{"skip_queue": not-json`),
+			Response: &out, Method: "POST",
+			Route: "/refund-transaction/" + id, Router: router,
+		})
+		require.NoError(t, err)
+		require.Equal(t, http.StatusBadRequest, resp.Code,
+			"a malformed body must be rejected, not silently defaulted")
+	})
+}
+
+// refundBody mirrors the handler's optional request shape so the test
+// does not depend on the unexported refundTransactionRequest type.
+type refundBody struct {
+	SkipQueue bool `json:"skip_queue"`
+}
+
+// createInflightForBulk is a small helper that mirrors the inflight-creation
+// dance used elsewhere in this file, returning the resulting transaction id.
+func createInflightForBulk(t *testing.T, router *gin.Engine, source, dest, currency string, amount float64) string {
+	t.Helper()
+	payload := model2.RecordTransaction{
+		Amount:         amount,
+		Precision:      100,
+		Reference:      "inflight_bulk_" + gofakeit.UUID(),
+		Description:    "bulk inflight seed",
+		Currency:       currency,
+		Source:         source,
+		Destination:    dest,
+		AllowOverDraft: true,
+		Inflight:       true,
+		SkipQueue:      true,
+	}
+	payloadBytes, _ := request.ToJsonReq(&payload)
+	var resp model.Transaction
+	req := TestRequest{
+		Payload:  payloadBytes,
+		Response: &resp,
+		Method:   "POST",
+		Route:    "/transactions",
+		Router:   router,
+	}
+	rec, err := SetUpTestRequest(req)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, rec.Code)
+	require.Equal(t, "INFLIGHT", resp.Status)
+	return resp.TransactionID
+}
+
+// TestBulkVoidInflight_Integration end-to-end verifies that the bulk void
+// endpoint voids N independently-created inflight transactions in one call
+// and reports per-item success in the response body.
+func TestBulkVoidInflight_Integration(t *testing.T) {
+	router, b, err := setupRouter(t)
+	if err != nil {
+		t.Fatalf("Failed to setup router: %v", err)
+	}
+
+	ctx := context.Background()
+	ledger, err := b.CreateLedger(model.Ledger{Name: gofakeit.Name()})
+	assert.NoError(t, err)
+
+	src, err := b.CreateBalance(ctx, model.Balance{LedgerID: ledger.LedgerID, Currency: "USD"})
+	assert.NoError(t, err)
+	dst, err := b.CreateBalance(ctx, model.Balance{LedgerID: ledger.LedgerID, Currency: "USD"})
+	assert.NoError(t, err)
+
+	// 1. Create 3 independent inflight transactions
+	ids := []string{
+		createInflightForBulk(t, router, src.BalanceID, dst.BalanceID, "USD", 100),
+		createInflightForBulk(t, router, src.BalanceID, dst.BalanceID, "USD", 200),
+		createInflightForBulk(t, router, src.BalanceID, dst.BalanceID, "USD", 50),
+	}
+
+	// 2. Bulk-void them
+	voidReq := model2.BulkInflightVoidRequest{TransactionIDs: ids, SkipQueue: true}
+	voidBytes, _ := request.ToJsonReq(&voidReq)
+	var voidResp model2.BulkInflightResponse
+	rec, err := SetUpTestRequest(TestRequest{
+		Payload:  voidBytes,
+		Response: &voidResp,
+		Method:   "POST",
+		Route:    "/transactions/inflight/bulk/void",
+		Router:   router,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, 3, voidResp.Succeeded)
+	assert.Equal(t, 0, voidResp.Failed)
+	require.Len(t, voidResp.Results, 3)
+	for _, r := range voidResp.Results {
+		assert.Equal(t, "succeeded", r.Status, "transaction %s should have succeeded", r.TransactionID)
+	}
+
+	// 3. Double-void: every id should now report ALREADY_VOIDED (per-item
+	//    idempotency, not a bulk-level error). voidBytes is a *bytes.Buffer
+	//    drained by the first ServeHTTP, so rebuild it for the retry.
+	voidBytes2, _ := request.ToJsonReq(&voidReq)
+	rec2, err := SetUpTestRequest(TestRequest{
+		Payload:  voidBytes2,
+		Response: &voidResp,
+		Method:   "POST",
+		Route:    "/transactions/inflight/bulk/void",
+		Router:   router,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec2.Code)
+	assert.Equal(t, 0, voidResp.Succeeded)
+	assert.Equal(t, 3, voidResp.Failed)
+	for _, r := range voidResp.Results {
+		assert.Equal(t, "failed", r.Status)
+		assert.Equal(t, "ALREADY_VOIDED", r.Code, "expected stable code on retry of voided txn")
+	}
+
+	// 4. Balances are back to zero (all inflight cleared)
+	sb, _ := b.GetBalanceByID(ctx, src.BalanceID, nil, false)
+	db, _ := b.GetBalanceByID(ctx, dst.BalanceID, nil, false)
+	assert.Equal(t, int64(0), sb.InflightBalance.Int64())
+	assert.Equal(t, int64(0), db.InflightBalance.Int64())
+}
+
+// TestBulkCommitInflight_Integration end-to-end verifies that the
+// bulk commit endpoint commits N independent inflight transactions and
+// surfaces per-id errors (e.g. NOT_FOUND for an unknown id mixed in)
+// without aborting the rest of the batch.
+func TestBulkCommitInflight_Integration(t *testing.T) {
+	router, b, err := setupRouter(t)
+	if err != nil {
+		t.Fatalf("Failed to setup router: %v", err)
+	}
+
+	cnf, err := config.Fetch()
+	require.NoError(t, err)
+	cleanup := StartTestAsynqWorker(t, cnf, b, fmt.Sprintf("%s_%d", cnf.Queue.TransactionQueue, 1))
+	defer cleanup()
+
+	ctx := context.Background()
+	ledger, err := b.CreateLedger(model.Ledger{Name: gofakeit.Name()})
+	assert.NoError(t, err)
+
+	src, err := b.CreateBalance(ctx, model.Balance{LedgerID: ledger.LedgerID, Currency: "GBP"})
+	assert.NoError(t, err)
+	dst, err := b.CreateBalance(ctx, model.Balance{LedgerID: ledger.LedgerID, Currency: "GBP"})
+	assert.NoError(t, err)
+
+	// 1. Create 2 independent inflight transactions
+	id1 := createInflightForBulk(t, router, src.BalanceID, dst.BalanceID, "GBP", 100)
+	id2 := createInflightForBulk(t, router, src.BalanceID, dst.BalanceID, "GBP", 200)
+
+	// 2. Bulk-commit them, plus a deliberately-unknown id to verify partial
+	//    failure handling.
+	commitReq := model2.BulkInflightCommitRequest{
+		SkipQueue: true,
+		Transactions: []model2.BulkInflightCommitItem{
+			{TransactionID: id1},
+			{TransactionID: id2},
+			{TransactionID: "txn_does_not_exist"},
+		},
+	}
+	commitBytes, _ := request.ToJsonReq(&commitReq)
+	var resp model2.BulkInflightResponse
+	rec, err := SetUpTestRequest(TestRequest{
+		Payload:  commitBytes,
+		Response: &resp,
+		Method:   "POST",
+		Route:    "/transactions/inflight/bulk/commit",
+		Router:   router,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, 2, resp.Succeeded)
+	assert.Equal(t, 1, resp.Failed)
+	require.Len(t, resp.Results, 3)
+	assert.Equal(t, "succeeded", resp.Results[0].Status)
+	assert.Equal(t, "succeeded", resp.Results[1].Status)
+	assert.Equal(t, "failed", resp.Results[2].Status)
+	assert.Equal(t, "NOT_FOUND", resp.Results[2].Code)
 }

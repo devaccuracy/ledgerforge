@@ -23,6 +23,8 @@ import (
 
 // Balance represents a financial balance with credit, debit, inflight, and queued sub-balances.
 type Balance struct {
+	// CurrencyMultiplier is retained for client compatibility; ledger arithmetic does not use it.
+	CurrencyMultiplier    float64                `json:"currency_multiplier"`
 	ID                    int64                  `json:"-"`
 	Balance               *big.Int               `json:"balance"`
 	Version               int64                  `json:"version"`
@@ -33,7 +35,6 @@ type Balance struct {
 	InflightDebitBalance  *big.Int               `json:"inflight_debit_balance"`
 	QueuedDebitBalance    *big.Int               `json:"queued_debit_balance,omitempty"`
 	QueuedCreditBalance   *big.Int               `json:"queued_credit_balance,omitempty"`
-	CurrencyMultiplier    float64                `json:"currency_multiplier"`
 	LedgerID              string                 `json:"ledger_id"`
 	IdentityID            string                 `json:"identity_id"`
 	BalanceID             string                 `json:"balance_id"`

@@ -18,6 +18,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"math/big"
 	"testing"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGetLineageProvider(t *testing.T) {
@@ -967,19 +969,17 @@ func TestLineageE2E_GetBalanceLineage_API(t *testing.T) {
 	}
 
 	stripeShadow := &model.Balance{
-		BalanceID:          "bln_stripe_shadow",
-		Currency:           "USD",
-		DebitBalance:       big.NewInt(5000),
-		CreditBalance:      big.NewInt(2000),
-		CurrencyMultiplier: 1,
+		BalanceID:     "bln_stripe_shadow",
+		Currency:      "USD",
+		DebitBalance:  big.NewInt(5000),
+		CreditBalance: big.NewInt(2000),
 	}
 
 	paypalShadow := &model.Balance{
-		BalanceID:          "bln_paypal_shadow",
-		Currency:           "USD",
-		DebitBalance:       big.NewInt(3000),
-		CreditBalance:      big.NewInt(0),
-		CurrencyMultiplier: 1,
+		BalanceID:     "bln_paypal_shadow",
+		Currency:      "USD",
+		DebitBalance:  big.NewInt(3000),
+		CreditBalance: big.NewInt(0),
 	}
 
 	mappings := []model.LineageMapping{
@@ -1245,6 +1245,224 @@ func TestPrepareLineageOutbox(t *testing.T) {
 	}
 }
 
+func TestInflightTransactionNeedsShadowWork(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name        string
+		txn         *model.Transaction
+		setupMock   func(*mocks.MockDataSource)
+		expectNeeds bool
+	}{
+		{
+			name: "typical inflight from @world without lineage metadata",
+			txn: &model.Transaction{
+				TransactionID: "txn_inflight",
+				Source:        "@world",
+				Destination:   "bln_dest",
+			},
+			expectNeeds: false,
+		},
+		{
+			name: "shadow child transaction",
+			txn: &model.Transaction{
+				TransactionID: "txn_shadow",
+				Source:        "bln_shadow",
+				Destination:   "bln_aggregate",
+				MetaData: map[string]interface{}{
+					"_lineage_type": "release",
+					"_shadow_for":   "txn_parent",
+				},
+			},
+			expectNeeds: false,
+		},
+		{
+			name: "debit lineage stamped fund allocation",
+			txn: &model.Transaction{
+				TransactionID: "txn_debit",
+				Source:        "bln_source",
+				Destination:   "bln_dest",
+				MetaData: map[string]interface{}{
+					LineageFundAllocation: []interface{}{
+						map[string]interface{}{"provider": "stripe", "amount": float64(50)},
+					},
+				},
+			},
+			expectNeeds: true,
+		},
+		{
+			name: "credit lineage with tracking destination",
+			txn: &model.Transaction{
+				TransactionID: "txn_credit",
+				Source:        "@world",
+				Destination:   "bln_dest",
+				MetaData: map[string]interface{}{
+					LineageProviderKey: "stripe",
+				},
+			},
+			setupMock: func(m *mocks.MockDataSource) {
+				m.On("GetBalanceByIDLite", "bln_dest").Return(&model.Balance{
+					BalanceID:        "bln_dest",
+					TrackFundLineage: true,
+				}, nil)
+			},
+			expectNeeds: true,
+		},
+		{
+			name: "provider metadata but destination does not track lineage",
+			txn: &model.Transaction{
+				TransactionID: "txn_credit_no_track",
+				Source:        "@world",
+				Destination:   "bln_dest",
+				MetaData: map[string]interface{}{
+					LineageProviderKey: "stripe",
+				},
+			},
+			setupMock: func(m *mocks.MockDataSource) {
+				m.On("GetBalanceByIDLite", "bln_dest").Return(&model.Balance{
+					BalanceID:        "bln_dest",
+					TrackFundLineage: false,
+				}, nil)
+			},
+			expectNeeds: false,
+		},
+		{
+			name: "debit path source tracks lineage",
+			txn: &model.Transaction{
+				TransactionID: "txn_debit_source",
+				Source:        "bln_source",
+				Destination:   "bln_dest",
+			},
+			setupMock: func(m *mocks.MockDataSource) {
+				m.On("GetBalanceByIDLite", "bln_source").Return(&model.Balance{
+					BalanceID:        "bln_source",
+					TrackFundLineage: true,
+				}, nil)
+			},
+			expectNeeds: true,
+		},
+		{
+			name: "balance-to-balance without lineage tracking",
+			txn: &model.Transaction{
+				TransactionID: "txn_plain",
+				Source:        "bln_source",
+				Destination:   "bln_dest",
+			},
+			setupMock: func(m *mocks.MockDataSource) {
+				m.On("GetBalanceByIDLite", "bln_source").Return(&model.Balance{
+					BalanceID:        "bln_source",
+					TrackFundLineage: false,
+				}, nil)
+			},
+			expectNeeds: false,
+		},
+		{
+			name: "destination lookup error proceeds conservatively",
+			txn: &model.Transaction{
+				TransactionID: "txn_credit_err",
+				Source:        "@world",
+				Destination:   "bln_dest",
+				MetaData: map[string]interface{}{
+					LineageProviderKey: "stripe",
+				},
+			},
+			setupMock: func(m *mocks.MockDataSource) {
+				m.On("GetBalanceByIDLite", "bln_dest").Return((*model.Balance)(nil), fmt.Errorf("db timeout"))
+			},
+			expectNeeds: true,
+		},
+		{
+			name: "source lookup error proceeds conservatively",
+			txn: &model.Transaction{
+				TransactionID: "txn_debit_err",
+				Source:        "bln_source",
+				Destination:   "bln_dest",
+			},
+			setupMock: func(m *mocks.MockDataSource) {
+				m.On("GetBalanceByIDLite", "bln_source").Return((*model.Balance)(nil), fmt.Errorf("db timeout"))
+			},
+			expectNeeds: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockDS := new(mocks.MockDataSource)
+			if tt.setupMock != nil {
+				tt.setupMock(mockDS)
+			}
+			ledgerforgeInstance := &LedgerForge{datasource: mockDS}
+
+			assert.Equal(t, tt.expectNeeds, ledgerforgeInstance.inflightTransactionNeedsShadowWork(ctx, tt.txn))
+			mockDS.AssertExpectations(t)
+		})
+	}
+}
+
+func TestQueueShadowWork_eligibilityAndParentID(t *testing.T) {
+	ctx := context.Background()
+	parentInflightID := "txn_parent_inflight_original"
+
+	t.Run("skips shadow lookup when lineage is not enabled", func(t *testing.T) {
+		mockDS := new(mocks.MockDataSource)
+		ledgerforgeInstance := &LedgerForge{datasource: mockDS}
+
+		txn := &model.Transaction{
+			TransactionID: "txn_child_commit_row",
+			Source:        "@world",
+			Destination:   "bln_merchant",
+		}
+
+		err := ledgerforgeInstance.queueShadowWork(ctx, parentInflightID, txn, model.LineageTypeShadowCommit)
+		require.NoError(t, err)
+		mockDS.AssertNotCalled(t, "GetTransactionsByShadowFor", mock.Anything, mock.Anything)
+	})
+
+	t.Run("destination lookup error still queries shadows by original parent ID", func(t *testing.T) {
+		mockDS := new(mocks.MockDataSource)
+		ledgerforgeInstance := &LedgerForge{datasource: mockDS}
+
+		txn := &model.Transaction{
+			TransactionID: "txn_child_commit_row",
+			Source:        "@world",
+			Destination:   "bln_dest",
+			MetaData: map[string]interface{}{
+				LineageProviderKey: "stripe",
+			},
+		}
+
+		mockDS.On("GetBalanceByIDLite", "bln_dest").Return((*model.Balance)(nil), fmt.Errorf("db timeout"))
+		mockDS.On("GetTransactionsByShadowFor", mock.Anything, parentInflightID).Return([]model.Transaction{}, nil)
+
+		err := ledgerforgeInstance.queueShadowWork(ctx, parentInflightID, txn, model.LineageTypeShadowCommit)
+		require.NoError(t, err)
+		mockDS.AssertExpectations(t)
+	})
+
+	t.Run("fund allocation queries shadows by original parent ID not child row", func(t *testing.T) {
+		mockDS := new(mocks.MockDataSource)
+		ledgerforgeInstance := &LedgerForge{datasource: mockDS}
+
+		txn := &model.Transaction{
+			TransactionID: "txn_child_commit_row",
+			Source:        "bln_source",
+			Destination:   "bln_dest",
+			MetaData: map[string]interface{}{
+				LineageFundAllocation: []interface{}{
+					map[string]interface{}{"provider": "stripe", "amount": float64(50)},
+				},
+			},
+		}
+
+		mockDS.On("GetTransactionsByShadowFor", mock.Anything, parentInflightID).Return([]model.Transaction{}, nil)
+
+		err := ledgerforgeInstance.queueShadowWork(ctx, parentInflightID, txn, model.LineageTypeShadowVoid)
+		require.NoError(t, err)
+		mockDS.AssertExpectations(t)
+		mockDS.AssertNotCalled(t, "GetTransactionsByShadowFor", mock.Anything, txn.TransactionID)
+	})
+}
+
 func TestProcessLineageFromOutbox(t *testing.T) {
 	ctx := context.Background()
 
@@ -1319,6 +1537,101 @@ func TestProcessLineageFromOutbox(t *testing.T) {
 		// Should not return error - just logs warning and continues
 		err := ledgerforgeInstance.ProcessLineageFromOutbox(ctx, entry)
 		assert.NoError(t, err)
+	})
+
+	t.Run("Propagates processing errors so the outbox worker can retry", func(t *testing.T) {
+		// A transient provider-validation DB error must surface from
+		// ProcessLineageFromOutbox so the worker can mark the entry
+		// failed/pending and retry it, rather than completing it and dropping
+		// the lineage record.
+		mockDS := new(mocks.MockDataSource)
+
+		txn := &model.Transaction{
+			TransactionID: "txn_err",
+			Source:        "bln_source",
+			Destination:   "bln_dest",
+			PreciseAmount: big.NewInt(10000),
+			Currency:      "USD",
+			MetaData:      map[string]interface{}{LineageProviderKey: "stripe"},
+		}
+
+		sourceBalance := &model.Balance{BalanceID: "bln_source", TrackFundLineage: true}
+		destBalance := &model.Balance{BalanceID: "bln_dest", TrackFundLineage: false}
+
+		entry := model.LineageOutbox{
+			ID:                   1,
+			TransactionID:        "txn_err",
+			SourceBalanceID:      "bln_source",
+			DestinationBalanceID: "bln_dest",
+			LineageType:          "debit",
+		}
+
+		mockDS.On("GetTransaction", mock.Anything, "txn_err").Return(txn, nil)
+		mockDS.On("GetBalanceByIDLite", "bln_source").Return(sourceBalance, nil)
+		mockDS.On("GetBalanceByIDLite", "bln_dest").Return(destBalance, nil)
+		mockDS.On("GetLineageMappingByProvider", mock.Anything, "bln_source", "stripe").
+			Return((*model.LineageMapping)(nil), assert.AnError)
+
+		ledgerforgeInstance := &LedgerForge{datasource: mockDS}
+
+		err := ledgerforgeInstance.ProcessLineageFromOutbox(ctx, entry)
+		assert.Error(t, err, "a transient validation error must propagate, not be swallowed")
+	})
+}
+
+// TestRemainingDebitAmount covers C2: reprocessing a lineage debit must be
+// idempotent and total-conserving. The remaining-to-allocate amount is the
+// original debit minus any per-provider releases already persisted, so a retry
+// after a partial crash allocates only the unreleased remainder and a full retry
+// allocates nothing.
+func TestRemainingDebitAmount(t *testing.T) {
+	ctx := context.Background()
+	mappings := []model.LineageMapping{
+		{Provider: "p1", ShadowBalanceID: "shadow_p1"},
+		{Provider: "p2", ShadowBalanceID: "shadow_p2"},
+	}
+	txn := &model.Transaction{Reference: "ref1", PreciseAmount: big.NewInt(10000)}
+
+	refP1 := releaseReference(txn.Reference, "p1")
+	refP2 := releaseReference(txn.Reference, "p2")
+
+	t.Run("no prior releases returns full amount", func(t *testing.T) {
+		mockDS := new(mocks.MockDataSource)
+		mockDS.On("TransactionExistsByRef", mock.Anything, refP1).Return(false, nil)
+		mockDS.On("TransactionExistsByRef", mock.Anything, refP2).Return(false, nil)
+
+		b := &LedgerForge{datasource: mockDS}
+		remaining, err := b.remainingDebitAmount(ctx, txn, mappings)
+		assert.NoError(t, err)
+		assert.Equal(t, "10000", remaining.String())
+	})
+
+	t.Run("fully released returns zero so retry allocates nothing", func(t *testing.T) {
+		mockDS := new(mocks.MockDataSource)
+		mockDS.On("TransactionExistsByRef", mock.Anything, refP1).Return(true, nil)
+		mockDS.On("TransactionExistsByRef", mock.Anything, refP2).Return(true, nil)
+		mockDS.On("GetTransactionByRef", mock.Anything, refP1).
+			Return(model.Transaction{PreciseAmount: big.NewInt(6000)}, nil)
+		mockDS.On("GetTransactionByRef", mock.Anything, refP2).
+			Return(model.Transaction{PreciseAmount: big.NewInt(4000)}, nil)
+
+		b := &LedgerForge{datasource: mockDS}
+		remaining, err := b.remainingDebitAmount(ctx, txn, mappings)
+		assert.NoError(t, err)
+		assert.Equal(t, 0, remaining.Sign(), "a fully-released debit must have nothing left to allocate")
+	})
+
+	t.Run("partial release returns only the unreleased remainder", func(t *testing.T) {
+		mockDS := new(mocks.MockDataSource)
+		mockDS.On("TransactionExistsByRef", mock.Anything, refP1).Return(true, nil)
+		mockDS.On("TransactionExistsByRef", mock.Anything, refP2).Return(false, nil)
+		mockDS.On("GetTransactionByRef", mock.Anything, refP1).
+			Return(model.Transaction{PreciseAmount: big.NewInt(4000)}, nil)
+
+		b := &LedgerForge{datasource: mockDS}
+		remaining, err := b.remainingDebitAmount(ctx, txn, mappings)
+		assert.NoError(t, err)
+		assert.Equal(t, "6000", remaining.String(), "retry must allocate only the unreleased remainder")
 	})
 }
 

@@ -12,6 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 services:
+  init:
+    image: alpine:3.19
+    container_name: init
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    entrypoint: ["/bin/sh", "/workspace/ledgerforge-init.sh"]
+    restart: "no"
+
   server:
     build: .
     container_name: server
@@ -24,6 +33,7 @@ services:
       - "80:80"
       - "443:443"
     depends_on:
+      - init
       - redis
       - postgres
       - jaeger
@@ -34,12 +44,13 @@ services:
     build: .
     container_name: worker
     restart: on-failure
-    entrypoint: [ "ledgerforge", "workers" ]
+    entrypoint: ["ledgerforge", "workers"]
     environment:
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://jaeger:4318/v1/traces
     ports:
       - "5004:5004"
     depends_on:
+      - init
       - redis
       - postgres
       - jaeger
@@ -48,9 +59,10 @@ services:
 
   migration:
     build: .
-    entrypoint: [ "ledgerforge", "migrate", "up" ]
+    entrypoint: ["ledgerforge", "migrate", "up"]
     restart: on-failure
     depends_on:
+      - init
       - postgres
     volumes:
       - ./ledgerforge.json:/ledgerforge.json
@@ -73,7 +85,7 @@ services:
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: [ "CMD", "pg_isready", "-U", "${POSTGRES_USER:-postgres}" ]
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER:-postgres}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -81,7 +93,12 @@ services:
   typesense:
     image: typesense/typesense:29.0
     container_name: typesense
-    command: [ "--data-dir", "/data", "--api-key=ledgerforge-api-key", "--listen-port", "8108" ]
+    command:
+      ["--data-dir", "/data", "--api-key=ledgerforge-api-key", "--listen-port", "8108"]
+    environment:
+      TYPESENSE_MEMORY_USED_MAX_PERCENTAGE: "${TYPESENSE_MEMORY_USED_MAX_PERCENTAGE:-85}"
+    ports:
+      - "8108:8108"
     volumes:
       - typesense_data:/data
     logging:

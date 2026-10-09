@@ -19,7 +19,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"math/big"
 	"net/http"
 	"os/signal"
 	"strings"
@@ -35,7 +37,6 @@ import (
 	"github.com/devaccuracy/ledgerforge/config"
 	"github.com/devaccuracy/ledgerforge/internal/hotpairs"
 	"github.com/devaccuracy/ledgerforge/internal/metrics"
-	"github.com/devaccuracy/ledgerforge/internal/notification"
 	redis_db "github.com/devaccuracy/ledgerforge/internal/redisdb"
 	"github.com/devaccuracy/ledgerforge/internal/search"
 	trace "github.com/devaccuracy/ledgerforge/internal/traces"
@@ -46,13 +47,6 @@ import (
 	"github.com/hibiken/asynq"
 	"github.com/hibiken/asynqmon"
 )
-
-// indexData represents the data structure used for indexing data in the system.
-// It includes the collection name and the payload which is the data to be indexed.
-type indexData struct {
-	Collection string                 `json:"collection"`
-	Payload    map[string]interface{} `json:"payload"`
-}
 
 // processTransaction processes a transaction received from the Redis queue.
 // If a transaction fails due to "insufficient funds", it is rejected, and a webhook is sent.
@@ -67,13 +61,6 @@ func (b *ledgerforgeInstance) processTransaction(ctx context.Context, t *asynq.T
 	if err := json.Unmarshal(t.Payload(), &txn); err != nil {
 		logrus.Error(err)
 		return err
-	}
-
-	exists, err := b.ledgerforge.GetDataSource().TransactionExistsByRef(ctx, txn.Reference)
-	if err != nil {
-		logrus.WithError(err).Warnf("failed pre-checking transaction reference %s", txn.Reference)
-	} else if exists {
-		return nil
 	}
 
 	handled, err := b.ledgerforge.TryRecordQueuedTransactionBatch(ctx, &txn)
@@ -92,8 +79,8 @@ func (b *ledgerforgeInstance) processTransaction(ctx context.Context, t *asynq.T
 	_, err = b.ledgerforge.ProcessQueuedTransaction(ctx, &txn, b.cnf.Queue.EnableHotLane && t.Type() == b.cnf.Queue.HotQueueName)
 	if err != nil {
 		// Handle reference already used error
-		if strings.Contains(strings.ToLower(err.Error()), "reference") && strings.Contains(strings.ToLower(err.Error()), "already been used") {
-			notification.NotifyError(err)
+		if ledgerforge.IsDuplicateReferenceError(err) {
+			span.RecordError(err)
 			return nil
 		}
 
@@ -184,6 +171,32 @@ func shouldRejectLockContentionImmediately(cfg *config.Configuration, err error)
 	return hotpairs.IsLockContentionError(err)
 }
 
+func searchBackpressureRetryDelay(retryInterval time.Duration) asynq.RetryDelayFunc {
+	if retryInterval <= 0 {
+		retryInterval = 5 * time.Second
+	}
+	return func(retryCount int, err error, task *asynq.Task) time.Duration {
+		if errors.Is(err, search.ErrMemoryBackpressure) {
+			return retryInterval
+		}
+		return asynq.DefaultRetryDelayFunc(retryCount, err, task)
+	}
+}
+
+func isWorkerFailure(err error) bool {
+	return err != nil && !errors.Is(err, search.ErrMemoryBackpressure)
+}
+
+func markWorkerSearchBackpressure(ctx context.Context, err error) error {
+	if !search.IsMemoryBackpressure(err) {
+		return err
+	}
+	metrics.SearchBackpressureRetryTotal.Add(ctx, 1,
+		otelmetric.WithAttributes(attribute.String("source", "worker")),
+	)
+	return search.MarkMemoryBackpressure(err)
+}
+
 // indexData indexes data into TypeSense for searchability.
 // It fetches the collection name and payload from the task, ensures the collections exist,
 // and sends the payload to the appropriate TypeSense collection for indexing.
@@ -192,33 +205,42 @@ func (b *ledgerforgeInstance) indexData(ctx context.Context, t *asynq.Task) erro
 		return nil
 	}
 
-	var data indexData
+	var task ledgerforge.IndexTask
 
-	// Unmarshal the indexing data from the task payload.
-	if err := json.Unmarshal(t.Payload(), &data); err != nil {
+	if err := json.Unmarshal(t.Payload(), &task); err != nil {
 		logrus.Error(err)
 		return err
 	}
 
-	collection := data.Collection
-	payload := data.Payload
-
-	// Initialize a new TypeSense client and ensure collections exist.
 	newSearch := search.NewTypesenseClient(b.cnf.TypeSenseKey, []string{b.cnf.TypeSense.Dns})
 	err := newSearch.EnsureCollectionsExist(ctx)
 	if err != nil {
-		logrus.Errorf("Failed to ensure collections exist: %v", err)
+		err = markWorkerSearchBackpressure(ctx, err)
+		if !errors.Is(err, search.ErrMemoryBackpressure) {
+			logrus.Errorf("Failed to ensure collections exist: %v", err)
+		}
 		return err
 	}
 
-	// Handle the notification and send the payload to the collection for indexing.
-	err = newSearch.HandleNotification(ctx, collection, payload)
+	err = b.ledgerforge.ProcessIndexTask(ctx, task, func(ctx context.Context, collection string, document interface{}) error {
+		payload, err := ledgerforge.DocumentToIndexMap(document)
+		if err != nil {
+			return err
+		}
+		if err := newSearch.HandleNotification(ctx, collection, payload); err != nil {
+			err = markWorkerSearchBackpressure(ctx, err)
+			if !errors.Is(err, search.ErrMemoryBackpressure) {
+				logrus.Error("Error indexing data", err)
+			}
+			return err
+		}
+		return nil
+	})
 	if err != nil {
-		logrus.Error("Error indexing data", err)
 		return err
 	}
 
-	logrus.Error(" [*] Data indexed", collection)
+	logrus.Infof(" [*] Data indexed: %s", task.Collection)
 	return nil
 }
 
@@ -242,18 +264,61 @@ func (b *ledgerforgeInstance) indexBatchData(ctx context.Context, t *asynq.Task)
 	newSearch := search.NewTypesenseClient(b.cnf.TypeSenseKey, []string{b.cnf.TypeSense.Dns})
 	err := newSearch.EnsureCollectionsExist(ctx)
 	if err != nil {
-		logrus.Errorf("Failed to ensure collections exist: %v", err)
+		err = markWorkerSearchBackpressure(ctx, err)
+		if !errors.Is(err, search.ErrMemoryBackpressure) {
+			logrus.Errorf("Failed to ensure collections exist: %v", err)
+		}
 		return err
 	}
 
 	// Handle the batch notification - indexes dependencies first, then primary.
 	err = newSearch.HandleBatchNotification(ctx, &batch)
 	if err != nil {
-		logrus.Errorf("Error indexing batch %s: %v", batch.ID, err)
+		err = markWorkerSearchBackpressure(ctx, err)
+		if !errors.Is(err, search.ErrMemoryBackpressure) {
+			logrus.Errorf("Error indexing batch %s: %v", batch.ID, err)
+		}
 		return err
 	}
 
-	logrus.Errorf(" [*] Batch indexed: %s (deps: %d)", batch.ID, len(batch.Dependencies))
+	logrus.Infof(" [*] Batch indexed: %s (deps: %d)", batch.ID, len(batch.Dependencies))
+	return nil
+}
+
+func (b *ledgerforgeInstance) processInflightCommit(ctx context.Context, t *asynq.Task) error {
+	var p ledgerforge.InflightActionPayload
+	if err := json.Unmarshal(t.Payload(), &p); err != nil || p.TransactionID == "" {
+		// Legacy payload: a bare JSON string transaction ID from a scheduled
+		// auto-commit enqueued before this change. Treat it as a full commit.
+		var txnID string
+		if serr := json.Unmarshal(t.Payload(), &txnID); serr != nil || txnID == "" {
+			logrus.WithError(serr).Error("failed to unmarshal inflight action payload")
+			return serr
+		}
+		p = ledgerforge.InflightActionPayload{TransactionID: txnID, Action: ledgerforge.InflightActionCommit}
+	}
+
+	action := p.Action
+	if action == "" {
+		action = ledgerforge.InflightActionCommit
+	}
+
+	amount := big.NewInt(0)
+	if p.PreciseAmount != "" {
+		if parsed, ok := new(big.Int).SetString(p.PreciseAmount, 10); ok {
+			amount = parsed
+		}
+	}
+
+	retryable, err := b.ledgerforge.RunInflightActionByParent(ctx, p.TransactionID, action, amount, p.ActionID)
+	if err != nil && retryable {
+		return err // transient failure; asynq will retry
+	}
+	if err != nil {
+		// Non-retryable failure: ack so the task doesn't poison-loop. The
+		// service layer already logged the per-leg detail.
+		logrus.WithError(err).WithField("transaction_id", p.TransactionID).Error("inflight action failed permanently; acking task")
+	}
 	return nil
 }
 
@@ -286,6 +351,7 @@ func initializeQueues() map[string]int {
 
 	queues := make(map[string]int)
 	queues[cfg.Queue.InflightExpiryQueue] = 1
+	queues[cfg.Queue.InflightCommitQueue] = 1
 
 	for i := 1; i <= cfg.Queue.NumberOfQueues; i++ {
 		queueName := fmt.Sprintf("%s_%d", cfg.Queue.TransactionQueue, i)
@@ -323,42 +389,46 @@ func initializeWebhookQueues() map[string]int {
 	return queues
 }
 
-func initializeWebhookWorkerServer(conf *config.Configuration, queues map[string]int) (*asynq.Server, error) {
-	redisOption, err := redis_db.ParseRedisURL(conf.Redis.Dns, conf.Redis.SkipTLSVerify)
+// workerRedisConnOpt builds an asynq connection option whose pooled
+// connections are recycled before managed Redis/Valkey idle-closes them.
+func workerRedisConnOpt(conf *config.Configuration) (redis_db.ConnOpt, error) {
+	connOpt, err := redis_db.NewConnOpt(conf.Redis.Dns, conf.Redis.SkipTLSVerify, &redis_db.PoolConfig{
+		PoolSize:        conf.Redis.PoolSize,
+		MinIdleConns:    conf.Redis.MinIdleConns,
+		ConnMaxIdleTime: conf.Redis.ConnMaxIdleTime,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("error parsing Redis URL: %v", err)
+		return redis_db.ConnOpt{}, fmt.Errorf("error parsing Redis URL: %v", err)
+	}
+	return connOpt, nil
+}
+
+func initializeWebhookWorkerServer(conf *config.Configuration, queues map[string]int) (*asynq.Server, error) {
+	connOpt, err := workerRedisConnOpt(conf)
+	if err != nil {
+		return nil, err
 	}
 
 	return asynq.NewServer(
-		asynq.RedisClientOpt{
-			Addr:      redisOption.Addr,
-			Password:  redisOption.Password,
-			DB:        redisOption.DB,
-			TLSConfig: redisOption.TLSConfig,
-			PoolSize:  conf.Redis.PoolSize,
-		},
+		connOpt,
 		asynq.Config{
 			Concurrency:     conf.Queue.WebhookConcurrency,
 			Queues:          queues,
 			ShutdownTimeout: 30 * time.Second,
+			RetryDelayFunc:  searchBackpressureRetryDelay(conf.TypeSense.BackpressureRetryInterval),
+			IsFailure:       isWorkerFailure,
 		},
 	), nil
 }
 
 func initializeWorkerServer(conf *config.Configuration, queues map[string]int) (*asynq.Server, error) {
-	redisOption, err := redis_db.ParseRedisURL(conf.Redis.Dns, conf.Redis.SkipTLSVerify)
+	connOpt, err := workerRedisConnOpt(conf)
 	if err != nil {
-		return nil, fmt.Errorf("error parsing Redis URL: %v", err)
+		return nil, err
 	}
 
 	return asynq.NewServer(
-		asynq.RedisClientOpt{
-			Addr:      redisOption.Addr,
-			Password:  redisOption.Password,
-			DB:        redisOption.DB,
-			TLSConfig: redisOption.TLSConfig,
-			PoolSize:  conf.Redis.PoolSize,
-		},
+		connOpt,
 		asynq.Config{
 			Concurrency:     conf.Queue.TransactionWorkerConcurrency,
 			Queues:          queues,
@@ -368,19 +438,13 @@ func initializeWorkerServer(conf *config.Configuration, queues map[string]int) (
 }
 
 func initializeHotWorkerServer(conf *config.Configuration, queues map[string]int) (*asynq.Server, error) {
-	redisOption, err := redis_db.ParseRedisURL(conf.Redis.Dns, conf.Redis.SkipTLSVerify)
+	connOpt, err := workerRedisConnOpt(conf)
 	if err != nil {
-		return nil, fmt.Errorf("error parsing Redis URL: %v", err)
+		return nil, err
 	}
 
 	return asynq.NewServer(
-		asynq.RedisClientOpt{
-			Addr:      redisOption.Addr,
-			Password:  redisOption.Password,
-			DB:        redisOption.DB,
-			TLSConfig: redisOption.TLSConfig,
-			PoolSize:  conf.Redis.PoolSize,
-		},
+		connOpt,
 		asynq.Config{
 			Concurrency:     conf.Queue.HotQueueConcurrency,
 			Queues:          queues,
@@ -404,6 +468,7 @@ func initializeTaskHandlers(b *ledgerforgeInstance, mux *asynq.ServeMux) {
 		mux.HandleFunc(cfg.Queue.HotQueueName, b.processTransaction)
 	}
 	mux.HandleFunc(cfg.Queue.InflightExpiryQueue, b.processInflightExpiry)
+	mux.HandleFunc(cfg.Queue.InflightCommitQueue, b.processInflightCommit)
 }
 
 func initializeWebhookTaskHandlers(b *ledgerforgeInstance, mux *asynq.ServeMux) {
@@ -434,73 +499,85 @@ func workerCommands(b *ledgerforgeInstance) *cobra.Command {
 				logrus.Fatal("Error fetching config:", err)
 			}
 
-			phClient, shutdown, err := initializeTelemetryAndObservability(context.Background(), conf)
-			if err != nil {
+			if err := runWorkers(ctx, b, conf); err != nil {
 				logrus.Fatal(err)
 			}
-			if shutdown != nil {
-				defer func() {
-					tctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-					defer cancel()
-					if err := shutdown(tctx); err != nil {
-						logrus.Errorf("Error during shutdown: %v", err)
-					}
-				}()
-			}
-			if phClient != nil {
-				defer phClient.Close()
-			}
-
-			srv, hotSrv, webhookSrv, mux, webhookMux, err := setupWorkerServers(b, conf)
-			if err != nil {
-				logrus.Fatal(err)
-			}
-
-			monitoringSrv := startMonitoringServer(conf)
-
-			if err := srv.Start(mux); err != nil {
-				logrus.Fatalf("could not start transaction worker server: %v", err)
-			}
-			if hotSrv != nil {
-				if err := hotSrv.Start(mux); err != nil {
-					logrus.Fatalf("could not start hot transaction worker server: %v", err)
-				}
-			}
-			if err := webhookSrv.Start(webhookMux); err != nil {
-				logrus.Fatalf("could not start webhook worker server: %v", err)
-			}
-
-			recoveryProcessor := ledgerforge.NewQueuedTransactionRecoveryProcessor(b.ledgerforge)
-			recoveryProcessor.Start(ctx)
-
-			logrus.Info("Workers started.")
-
-			// Wait for SIGINT/SIGTERM.
-			<-ctx.Done()
-
-			logrus.Errorf("Shutdown signal received. Shutting down...")
-
-			recoveryProcessor.Stop()
-
-			if monitoringSrv != nil {
-				sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				if err := monitoringSrv.Shutdown(sctx); err != nil {
-					logrus.Errorf("monitoring shutdown error: %v", err)
-				}
-			}
-
-			webhookSrv.Shutdown()
-			if hotSrv != nil {
-				hotSrv.Shutdown()
-			}
-			srv.Shutdown()
-
-			logrus.Errorf("Shutdown complete.")
 		},
 	}
 
 	return cmd
+}
+
+// runWorkers starts the transaction, hot-lane (optional), and webhook worker
+// servers plus the monitoring HTTP server, then blocks until ctx is canceled
+// and shuts everything down gracefully. Extracted from the cobra Run closure
+// so the full worker lifecycle is testable; startup failures are returned to
+// the caller, which keeps the process-exit decision at the command layer.
+func runWorkers(ctx context.Context, b *ledgerforgeInstance, conf *config.Configuration) error {
+	phClient, shutdown, err := initializeTelemetryAndObservability(context.Background(), conf)
+	if err != nil {
+		return err
+	}
+	if shutdown != nil {
+		defer func() {
+			tctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := shutdown(tctx); err != nil {
+				logrus.Errorf("Error during shutdown: %v", err)
+			}
+		}()
+	}
+	if phClient != nil {
+		defer func() { _ = phClient.Close() }()
+	}
+
+	srv, hotSrv, webhookSrv, mux, webhookMux, err := setupWorkerServers(b, conf)
+	if err != nil {
+		return err
+	}
+
+	monitoringSrv := startMonitoringServer(conf)
+
+	if err := srv.Start(mux); err != nil {
+		return fmt.Errorf("could not start transaction worker server: %w", err)
+	}
+	if hotSrv != nil {
+		if err := hotSrv.Start(mux); err != nil {
+			return fmt.Errorf("could not start hot transaction worker server: %w", err)
+		}
+	}
+	if err := webhookSrv.Start(webhookMux); err != nil {
+		return fmt.Errorf("could not start webhook worker server: %w", err)
+	}
+
+	recoveryProcessor := ledgerforge.NewQueuedTransactionRecoveryProcessor(b.ledgerforge)
+	recoveryProcessor.Start(ctx)
+
+	logrus.Info("Workers started.")
+
+	// Wait for SIGINT/SIGTERM (or test-driven context cancellation).
+	<-ctx.Done()
+
+	logrus.Info("Shutdown signal received. Shutting down...")
+
+	recoveryProcessor.Stop()
+
+	if monitoringSrv != nil {
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := monitoringSrv.Shutdown(sctx); err != nil {
+			logrus.Errorf("monitoring shutdown error: %v", err)
+		}
+	}
+
+	webhookSrv.Shutdown()
+	if hotSrv != nil {
+		hotSrv.Shutdown()
+	}
+	srv.Shutdown()
+
+	logrus.Info("Shutdown complete.")
+	return nil
 }
 
 func setupWorkerServers(b *ledgerforgeInstance, conf *config.Configuration) (*asynq.Server, *asynq.Server, *asynq.Server, *asynq.ServeMux, *asynq.ServeMux, error) {
@@ -536,16 +613,13 @@ func setupWorkerServers(b *ledgerforgeInstance, conf *config.Configuration) (*as
 }
 
 func startMonitoringServer(conf *config.Configuration) *http.Server {
-	redisOption, _ := redis_db.ParseRedisURL(conf.Redis.Dns, conf.Redis.SkipTLSVerify)
+	connOpt, err := workerRedisConnOpt(conf)
+	if err != nil {
+		logrus.Errorf("monitoring server redis setup failed: %v", err)
+	}
 	asynqmonHandler := asynqmon.New(asynqmon.Options{
-		RootPath: "/monitoring",
-		RedisConnOpt: asynq.RedisClientOpt{
-			Addr:      redisOption.Addr,
-			Password:  redisOption.Password,
-			DB:        redisOption.DB,
-			TLSConfig: redisOption.TLSConfig,
-			PoolSize:  conf.Redis.PoolSize,
-		},
+		RootPath:     "/monitoring",
+		RedisConnOpt: connOpt,
 	})
 
 	monitoringMux := http.NewServeMux()
@@ -556,7 +630,7 @@ func startMonitoringServer(conf *config.Configuration) *http.Server {
 		_, _ = fmt.Fprintf(w, `{"status": "UP", "service": "worker"}`)
 	})
 
-	monitoringMux.Handle("/monitoring/", asynqmonHandler)
+	monitoringMux.Handle("/monitoring/", middleware.MetricsAuthHandler(conf.Server.Secure, conf.Server.MetricsBearerToken, asynqmonHandler))
 	if h := trace.MetricsHandler(); h != nil {
 		monitoringMux.Handle("/metrics", middleware.MetricsAuthHandler(conf.Server.Secure, conf.Server.MetricsBearerToken, h))
 	}
@@ -568,7 +642,7 @@ func startMonitoringServer(conf *config.Configuration) *http.Server {
 	}
 
 	go func() {
-		logrus.Errorf("Worker monitoring server listening on %s (health: /health, dashboard: /monitoring)", monitoringAddr)
+		logrus.Infof("Worker monitoring server listening on %s (health: /health, dashboard: /monitoring)", monitoringAddr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logrus.Fatalf("could not start monitoring server: %v", err)
 		}

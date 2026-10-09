@@ -20,8 +20,10 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
+	"sync"
 	"time"
 
 	"github.com/devaccuracy/ledgerforge/config"
@@ -34,18 +36,75 @@ import (
 
 	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/hibiken/asynq"
+	"github.com/redis/go-redis/v9"
 )
 
 // Queue represents a queue for handling various tasks.
 type Queue struct {
-	Client    *asynq.Client
-	Inspector *asynq.Inspector
-	config    *config.Configuration
+	Client      *asynq.Client
+	Inspector   *asynq.Inspector
+	config      *config.Configuration
+	redis       redis.UniversalClient
+	bpMu        sync.Mutex
+	bpCheckedAt time.Time
+	bpReject    bool
 }
 
 // TransactionTypePayload represents the payload for a transaction type.
 type TransactionTypePayload struct {
 	Data model.Transaction
+}
+
+// Inflight action names carried in an InflightActionPayload.
+const (
+	InflightActionCommit = "commit"
+	InflightActionVoid   = "void"
+)
+
+// ErrInflightActionQueued is returned by EnqueueInflightAction when a commit or
+// void for the same transaction is already queued (asynq TaskID conflict). The
+// API maps it to HTTP 409.
+var ErrInflightActionQueued = errors.New("a commit or void is already queued for this transaction")
+
+// InflightActionPayload is the task payload for a queued inflight commit/void.
+// ActionID is generated once at enqueue time and seeds the per-leg commit/void
+// references so asynq retries are idempotent.
+type InflightActionPayload struct {
+	TransactionID string `json:"transaction_id"`
+	Action        string `json:"action"`         // "commit" | "void"
+	PreciseAmount string `json:"precise_amount"` // big.Int string; "0" = full remaining
+	ActionID      string `json:"action_id"`
+}
+
+// EnqueueInflightAction enqueues a commit or void to the inflight-commit queue.
+// The asynq TaskID dedups concurrent actions for the same transaction: a second
+// enqueue while one is pending/active returns ErrInflightActionQueued. The
+// "inflight-action:" prefix is intentionally distinct from the scheduled
+// auto-commit TaskID (the bare transaction ID) so a pre-scheduled
+// inflight_commit_date task does not block a manual commit/void.
+func (q *Queue) EnqueueInflightAction(ctx context.Context, p InflightActionPayload) error {
+	payload, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+
+	taskOptions := []asynq.Option{
+		asynq.TaskID("inflight-action:" + p.TransactionID),
+		asynq.Queue(q.config.Queue.InflightCommitQueue),
+		asynq.MaxRetry(q.config.Queue.MaxRetryAttempts),
+	}
+
+	task := asynq.NewTask(q.config.Queue.InflightCommitQueue, payload, taskOptions...)
+	if _, err := q.Client.EnqueueContext(ctx, task); err != nil {
+		if errors.Is(err, asynq.ErrTaskIDConflict) {
+			return ErrInflightActionQueued
+		}
+		logrus.WithError(err).WithField("transaction_id", p.TransactionID).Error("failed to enqueue inflight action")
+		return err
+	}
+
+	logrus.WithFields(logrus.Fields{"transaction_id": p.TransactionID, "action": p.Action}).Debug("successfully enqueued inflight action")
+	return nil
 }
 
 // NewQueue initializes a new Queue instance with the provided configuration.
@@ -55,18 +114,26 @@ type TransactionTypePayload struct {
 //
 // Returns:
 // - *Queue: A pointer to the newly created Queue instance.
-func NewQueue(conf *config.Configuration, client *asynq.Client) *Queue {
-	redisOption, err := redis_db.ParseRedisURL(conf.Redis.Dns, conf.Redis.SkipTLSVerify)
+func NewQueue(conf *config.Configuration, client *asynq.Client, redisClients ...redis.UniversalClient) *Queue {
+	connOpt, err := redis_db.NewConnOpt(conf.Redis.Dns, conf.Redis.SkipTLSVerify, &redis_db.PoolConfig{
+		PoolSize:        conf.Redis.PoolSize,
+		MinIdleConns:    conf.Redis.MinIdleConns,
+		ConnMaxIdleTime: conf.Redis.ConnMaxIdleTime,
+	})
 	if err != nil {
 		logrus.WithError(err).Fatal("failed to parse Redis URL")
 	}
 
-	queueOptions := asynq.RedisClientOpt{Addr: redisOption.Addr, Password: redisOption.Password, DB: redisOption.DB, TLSConfig: redisOption.TLSConfig, PoolSize: conf.Redis.PoolSize}
-	inspector := asynq.NewInspector(queueOptions)
+	var redisClient redis.UniversalClient
+	if len(redisClients) > 0 {
+		redisClient = redisClients[0]
+	}
+	inspector := asynq.NewInspector(connOpt)
 	return &Queue{
 		Client:    client,
 		Inspector: inspector,
 		config:    conf,
+		redis:     redisClient,
 	}
 }
 
@@ -163,6 +230,73 @@ func (q *Queue) queueIndexData(id string, collection string, data interface{}) e
 	return nil
 }
 
+// queueIndexRefresh enqueues a metadata reindex task that carries only the
+// document ID. The worker re-reads Postgres before upserting so concurrent
+// metadata updates cannot leave Typesense on an older snapshot.
+func (q *Queue) queueIndexRefresh(documentID, collection string) error {
+	if q.config.TypeSense.Dns == "" {
+		return nil
+	}
+
+	taskBody := IndexTask{
+		Collection: collection,
+		DocumentID: documentID,
+		Mode:       IndexModeRefresh,
+	}
+	IPayload, err := json.Marshal(taskBody)
+	if err != nil {
+		return err
+	}
+
+	taskOptions := []asynq.Option{
+		asynq.Queue(q.config.Queue.IndexQueue),
+		asynq.TaskID(fmt.Sprintf("index:refresh:%s:%s", collection, documentID)),
+	}
+	task := asynq.NewTask(q.config.Queue.IndexQueue, IPayload, taskOptions...)
+	if _, err := q.Client.Enqueue(task); err != nil {
+		if errors.Is(err, asynq.ErrTaskIDConflict) {
+			return nil
+		}
+		logrus.WithError(err).WithField("id", documentID).Error("failed to enqueue index refresh")
+		return err
+	}
+	logrus.WithFields(logrus.Fields{"id": documentID, "collection": collection}).Debug("successfully enqueued index refresh")
+	return nil
+}
+
+// queueIndexRefreshScope enqueues a metadata reindex for every transaction row
+// matched by UpdateTransactionMetadata (direct ID or parent_transaction).
+func (q *Queue) queueIndexRefreshScope(scopeID, collection string) error {
+	if q.config.TypeSense.Dns == "" {
+		return nil
+	}
+
+	taskBody := IndexTask{
+		Collection: collection,
+		ScopeID:    scopeID,
+		Mode:       IndexModeRefresh,
+	}
+	IPayload, err := json.Marshal(taskBody)
+	if err != nil {
+		return err
+	}
+
+	taskOptions := []asynq.Option{
+		asynq.Queue(q.config.Queue.IndexQueue),
+		asynq.TaskID(fmt.Sprintf("index:refresh:%s:scope:%s", collection, scopeID)),
+	}
+	task := asynq.NewTask(q.config.Queue.IndexQueue, IPayload, taskOptions...)
+	if _, err := q.Client.Enqueue(task); err != nil {
+		if errors.Is(err, asynq.ErrTaskIDConflict) {
+			return nil
+		}
+		logrus.WithError(err).WithField("scope_id", scopeID).Error("failed to enqueue index refresh scope")
+		return err
+	}
+	logrus.WithFields(logrus.Fields{"scope_id": scopeID, "collection": collection}).Debug("successfully enqueued index refresh scope")
+	return nil
+}
+
 // Enqueue enqueues a transaction to the Redis queue.
 //
 // Parameters:
@@ -174,6 +308,10 @@ func (q *Queue) queueIndexData(id string, collection string, data interface{}) e
 func (q *Queue) Enqueue(ctx context.Context, transaction *model.Transaction) error {
 	ctx, span := tracer.Start(ctx, "Adding Transaction To Redis Queue")
 	defer span.End()
+
+	if err := q.assertEnqueueAllowed(ctx); err != nil {
+		return err
+	}
 
 	payload, err := json.Marshal(transaction)
 	if err != nil {
@@ -306,7 +444,15 @@ func (q *Queue) GetTransactionFromQueue(transactionID string) (*model.Transactio
 // Returns:
 // - error: An error if the task could not be enqueued.
 func (q *Queue) queueInflightCommit(transactionID string, commitAt time.Time) error {
-	IPayload, err := json.Marshal(transactionID)
+	// Use the same struct payload and worker path as manual actions so the
+	// scheduled auto-commit also covers all inflight legs and is idempotent on
+	// retry. The TaskID stays the bare transaction ID (unchanged).
+	IPayload, err := json.Marshal(InflightActionPayload{
+		TransactionID: transactionID,
+		Action:        InflightActionCommit,
+		PreciseAmount: "0",
+		ActionID:      model.GenerateUUIDWithSuffix("act"),
+	})
 	if err != nil {
 		return err
 	}

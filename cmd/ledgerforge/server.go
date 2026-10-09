@@ -42,49 +42,64 @@ import (
 	"github.com/spf13/cobra"
 )
 
-/*
-serveTLS starts an HTTPS server with TLS enabled using CertMagic for automatic certificate management.
-It accepts a gin.Engine instance as the router and a ServerConfig struct for server configurations.
-If no domain is specified, the server will default to running on localhost.
-*/
-func serveTLS(r *gin.Engine, conf config.ServerConfig) error {
+// resolveCertStoragePath returns the configured certificate storage path,
+// falling back to the default location when unset.
+func resolveCertStoragePath(conf config.ServerConfig) string {
+	if conf.CertStoragePath == "" {
+		return "/var/lib/ledgerforge/certs"
+	}
+	return conf.CertStoragePath
+}
+
+// resolveTLSDomains returns the certificate domains, defaulting to localhost
+// when no domain is configured.
+func resolveTLSDomains(conf config.ServerConfig) []string {
+	if conf.Domain == "" {
+		return []string{"localhost"}
+	}
+	return []string{conf.Domain}
+}
+
+// newTLSServer builds the HTTPS server with CertMagic-managed certificates.
+//
+// It returns the server rather than serving it, so the HTTPS listener runs
+// through the same start-and-graceful-shutdown path as the plaintext one.
+func newTLSServer(r *gin.Engine, conf config.ServerConfig) (*http.Server, error) {
 	// Configure CertMagic's ACME (Automatic Certificate Management Environment) for automatic TLS
 	certmagic.DefaultACME.Agreed = true      // Agree to ACME TOS
 	certmagic.DefaultACME.Email = conf.Email // Set email for certificate recovery/notifications
 	cfg := certmagic.NewDefault()
 
-	certPath := conf.CertStoragePath
-	if certPath == "" {
-		certPath = "/var/lib/ledgerforge/certs"
-	}
-	cfg.Storage = &certmagic.FileStorage{Path: certPath}
+	cfg.Storage = &certmagic.FileStorage{Path: resolveCertStoragePath(conf)}
 
 	// Define domain(s) for the certificate
-	domains := []string{conf.Domain}
 	if conf.Domain == "" {
-		logrus.Error("No domain specified, defaulting to localhost")
-		domains = []string{"localhost"} // Use localhost if no domain is provided
+		logrus.Warn("server.ssl is enabled but no domain is configured; defaulting to localhost")
 	}
+	domains := resolveTLSDomains(conf)
 
-	// Manage TLS certificates for the specified domains
+	// Manage TLS certificates for the specified domains.
+	//
+	// Issuance is an ACME challenge, not a local operation: CertMagic solves
+	// HTTP-01 on port 80 and TLS-ALPN-01 on port 443, independently of
+	// server.port, and the CA must reach both from the internet to validate
+	// the domain. The shipped docker-compose publishes only 5001, so a failure
+	// here is usually a missing port mapping rather than anything wrong with
+	// the certificate. Say so, because the raw ACME error does not.
 	if err := cfg.ManageSync(context.Background(), domains); err != nil {
-		return err
+		return nil, fmt.Errorf(
+			"failed to obtain a TLS certificate for %v: %w; "+
+				"ACME validation needs ports %d (HTTP-01) and %d (TLS-ALPN-01) reachable from the internet, "+
+				"separately from server.port=%s -- publish them (add \"80:80\" and \"443:443\" to the server "+
+				"service) or terminate TLS at a proxy and leave server.ssl false",
+			domains, err, certmagic.HTTPPort, certmagic.HTTPSPort, conf.Port)
 	}
 
-	// Create and configure the HTTPS server
-	server := &http.Server{
+	return &http.Server{
 		Addr:      ":" + conf.Port, // Server address and port
 		Handler:   r,               // Handler for HTTP requests (gin router)
 		TLSConfig: cfg.TLSConfig(), // TLS configuration from CertMagic
-	}
-
-	logrus.Infof("Starting HTTPS server on %s", conf.Port)
-	// Start the HTTPS server with automatic certificate management
-	if err := server.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
-		logrus.Fatalf("Failed to start HTTPS server: %v", err)
-	}
-
-	return nil
+	}, nil
 }
 
 /*
@@ -107,7 +122,14 @@ func migrateTypeSenseSchema(ctx context.Context, t *search.TypesenseClient) erro
 }
 
 func getOrCreateHeartbeatID() string {
-	db, err := sql.Open("sqlite3", "./heartbeat.db")
+	return getOrCreateHeartbeatIDAt("./heartbeat.db")
+}
+
+// getOrCreateHeartbeatIDAt persists a stable heartbeat UUID in a SQLite file
+// at the given path, creating it on first use. Any storage failure falls
+// back to a fresh (non-persistent) UUID.
+func getOrCreateHeartbeatIDAt(path string) string {
+	db, err := sql.Open("sqlite3", path)
 	if err != nil {
 		logrus.Errorf("Failed to open SQLite DB: %v", err)
 		return uuid.New().String() // fallback to temp UUID
@@ -195,8 +217,8 @@ func initializeRouter(b *ledgerforgeInstance) *gin.Engine {
 	return router
 }
 
-func initializeOpenTelemetry(ctx context.Context) (func(context.Context) error, error) {
-	shutdown, err := trace.SetupOTelSDK(ctx, "LEDGERFORGE")
+func initializeOpenTelemetry(ctx context.Context, monitoringDSN string) (func(context.Context) error, error) {
+	shutdown, err := trace.SetupOTelSDK(ctx, "LEDGERFORGE", monitoringDSN)
 	if err != nil {
 		return nil, fmt.Errorf("error setting up OTel SDK: %w", err)
 	}
@@ -211,28 +233,39 @@ func initializeTypeSense(ctx context.Context, cfg *config.Configuration) (*searc
 
 	newSearch := search.NewTypesenseClient(cfg.TypeSenseKey, []string{cfg.TypeSense.Dns})
 
-	const maxRetries = 5
-	var retryDelay = 2 * time.Second
-	var err error
+	err := retryWithBackoff(ctx, 5, 2*time.Second, func() error {
+		if err := newSearch.EnsureCollectionsExist(ctx); err != nil {
+			return err
+		}
+		return migrateTypeSenseSchema(ctx, newSearch)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return newSearch, nil
+}
 
-	for i := 0; i < maxRetries; i++ {
-		if err = newSearch.EnsureCollectionsExist(ctx); err == nil {
-			if err = migrateTypeSenseSchema(ctx, newSearch); err == nil {
-				return newSearch, nil
-			}
+// retryWithBackoff runs fn up to attempts times with exponential backoff
+// starting at baseDelay. It stops early when the context is canceled and
+// returns the last error when all attempts fail.
+func retryWithBackoff(ctx context.Context, attempts int, baseDelay time.Duration, fn func() error) error {
+	retryDelay := baseDelay
+	var err error
+	for i := 0; i < attempts; i++ {
+		if err = fn(); err == nil {
+			return nil
 		}
 
-		logrus.Errorf("TypeSense initialization failed (attempt %d/%d): %v. Retrying in %v...", i+1, maxRetries, err, retryDelay)
+		logrus.Errorf("TypeSense initialization failed (attempt %d/%d): %v. Retrying in %v...", i+1, attempts, err, retryDelay)
 
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return ctx.Err()
 		case <-time.After(retryDelay):
 			retryDelay *= 2
 		}
 	}
-
-	return nil, fmt.Errorf("failed to initialize TypeSense after %d attempts: %v", maxRetries, err)
+	return fmt.Errorf("failed to initialize TypeSense after %d attempts: %v", attempts, err)
 }
 
 func initializePostHog(cfg *config.Configuration) (posthog.Client, string) {
@@ -256,16 +289,29 @@ func initializePostHog(cfg *config.Configuration) (posthog.Client, string) {
 	return client, heartbeatID
 }
 
-func startServer(router *gin.Engine, port string) error {
-	server := &http.Server{
-		Addr:    ":" + port,
-		Handler: router,
+func startServer(router *gin.Engine, conf config.ServerConfig) error {
+	var (
+		server *http.Server
+		serve  func() error
+		scheme string
+	)
+
+	if conf.SSL {
+		tlsServer, err := newTLSServer(router, conf)
+		if err != nil {
+			return err
+		}
+		server, scheme = tlsServer, "https"
+		serve = func() error { return server.ListenAndServeTLS("", "") }
+	} else {
+		server, scheme = newHTTPServer(router, conf.Port), "http"
+		serve = server.ListenAndServe
 	}
 
 	// Start server in goroutine
 	go func() {
-		logrus.Infof("Server started on port %s", port)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		logrus.Infof("Server started on %s port %s", scheme, conf.Port)
+		if err := serve(); err != nil && err != http.ErrServerClosed {
 			logrus.Fatalf("Server error: %v", err)
 		}
 	}()
@@ -273,12 +319,25 @@ func startServer(router *gin.Engine, port string) error {
 	// Wait for interrupt signal
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	return gracefulShutdown(server, quit, 30*time.Second)
+}
+
+// newHTTPServer builds the API HTTP server for the given router and port.
+func newHTTPServer(router *gin.Engine, port string) *http.Server {
+	return &http.Server{
+		Addr:    ":" + port,
+		Handler: router,
+	}
+}
+
+// gracefulShutdown blocks until a signal arrives on quit, then shuts the
+// server down, giving outstanding requests up to timeout to complete.
+func gracefulShutdown(server *http.Server, quit <-chan os.Signal, timeout time.Duration) error {
 	<-quit
 
 	logrus.Info("Shutting down server...")
 
-	// Give outstanding requests 30 seconds to complete
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
@@ -293,12 +352,12 @@ func startServer(router *gin.Engine, port string) error {
 // Renamed from initializeObservability to better reflect its purpose
 func initializeTelemetryAndObservability(ctx context.Context, cfg *config.Configuration) (posthog.Client, func(context.Context) error, error) {
 	var phClient posthog.Client
-	var tracingShutdown func(context.Context) error = func(context.Context) error { return nil }
+	tracingShutdown := func(context.Context) error { return nil }
 	var err error
 
 	// Initialize tracing if observability is enabled
 	if cfg.EnableObservability {
-		tracingShutdown, err = initializeOpenTelemetry(ctx)
+		tracingShutdown, err = initializeOpenTelemetry(ctx, cfg.RemoteMonitoringDSN())
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to initialize tracing: %w", err)
 		}
@@ -344,7 +403,11 @@ func serverCommands(b *ledgerforgeInstance) *cobra.Command {
 				}()
 			}
 			if phClient != nil {
-				defer phClient.Close()
+				defer func() {
+					if err := phClient.Close(); err != nil {
+						logrus.Warnf("failed to close PostHog client: %v", err)
+					}
+				}()
 			}
 
 			// Initialize router (after OTel so /metrics handler is available)
@@ -375,8 +438,16 @@ func serverCommands(b *ledgerforgeInstance) *cobra.Command {
 			lineageProcessor.Start(ctx)
 			defer lineageProcessor.Stop()
 
+			// Start the hash-chain processor when enabled. It seals transactions
+			// into a tamper-evident chain off the hot path.
+			if cfg.Transaction.HashChain.Enabled {
+				chainProcessor := ledgerforge.NewChainProcessor(b.ledgerforge)
+				chainProcessor.Start(ctx)
+				defer chainProcessor.Stop()
+			}
+
 			// Start server
-			if err := startServer(router, cfg.Server.Port); err != nil {
+			if err := startServer(router, cfg.Server); err != nil {
 				logrus.Fatal(err)
 			}
 		},

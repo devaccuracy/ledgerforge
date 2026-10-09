@@ -23,7 +23,7 @@ This repository contains LedgerForge Core, the open-source ledger engine for sel
 
 LedgerForge is built for teams evaluating ledger infrastructure locally, then moving toward production deployment when workload, security, and operating requirements are clear. Managed deployment and hosted operations workflows are handled through private onboarding.
 
-The repository preserves upstream Git history and retains the required Apache License 2.0 attribution documented in `NOTICE.md`.
+Required Apache License 2.0 attribution is documented in `NOTICE.md`.
 
 ## Installation
 
@@ -82,6 +82,17 @@ Run database migrations:
 - Webhook, queue, search, metrics, and operational hooks for production financial systems.
 - PostgreSQL-backed persistence with Redis-backed queues and operational workers.
 
+Additional capabilities include transaction and refund dry runs, bulk inflight
+commit and void operations, deterministic identity IDs, structured error codes,
+queue and search backpressure, remote monitoring exports, and a tamper-evident
+transaction hash chain. Use `ledgerforge verify-chain` to check sealed history.
+
+Metadata changes emit webhook events and refresh search documents from the
+stored entity. See [metadata update webhooks](docs/metadata-webhooks.md) for
+payloads and delivery guarantees. Docker Compose creates `ledgerforge.json`
+when it is missing; enable optional search and tracing services with
+`--profile search` and `--profile tracing`.
+
 ## Deployment Options
 
 - **Self-hosted Core:** run LedgerForge locally or on your own infrastructure with Docker, PostgreSQL, and Redis.
@@ -111,13 +122,13 @@ make build
 docker compose config
 ```
 
-`go test -short ./...` covers the hermetic fast path. Service-backed integration tests expect local PostgreSQL and Redis, which you can start with `docker compose up`.
+`go test -short ./...` covers the hermetic fast path. Service-backed integration tests expect local PostgreSQL and Redis, which you can start with `docker compose --profile search up`. The full suite also exercises Typesense.
 
 ## Origin And Attribution
 
 LedgerForge is derived from an upstream Apache License 2.0 project.
 
-Original Git history, commit authorship, and license notices are preserved for transparency, attribution, and continuity. Additional origin details are documented in `NOTICE.md`.
+License notices and attribution are documented in `NOTICE.md`.
 
 LedgerForge Core is maintained as the open-source foundation of LedgerForge's financial infrastructure platform.
 
