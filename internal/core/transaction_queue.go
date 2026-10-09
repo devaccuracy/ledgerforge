@@ -70,6 +70,8 @@ func (l *LedgerForge) QueueTransaction(ctx context.Context, transaction *model.T
 	ctx, span := tracer.Start(ctx, "QueueTransaction")
 	defer span.End()
 
+	clearCallerPolicyMetadata(ctx, transaction)
+
 	// Initialize transaction metadata and status
 	originalRef := transaction.Reference
 	if err := transaction.ValidateAmount(); err != nil {
@@ -104,11 +106,26 @@ func (l *LedgerForge) QueueTransaction(ctx context.Context, transaction *model.T
 		}
 	}
 
+	ctx, err = l.admitQueuedPolicy(ctx, transaction, transactions)
+	if err != nil {
+		return nil, err
+	}
+	if policyMarked(transaction) {
+		originalTxnID = transaction.TransactionID
+	}
+
 	// If SkipQueue is true, process synchronously
 	if transaction.SkipQueue {
 		_, err := l.processTxns(ctx, transaction, transactions, originalTxnID, originalRef)
 		if err != nil {
 			span.RecordError(err)
+			if policyMarked(transaction) {
+				legs := transactions
+				if len(legs) == 0 {
+					legs = []*model.Transaction{transaction}
+				}
+				l.failPolicyTransactions(ctx, legs)
+			}
 			return nil, err
 		}
 
@@ -126,10 +143,11 @@ func (l *LedgerForge) QueueTransaction(ctx context.Context, transaction *model.T
 		if strings.Contains(transaction.ParentTransaction, "bulk") {
 			transaction.MetaData["QUEUED_PARENT_TRANSACTION"] = transaction.ParentTransaction
 		}
-		// Persist acceptance before handing work to the queue.
+		// Persist acceptance after admission and before handing work to the queue.
 		queueTransactions, err := l.processTxns(ctx, transaction, transactions, originalTxnID, originalRef)
 		if err != nil {
 			span.RecordError(err)
+			l.failPolicyBulk(ctx, []*model.Transaction{transaction})
 			return nil, err
 		}
 		if err := enqueueTransactions(ctx, l.queue, transaction, queueTransactions); err != nil {

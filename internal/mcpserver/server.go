@@ -49,11 +49,13 @@ type Service interface {
 type Options struct {
 	Version     string
 	AllowWrites bool
+	APIKey      string
 }
 
 // Server owns the MCP protocol server and the LedgerForge service it exposes.
 type Server struct {
 	service     Service
+	apiKey      string
 	allowWrites bool
 	protocol    *mcp.Server
 }
@@ -73,6 +75,7 @@ func New(service Service, options Options) *Server {
 
 	s := &Server{
 		service:     service,
+		apiKey:      options.APIKey,
 		allowWrites: options.AllowWrites,
 		protocol: mcp.NewServer(&mcp.Implementation{
 			Name:    "ledgerforge-mcp",
@@ -86,6 +89,7 @@ func New(service Service, options Options) *Server {
 	if s.allowWrites {
 		s.registerWriteTools()
 	}
+	s.registerPolicyTools()
 	return s
 }
 
@@ -240,30 +244,30 @@ type bulkTransferItem struct {
 
 func (s *Server) registerReadTools() {
 	readOnly := &mcp.ToolAnnotations{ReadOnlyHint: true, Title: "LedgerForge read"}
-	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_get_ledger", Description: "Retrieve a ledger by ID.", Annotations: readOnly}, wrap(s.getLedger))
-	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_list_ledgers", Description: "List ledgers with bounded pagination.", Annotations: readOnly}, wrap(s.listLedgers))
-	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_get_balance", Description: "Retrieve a balance by ID, including current amounts. Use the exact minor-unit summary for financial calculations.", Annotations: readOnly}, wrap(s.getBalance))
-	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_find_balance", Description: "Find a balance by its human-readable indicator and currency.", Annotations: readOnly}, wrap(s.getBalanceByIndicator))
-	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_get_balance_at_time", Description: "Retrieve an auditable historical balance state at an RFC3339 timestamp.", Annotations: readOnly}, wrap(s.getBalanceAtTime))
-	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_list_balances", Description: "List balances with bounded pagination.", Annotations: readOnly}, wrap(s.listBalances))
-	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_get_transaction", Description: "Retrieve a transaction by ID.", Annotations: readOnly}, wrap(s.getTransaction))
-	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_get_transaction_by_reference", Description: "Retrieve a transaction by its unique reference.", Annotations: readOnly}, wrap(s.getTransactionByReference))
-	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_get_transaction_context", Description: "Retrieve a transaction with source and destination balance summaries and safe next-action guidance.", Annotations: readOnly}, wrap(s.getTransactionContext))
-	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_list_transactions", Description: "List transactions with bounded pagination.", Annotations: readOnly}, wrap(s.listTransactions))
-	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_get_balance_lineage", Description: "Retrieve fund lineage for a balance.", Annotations: readOnly}, wrap(s.getBalanceLineage))
-	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_get_transaction_lineage", Description: "Retrieve fund lineage for a transaction.", Annotations: readOnly}, wrap(s.getTransactionLineage))
+	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_get_ledger", Description: "Retrieve a ledger by ID.", Annotations: readOnly}, identityWrap(s, "ledgers", "read", s.getLedger))
+	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_list_ledgers", Description: "List ledgers with bounded pagination.", Annotations: readOnly}, identityWrap(s, "ledgers", "read", s.listLedgers))
+	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_get_balance", Description: "Retrieve a balance by ID, including current amounts. Use the exact minor-unit summary for financial calculations.", Annotations: readOnly}, identityWrap(s, "balances", "read", s.getBalance))
+	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_find_balance", Description: "Find a balance by its human-readable indicator and currency.", Annotations: readOnly}, identityWrap(s, "balances", "read", s.getBalanceByIndicator))
+	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_get_balance_at_time", Description: "Retrieve an auditable historical balance state at an RFC3339 timestamp.", Annotations: readOnly}, identityWrap(s, "balances", "read", s.getBalanceAtTime))
+	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_list_balances", Description: "List balances with bounded pagination.", Annotations: readOnly}, identityWrap(s, "balances", "read", s.listBalances))
+	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_get_transaction", Description: "Retrieve a transaction by ID.", Annotations: readOnly}, identityWrap(s, "transactions", "read", s.getTransaction))
+	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_get_transaction_by_reference", Description: "Retrieve a transaction by its unique reference.", Annotations: readOnly}, identityWrap(s, "transactions", "read", s.getTransactionByReference))
+	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_get_transaction_context", Description: "Retrieve a transaction with source and destination balance summaries and safe next-action guidance.", Annotations: readOnly}, identityWrap(s, "transactions", "read", s.getTransactionContext))
+	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_list_transactions", Description: "List transactions with bounded pagination.", Annotations: readOnly}, identityWrap(s, "transactions", "read", s.listTransactions))
+	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_get_balance_lineage", Description: "Retrieve fund lineage for a balance.", Annotations: readOnly}, identityWrap(s, "balances", "read", s.getBalanceLineage))
+	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_get_transaction_lineage", Description: "Retrieve fund lineage for a transaction.", Annotations: readOnly}, identityWrap(s, "transactions", "read", s.getTransactionLineage))
 }
 
 func (s *Server) registerWriteTools() {
 	additive := &mcp.ToolAnnotations{DestructiveHint: boolPointer(false), OpenWorldHint: boolPointer(false), Title: "LedgerForge write"}
-	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_create_ledger", Description: "Create a new ledger after explicit confirmation.", Annotations: additive}, wrap(s.createLedger))
-	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_create_balance", Description: "Create a new balance after explicit confirmation.", Annotations: additive}, wrap(s.createBalance))
-	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_transfer_funds", Description: "Preferred exact-amount transfer workflow. Amounts are integer minor units and require an idempotency reference plus explicit confirmation.", Annotations: additive}, wrap(s.transferFunds))
-	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_create_bulk_transfers", Description: "Create up to 100 exact-amount transfers as one operational batch after explicit confirmation.", Annotations: additive}, wrap(s.createBulkTransfers))
-	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_refund_transaction", Description: "Create a compensating refund for an eligible transaction after explicit confirmation.", Annotations: additive}, wrap(s.refundTransaction))
-	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_queue_transaction", Description: "Advanced transaction workflow for split or scheduled transfers. Use ledgerforge_transfer_funds for standard payments.", Annotations: additive}, wrap(s.queueTransaction))
-	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_commit_inflight_transaction", Description: "Commit all or part of an inflight transaction after explicit confirmation.", Annotations: &mcp.ToolAnnotations{DestructiveHint: boolPointer(false), OpenWorldHint: boolPointer(false), Title: "Commit inflight transaction"}}, wrap(s.commitInflightTransaction))
-	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_void_inflight_transaction", Description: "Void an inflight transaction after explicit confirmation. This releases reserved funds.", Annotations: &mcp.ToolAnnotations{DestructiveHint: boolPointer(true), OpenWorldHint: boolPointer(false), Title: "Void inflight transaction"}}, wrap(s.voidInflightTransaction))
+	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_create_ledger", Description: "Create a new ledger after explicit confirmation.", Annotations: additive}, identityWrap(s, "ledgers", "write", s.createLedger))
+	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_create_balance", Description: "Create a new balance after explicit confirmation.", Annotations: additive}, identityWrap(s, "balances", "write", s.createBalance))
+	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_transfer_funds", Description: "Preferred exact-amount transfer workflow. Amounts are integer minor units and require an idempotency reference plus explicit confirmation.", Annotations: additive}, identityWrap(s, "transactions", "write", s.transferFunds))
+	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_create_bulk_transfers", Description: "Create up to 100 exact-amount transfers as one operational batch after explicit confirmation.", Annotations: additive}, identityWrap(s, "transactions", "write", s.createBulkTransfers))
+	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_refund_transaction", Description: "Create a compensating refund for an eligible transaction after explicit confirmation.", Annotations: additive}, identityWrap(s, "transactions", "write", s.refundTransaction))
+	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_queue_transaction", Description: "Advanced transaction workflow for split or scheduled transfers. Use ledgerforge_transfer_funds for standard payments.", Annotations: additive}, identityWrap(s, "transactions", "write", s.queueTransaction))
+	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_commit_inflight_transaction", Description: "Commit all or part of an inflight transaction after explicit confirmation.", Annotations: &mcp.ToolAnnotations{DestructiveHint: boolPointer(false), OpenWorldHint: boolPointer(false), Title: "Commit inflight transaction"}}, identityWrap(s, "transactions", "write", s.commitInflightTransaction))
+	mcp.AddTool(s.protocol, &mcp.Tool{Name: "ledgerforge_void_inflight_transaction", Description: "Void an inflight transaction after explicit confirmation. This releases reserved funds.", Annotations: &mcp.ToolAnnotations{DestructiveHint: boolPointer(true), OpenWorldHint: boolPointer(false), Title: "Void inflight transaction"}}, identityWrap(s, "transactions", "write", s.voidInflightTransaction))
 }
 
 func wrap[Input any](handler func(context.Context, *mcp.CallToolRequest, Input) (map[string]any, error)) mcp.ToolHandlerFor[Input, map[string]any] {
@@ -347,6 +351,10 @@ func (s *Server) getTransactionContext(ctx context.Context, _ *mcp.CallToolReque
 		return nil, fmt.Errorf("provide exactly one of transaction_id or reference")
 	}
 
+	ctx, identityErr := s.identityContext(ctx, "balances", "read")
+	if identityErr != nil {
+		return nil, identityErr
+	}
 	var (
 		transaction *model.Transaction
 		err         error
@@ -686,6 +694,12 @@ func (s *Server) readCapabilitiesResource(_ context.Context, request *mcp.ReadRe
 }
 
 func (s *Server) readEntityResource(ctx context.Context, request *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+	partsForAuth := strings.Split(strings.TrimPrefix(request.Params.URI, "ledgerforge://"), "/")
+	var identityErr error
+	ctx, identityErr = s.identityContext(ctx, partsForAuth[0], "read")
+	if identityErr != nil {
+		return nil, identityErr
+	}
 	entity, id, err := ledgerforgeResourceEntity(request.Params.URI)
 	if err != nil {
 		return nil, err
@@ -875,6 +889,7 @@ func transactionSummary(transaction *model.Transaction) map[string]any {
 		"parent_transaction":     transaction.ParentTransaction,
 		"reference":              transaction.Reference,
 		"status":                 transaction.Status,
+		"approval_status":        transaction.MetaData["policy_approval"],
 		"source_balance_id":      transaction.Source,
 		"destination_balance_id": transaction.Destination,
 		"currency":               transaction.Currency,
@@ -901,6 +916,9 @@ func transactionSummaries(transactions []model.Transaction) []map[string]any {
 func transactionNextActions(transaction *model.Transaction) []string {
 	if transaction == nil {
 		return nil
+	}
+	if transaction.MetaData["policy_approval"] == "pending" {
+		return []string{"This transfer is pending independent approval. An authorized reviewer must approve or reject it through /approvals; the initiating key cannot approve it."}
 	}
 	if transaction.Inflight || transaction.Status == ledgerforge.StatusInflight {
 		return []string{

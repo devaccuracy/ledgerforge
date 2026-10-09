@@ -409,6 +409,12 @@ func (l *LedgerForge) planTransactionExecution(transaction *model.Transaction, a
 // executeTransactionPlan runs the selected internal execution mode and fails open from queued
 // batching back to the single-transaction path when batching does not handle the work.
 func (l *LedgerForge) executeTransactionPlan(ctx context.Context, plan transactionExecutionPlan) (transactionExecutionResult, error) {
+	if err := l.verifyPolicyExecution(ctx, plan.transaction); err != nil {
+		return transactionExecutionResult{}, err
+	}
+	if policyMarked(plan.transaction) {
+		plan.mode = transactionExecutionModeSingle
+	}
 	switch plan.mode {
 	case transactionExecutionModeQueuedBatch:
 		handled, err := l.TryRecordQueuedTransactionBatch(ctx, plan.transaction)
@@ -461,6 +467,9 @@ func (l *LedgerForge) executeTransactionPlan(ctx context.Context, plan transacti
 // processQueuedTransaction routes queued work through the shared executor so the planner can
 // choose between normal queued batching, hot-lane batching, and single-transaction fallback.
 func (l *LedgerForge) processQueuedTransaction(ctx context.Context, transaction *model.Transaction, hotLane bool) (transactionExecutionResult, error) {
+	if err := l.verifyQueuedPolicy(ctx, transaction); err != nil {
+		return transactionExecutionResult{}, err
+	}
 	return l.executeTransactionPlan(ctx, l.planTransactionExecution(transaction, true, hotLane))
 }
 
@@ -493,8 +502,15 @@ func (l *LedgerForge) ProcessQueuedTransaction(ctx context.Context, transaction 
 // - *model.Transaction: A pointer to the recorded Transaction model.
 // - error: An error if the transaction could not be recorded.
 func (l *LedgerForge) RecordTransaction(ctx context.Context, transaction *model.Transaction) (*model.Transaction, error) {
+	ctx, err := l.admitDirectPolicy(ctx, transaction)
+	if err != nil {
+		return nil, err
+	}
 	result, err := l.executeTransactionPlan(ctx, l.planTransactionExecution(transaction, false, false))
 	if err != nil {
+		if policyMarked(transaction) && transaction.Status != StatusCommit && transaction.Status != StatusVoid {
+			l.failPolicyTransactions(ctx, []*model.Transaction{transaction})
+		}
 		return nil, err
 	}
 	return result.transaction, nil
@@ -554,6 +570,10 @@ func (l *LedgerForge) recordTransactionSingle(ctx context.Context, transaction *
 
 		if isZeroPreciseAmount(transaction) {
 			return l.handleZeroAmountTransaction(ctx, span, transaction, viaQueue, "Zero-amount transaction rejected")
+		}
+
+		if err := l.verifyPolicyExecution(ctx, transaction); err != nil {
+			return nil, err
 		}
 
 		// Process the balances by applying the transaction

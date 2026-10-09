@@ -28,6 +28,7 @@ import (
 	"github.com/devaccuracy/ledgerforge"
 	"github.com/devaccuracy/ledgerforge/config"
 	"github.com/devaccuracy/ledgerforge/internal/apierror"
+	"github.com/devaccuracy/ledgerforge/internal/policy"
 	"github.com/gin-gonic/gin"
 )
 
@@ -58,6 +59,8 @@ var pathToResource = map[string]Resource{
 	"balance-monitors":   ResourceBalanceMonitors,
 	"hooks":              ResourceHooks,
 	"api-keys":           ResourceAPIKeys,
+	"policies":           Resource("policies"),
+	"approvals":          Resource("approvals"),
 	"search":             ResourceSearch,
 	"reconciliation":     ResourceReconciliation,
 	"metadata":           ResourceMetadata,
@@ -246,6 +249,7 @@ func (m *AuthMiddleware) Authenticate() gin.HandlerFunc {
 			subtle.ConstantTimeCompare([]byte(conf.Server.SecretKey), []byte(key)) == 1 {
 			// Master key has all permissions
 			c.Set("isMasterKey", true)
+			c.Request = c.Request.WithContext(policy.WithPrincipal(c.Request.Context(), policy.Principal{Master: true}))
 			c.Next()
 			return
 		}
@@ -275,7 +279,7 @@ func (m *AuthMiddleware) Authenticate() gin.HandlerFunc {
 		}
 
 		// Check if API key has permission for this resource and method
-		if !HasPermission(apiKey.Scopes, resource, c.Request.Method) {
+		if resource != Resource("policies") && resource != Resource("approvals") && !HasPermission(apiKey.Scopes, resource, c.Request.Method) {
 			// Get the required action for this method
 			action := methodToAction[c.Request.Method]
 			abortWithCode(c, apierror.ErrAuthInsufficientPermissions, "Insufficient permissions for "+string(resource)+":"+string(action))
@@ -295,13 +299,14 @@ func (m *AuthMiddleware) Authenticate() gin.HandlerFunc {
 			}
 		}
 
-		// Capture request state before Gin can reuse its context.
-		requestCtx, apiKeyID := c.Request.Context(), apiKey.APIKeyID
-		go func() {
-			_ = m.service.UpdateLastUsed(requestCtx, apiKeyID)
-		}()
-
 		c.Set("apiKey", apiKey)
+		c.Request = c.Request.WithContext(policy.WithPrincipal(c.Request.Context(), policy.Principal{APIKeyID: apiKey.APIKeyID, Scopes: apiKey.Scopes}))
+
+		// Capture the request context before Gin reuses its pooled context.
+		requestContext, apiKeyID := c.Request.Context(), apiKey.APIKeyID
+		go func() {
+			_ = m.service.UpdateLastUsed(requestContext, apiKeyID)
+		}()
 		c.Next()
 	}
 }

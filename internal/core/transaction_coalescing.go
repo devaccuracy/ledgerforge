@@ -538,6 +538,9 @@ func (l *LedgerForge) canCoalesceQueuedTransaction(transaction *model.Transactio
 	if transaction == nil {
 		return false, "nil_transaction"
 	}
+	if policyMarked(transaction) {
+		return false, "policy_admission"
+	}
 	if transaction.ParentTransaction == "" {
 		return false, "missing_parent_transaction"
 	}
@@ -571,6 +574,9 @@ func (l *LedgerForge) canCoalesceQueuedTransaction(transaction *model.Transactio
 }
 
 func (l *LedgerForge) canCoalesceQueuedOriginal(transaction *model.Transaction) (bool, string) {
+	if transaction != nil && policyMarked(transaction) {
+		return false, "policy_admission"
+	}
 	if transaction == nil {
 		return false, "nil_transaction"
 	}

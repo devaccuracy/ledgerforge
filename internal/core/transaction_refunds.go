@@ -398,6 +398,10 @@ func (l *LedgerForge) ProcessRefundsInBatches(ctx context.Context, parentTransac
 	ctx, span := tracer.Start(ctx, "ProcessRefundsInBatches")
 	defer span.End()
 
+	ctx, err := l.admitRefundPolicy(ctx, parentTransactionID, opts)
+	if err != nil {
+		return nil, err
+	}
 	applied, err := l.ProcessTransactionInBatches(
 		ctx,
 		parentTransactionID,
@@ -408,6 +412,9 @@ func (l *LedgerForge) ProcessRefundsInBatches(ctx context.Context, parentTransac
 		l.RefundWorkerWithRefundOptions(opts),
 	)
 	result, reconcileErr := reconcileRefundBatchResults(applied, err)
+	if reconcileErr != nil {
+		l.failPolicyRefund(ctx)
+	}
 	if reconcileErr != nil {
 		span.RecordError(reconcileErr)
 	}

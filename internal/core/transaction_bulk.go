@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/devaccuracy/ledgerforge/internal/apierror"
+	"github.com/devaccuracy/ledgerforge/internal/policy"
 	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel/attribute"
@@ -185,6 +186,11 @@ func (l *LedgerForge) CreateBulkTransactions(ctx context.Context, req *model.Bul
 	ctx, span := tracer.Start(ctx, "LedgerForge.CreateBulkTransactions")
 	defer span.End()
 
+	ctx, err := l.admitBulkPolicy(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
 	// Generate batch ID (parent transaction ID)
 	batchID := model.GenerateUUIDWithSuffix("bulk")
 	span.SetAttributes(attribute.String("batch.id", batchID))
@@ -192,6 +198,7 @@ func (l *LedgerForge) CreateBulkTransactions(ctx context.Context, req *model.Bul
 	// Check if this should be run asynchronously
 	if req.RunAsync {
 		if !asyncBulkSemaphore.TryAcquire(1) {
+			l.failPolicyBulk(ctx, req.Transactions)
 			return nil, apierror.NewAPIError(
 				apierror.ErrRateLimited,
 				"too many async bulk operations in progress, try again later",
@@ -209,7 +216,7 @@ func (l *LedgerForge) CreateBulkTransactions(ctx context.Context, req *model.Bul
 			defer asyncBulkSemaphore.Release(1)
 
 			// Create a background context with timeout
-			bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+			bgCtx, cancel := context.WithTimeout(policy.Internal(context.Background()), 30*time.Minute)
 			defer cancel()
 
 			logrus.Infof("Starting async bulk transaction batch %s with %d transactions (atomic: %v, inflight: %v)",
@@ -221,6 +228,7 @@ func (l *LedgerForge) CreateBulkTransactions(ctx context.Context, req *model.Bul
 			if err != nil {
 				// Handle failure (rollback if atomic, send webhook)
 				l.handleAsyncBulkTransactionFailure(bgCtx, err, batchID, req.Atomic, req.Inflight)
+				l.failPolicyBulk(bgCtx, asyncTxns)
 			} else {
 				// Send webhook notification for success
 				status := "inflight"
@@ -246,6 +254,7 @@ func (l *LedgerForge) CreateBulkTransactions(ctx context.Context, req *model.Bul
 	// Process transactions in batch
 	if err := l.processBulkTransactions(ctx, req.Transactions, batchID, req.Inflight, req.SkipQueue); err != nil {
 		span.RecordError(err)
+		l.failPolicyBulk(ctx, req.Transactions)
 		logrus.WithError(err).WithField("batch_id", batchID).Error("sync bulk transaction error")
 
 		var responseError string
@@ -278,6 +287,9 @@ func (l *LedgerForge) CreateBulkTransactions(ctx context.Context, req *model.Bul
 		status = "applied"
 	}
 
+	if len(req.Transactions) > 0 && req.Transactions[0].MetaData["policy_approval"] == "pending" {
+		status = "pending_approval"
+	}
 	logrus.Infof("Completed sync bulk transaction batch %s successfully", batchID)
 	return &model.BulkTransactionResult{
 		BatchID:          batchID,

@@ -147,6 +147,15 @@ func (a Api) Router() *gin.Engine {
 	router.GET("/api-keys", a.ListAPIKeys)
 	router.DELETE("/api-keys/:id", a.RevokeAPIKey)
 
+	router.POST("/policies/:id", a.PutKeyPolicy)
+	router.PUT("/policies/:id", a.PutKeyPolicy)
+	router.GET("/policies/:id", a.GetKeyPolicy)
+	router.DELETE("/policies/:id", a.DeleteKeyPolicy)
+	router.GET("/policies/effective", a.EffectivePolicy)
+	router.GET("/approvals", a.ListPolicyApprovals)
+	router.POST("/approvals/:id/approve", a.ApprovePolicyTransaction)
+	router.POST("/approvals/:id/reject", a.RejectPolicyTransaction)
+
 	return a.router
 }
 
