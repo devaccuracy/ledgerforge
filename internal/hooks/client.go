@@ -19,14 +19,10 @@ package hooks
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -50,10 +46,13 @@ func (m *redisHookManager) ExecuteHook(ctx context.Context, hook *Hook, payload 
 // It handles marshalling the payload, creating the request, and processing the response.
 // Retries are handled by the queue system, so this function only performs a single attempt.
 func (m *redisHookManager) executeHook(ctx context.Context, hook *Hook, payload HookPayload) error {
-	// Create HTTP client with timeout
-	client := &http.Client{
-		Timeout: time.Duration(hook.Timeout) * time.Second,
+	if m.config == nil {
+		return fmt.Errorf("config is not initialized")
 	}
+	if err := validateHook(hook); err != nil {
+		return err
+	}
+	client := HTTPClient(nil, hook.Timeout, m.config.Notification.Webhook.BlockPrivateDestinations)
 
 	// Marshal payload with explicit handling
 	payloadBytes, err := json.Marshal(payload)
@@ -69,21 +68,9 @@ func (m *redisHookManager) executeHook(ctx context.Context, hook *Hook, payload 
 	logrus.WithFields(logrus.Fields{
 		"hook_id":   hook.ID,
 		"hook_name": hook.Name,
-		"hook_url":  hook.URL,
+		"hook_url":  SafeURL(hook.URL),
 		"hook_type": hook.Type,
 	}).Info("Executing webhook")
-
-	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-
-	if m.config == nil {
-		return fmt.Errorf("config is not initialized")
-	}
-	secret := m.config.Server.SecretKey
-	// Create signature: HMAC-SHA256(timestamp + "." + payload)
-	signatureData := timestamp + "." + string(payloadBytes)
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write([]byte(signatureData))
-	signature := hex.EncodeToString(mac.Sum(nil))
 
 	req, err := http.NewRequestWithContext(ctx, "POST", hook.URL, bytes.NewBuffer(payloadBytes))
 	if err != nil {
@@ -91,8 +78,11 @@ func (m *redisHookManager) executeHook(ctx context.Context, hook *Hook, payload 
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-LedgerForge-Signature", signature)
-	req.Header.Set("X-LedgerForge-Timestamp", timestamp)
+	secret := m.config.WebhookSigningSecret()
+	SignRequest(req, payloadBytes, secret)
+	if secret == "" {
+		logrus.Warn("webhook sent unsigned: signing secret is not configured")
+	}
 	req.Header.Set("X-Hook-ID", hook.ID)
 	req.Header.Set("X-Hook-Type", string(hook.Type))
 
@@ -104,11 +94,12 @@ func (m *redisHookManager) executeHook(ctx context.Context, hook *Hook, payload 
 			logrus.WithFields(logrus.Fields{
 				"hook_id":   hook.ID,
 				"hook_type": hook.Type,
-				"error":     err,
+				"error":     ctx.Err(),
 			}).Error("Hook execution cancelled due to context timeout")
 			return ctx.Err()
 		}
-		return fmt.Errorf("failed to execute request: %w", err)
+		logrus.WithField("hook_id", hook.ID).Warn("webhook transport failed")
+		return fmt.Errorf("webhook transport failed")
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
@@ -117,95 +108,31 @@ func (m *redisHookManager) executeHook(ctx context.Context, hook *Hook, payload 
 	}()
 
 	// Read response body
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxResponseBytes+1))
 	if err != nil {
 		_ = m.updateHookStatus(ctx, hook, false)
 		return fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	logrus.WithFields(logrus.Fields{
-		"hook_id":     hook.ID,
-		"hook_type":   hook.Type,
-		"status_code": resp.StatusCode,
-		"response":    string(body),
-	}).Debug("Hook response received")
-
-	// Handle empty response
-	if len(body) == 0 {
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			logrus.WithFields(logrus.Fields{
-				"hook_id":     hook.ID,
-				"hook_name":   hook.Name,
-				"hook_url":    hook.URL,
-				"hook_type":   hook.Type,
-				"status_code": resp.StatusCode,
-			}).Info("Hook executed successfully with empty response")
-			_ = m.updateHookStatus(ctx, hook, true)
-			return nil
-		}
+	if len(body) > MaxResponseBytes {
 		_ = m.updateHookStatus(ctx, hook, false)
-		return fmt.Errorf("hook returned empty response with status %d", resp.StatusCode)
+		return fmt.Errorf("webhook response too large")
 	}
-
-	// Check if response is JSON
-	if !json.Valid(body) {
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			logrus.WithFields(logrus.Fields{
-				"hook_id":     hook.ID,
-				"hook_name":   hook.Name,
-				"hook_url":    hook.URL,
-				"hook_type":   hook.Type,
-				"status_code": resp.StatusCode,
-				"response":    string(body),
-			}).Info("Hook executed successfully with non-JSON response")
-			_ = m.updateHookStatus(ctx, hook, true)
-			return nil
-		}
-		if resp.StatusCode >= 400 {
-			_ = m.updateHookStatus(ctx, hook, false)
-			return fmt.Errorf("hook returned non-JSON error response (status %d): %s", resp.StatusCode, string(body))
-		}
-		// For non-error status codes, treat non-JSON response as success but log a warning
-		logrus.WithFields(logrus.Fields{
-			"hook_id":     hook.ID,
-			"hook_type":   hook.Type,
-			"status_code": resp.StatusCode,
-			"response":    string(body),
-		}).Warn("Hook returned non-JSON response")
-		_ = m.updateHookStatus(ctx, hook, true)
-		return nil
-	}
-
-	// For JSON responses, try to parse as HookResponse
-	var hookResp HookResponse
-	if err := json.Unmarshal(body, &hookResp); err != nil {
-		if resp.StatusCode >= 400 {
-			_ = m.updateHookStatus(ctx, hook, false)
-			return fmt.Errorf("invalid JSON error response: %w", err)
-		}
-		// For non-error status codes, treat invalid JSON as success but log warning
-		logrus.WithFields(logrus.Fields{
-			"hook_id": hook.ID,
-			"error":   err,
-		}).Warn("Could not parse hook response as JSON")
-		_ = m.updateHookStatus(ctx, hook, true)
-		return nil
-	}
-
-	if !hookResp.Success {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		_ = m.updateHookStatus(ctx, hook, false)
-		return fmt.Errorf("hook execution failed: %s", hookResp.Message)
+		return fmt.Errorf("webhook delivery failed with status %d", resp.StatusCode)
 	}
 
-	logrus.WithFields(logrus.Fields{
-		"hook_id":     hook.ID,
-		"hook_name":   hook.Name,
-		"hook_url":    hook.URL,
-		"hook_type":   hook.Type,
-		"status_code": resp.StatusCode,
-		"message":     hookResp.Message,
-	}).Info("Hook executed successfully with JSON response")
-
+	// Legacy receivers may return empty or non-JSON success bodies. JSON
+	// receivers can additionally reject delivery with success=false.
+	if len(body) > 0 && json.Valid(body) {
+		var result HookResponse
+		if err := json.Unmarshal(body, &result); err == nil && !result.Success {
+			_ = m.updateHookStatus(ctx, hook, false)
+			return fmt.Errorf("hook receiver rejected delivery")
+		}
+	}
+	logrus.WithFields(logrus.Fields{"hook_id": hook.ID, "status_code": resp.StatusCode}).Info("Hook executed successfully")
 	_ = m.updateHookStatus(ctx, hook, true)
 	return nil
 }

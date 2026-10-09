@@ -30,6 +30,7 @@ import (
 	redlock "github.com/devaccuracy/ledgerforge/internal/lock"
 	"github.com/devaccuracy/ledgerforge/internal/tokenization"
 	"github.com/gin-gonic/gin"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -164,7 +165,7 @@ func TestRespondErrorMessagePatterns(t *testing.T) {
 			assert.Equal(t, tt.status, w.Code)
 			raw, detail := decodeDetail(t, w)
 			assert.Equal(t, tt.code, detail.Code)
-			assert.Equal(t, tt.msg, raw["error"], "legacy message must be preserved verbatim")
+			assert.Equal(t, clientErrorMessage(errors.New(tt.msg), tt.code), raw["error"])
 		})
 	}
 }
@@ -198,8 +199,8 @@ func TestRespondErrorWithDefault(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	raw, detail := decodeDetail(t, w)
 	assert.Equal(t, apierror.ErrReconStartFailed, detail.Code)
-	// 4xx/explicit-default paths keep the original message.
-	assert.Equal(t, "some opaque reconciliation failure", raw["error"])
+	// Explicit defaults keep their code while masking backend text.
+	assert.Equal(t, sanitizedInternalMessage, raw["error"])
 }
 
 func TestRespondBareAPIErrorShape(t *testing.T) {
@@ -225,4 +226,36 @@ func TestRespondNestedAPIErrorShape(t *testing.T) {
 	require.True(t, ok, "legacy error must remain an object on admin endpoints")
 	assert.Equal(t, string(apierror.ErrInternalServer), legacyErr["code"])
 	assert.Equal(t, apierror.ErrAdminBackupFailed, detail.Code)
+}
+
+func TestRespondErrorSuppressesBackendDetailsAndWrappedMessages(t *testing.T) {
+	for _, err := range []error{
+		fmt.Errorf("transaction not found: %w", &pq.Error{Message: "secret relation", Detail: "password=hidden"}),
+		apierror.APIError{Code: apierror.ErrGenBadRequest, Message: "invalid request", Details: &pq.Error{Message: "secret relation", Detail: "password=hidden"}},
+		errors.New("secret relation: password=hidden"),
+	} {
+		c, w := newTestContext()
+		respondError(c, err, withDefault(apierror.ErrGenBadRequest))
+		assert.NotContains(t, w.Body.String(), "secret relation")
+		assert.NotContains(t, w.Body.String(), "password=hidden")
+	}
+	for _, nested := range []bool{false, true} {
+		c, w := newTestContext()
+		legacy := apierror.APIError{Code: apierror.ErrInternalServer, Message: "operation failed", Details: &pq.Error{Message: "secret relation", Detail: "password=hidden"}}
+		if nested {
+			respondNestedAPIError(c, legacy, apierror.ErrAdminBackupFailed)
+		} else {
+			respondBareAPIError(c, legacy, apierror.ErrHookOperationFailed)
+		}
+		assert.NotContains(t, w.Body.String(), "secret relation")
+		assert.NotContains(t, w.Body.String(), "password=hidden")
+	}
+}
+
+func TestRespondErrorRetainsRateLimitStatus(t *testing.T) {
+	c, w := newTestContext()
+	respondError(c, apierror.APIError{Code: apierror.ErrRateLimited, Message: "too many async bulk operations in progress, try again later"}, withDefault(apierror.ErrGenBadRequest))
+	assert.Equal(t, http.StatusTooManyRequests, w.Code)
+	_, detail := decodeDetail(t, w)
+	assert.Equal(t, apierror.ErrGenRateLimited, detail.Code)
 }

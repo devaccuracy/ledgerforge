@@ -9,7 +9,6 @@ import (
 
 	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/lib/pq"
-	"github.com/sirupsen/logrus"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -40,12 +39,6 @@ func getKeyPrefix(key string) string {
 		return key[:16]
 	}
 	return key
-}
-
-// getAPIKeyCacheKey generates a cache key for an API key lookup
-// Uses the hashed key to ensure consistent cache keys
-func getAPIKeyCacheKey(hashedKey string) string {
-	return fmt.Sprintf("api_key:hash:%s", hashedKey)
 }
 
 // CreateAPIKey creates a new API key with the specified parameters and stores it in the database.
@@ -111,7 +104,8 @@ func (s *Datasource) CreateAPIKey(ctx context.Context, name, ownerID string, sco
 
 // GetAPIKey retrieves an API key from the database using its key string.
 // The provided key's prefix is used for efficient lookup, then bcrypt verifies the full key.
-// Results are cached for 5 minutes to improve performance.
+// PostgreSQL is authoritative for scopes, expiry and revocation. Legacy bcrypt
+// keys without key_prefix are verified and backfilled on first successful use.
 // This function is typically used for authentication and authorization purposes.
 //
 // Parameters:
@@ -119,30 +113,17 @@ func (s *Datasource) CreateAPIKey(ctx context.Context, name, ownerID string, sco
 // - key: The PLAIN TEXT API key string to authenticate.
 //
 // Returns:
-// - *model.APIKey: The API key object if found (with hashed key, not plain text).
+// - *model.APIKey: The API key object if found, with an empty Key field.
 // - error: Returns ErrAPIKeyNotFound if the key doesn't exist, or other database errors if the query fails.
 func (s *Datasource) GetAPIKey(ctx context.Context, key string) (*model.APIKey, error) {
 	// Extract prefix for efficient lookup
 	keyPrefix := getKeyPrefix(key)
-	cacheKey := getAPIKeyCacheKey(keyPrefix)
-
-	// Try to get from cache first
-	var apiKey model.APIKey
-	if s.Cache != nil {
-		err := s.Cache.Get(ctx, cacheKey, &apiKey)
-		if err == nil && apiKey.Key != "" {
-			// Verify the cached key matches using bcrypt
-			if verifyAPIKey(apiKey.Key, key) {
-				return &apiKey, nil
-			}
-		}
-	}
-
-	// Cache miss - query the database using key_prefix for efficient lookup
+	// Authentication always reads PostgreSQL. Cached state can be repopulated
+	// after revocation by an in-flight cache fill and must never authorize.
 	query := `
-		SELECT api_key_id, key, name, owner_id, scopes, expires_at, created_at, last_used_at, is_revoked, revoked_at
+		SELECT api_key_id, key, name, owner_id, scopes, expires_at, created_at, last_used_at, is_revoked, revoked_at, key_prefix
 		FROM ledgerforge.api_keys
-		WHERE key_prefix = $1
+		WHERE key_prefix = $1 OR key_prefix IS NULL OR key_prefix = ''
 	`
 
 	rows, err := s.Conn.QueryContext(ctx, query, keyPrefix)
@@ -155,6 +136,7 @@ func (s *Datasource) GetAPIKey(ctx context.Context, key string) (*model.APIKey, 
 	for rows.Next() {
 		var candidate model.APIKey
 		var scopes pq.StringArray
+		var storedPrefix sql.NullString
 		err := rows.Scan(
 			&candidate.APIKeyID,
 			&candidate.Key,
@@ -166,6 +148,7 @@ func (s *Datasource) GetAPIKey(ctx context.Context, key string) (*model.APIKey, 
 			&candidate.LastUsedAt,
 			&candidate.IsRevoked,
 			&candidate.RevokedAt,
+			&storedPrefix,
 		)
 		if err != nil {
 			return nil, err
@@ -174,23 +157,31 @@ func (s *Datasource) GetAPIKey(ctx context.Context, key string) (*model.APIKey, 
 
 		// Verify the key using bcrypt
 		if verifyAPIKey(candidate.Key, key) {
-			// Cache the verified key
-			if s.Cache != nil {
-				err = s.Cache.Set(ctx, cacheKey, &candidate, 5*time.Minute)
+			// Backfill only after verifying the full legacy key. Close the rows
+			// first so this also works with a single-connection database pool.
+			if !storedPrefix.Valid || storedPrefix.String == "" {
+				if err := rows.Close(); err != nil {
+					return nil, err
+				}
+				_, err := s.Conn.ExecContext(ctx, `UPDATE ledgerforge.api_keys SET key_prefix = $1 WHERE api_key_id = $2 AND key = $3 AND (key_prefix IS NULL OR key_prefix = '')`, keyPrefix, candidate.APIKeyID, candidate.Key)
 				if err != nil {
-					logrus.WithError(err).Warn("failed to cache API key")
+					return nil, err
 				}
 			}
+			candidate.Key = ""
 			return &candidate, nil
 		}
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return nil, ErrAPIKeyNotFound
 }
 
 // RevokeAPIKey marks an API key as revoked in the database, preventing its future use.
 // The function updates the is_revoked flag to true and sets the revoked_at timestamp.
-// It also invalidates the cache entry for the revoked key to ensure immediate effect.
+// Authentication does not trust cached key state.
 // Only the owner of the API key can revoke it.
 //
 // Parameters:
@@ -202,22 +193,6 @@ func (s *Datasource) GetAPIKey(ctx context.Context, key string) (*model.APIKey, 
 //   - error: Returns ErrAPIKeyNotFound if the key doesn't exist or doesn't belong to the owner,
 //     or other database errors if the update operation fails.
 func (s *Datasource) RevokeAPIKey(ctx context.Context, id, ownerID string) error {
-	// First, get the API key to retrieve its hashed key for cache invalidation
-	getQuery := `
-		SELECT key
-		FROM ledgerforge.api_keys
-		WHERE api_key_id = $1 AND owner_id = $2
-	`
-
-	var hashedKey string
-	err := s.Conn.QueryRowContext(ctx, getQuery, id, ownerID).Scan(&hashedKey)
-	if err == sql.ErrNoRows {
-		return ErrAPIKeyNotFound
-	}
-	if err != nil {
-		return err
-	}
-
 	// Update the API key to mark it as revoked
 	updateQuery := `
 		UPDATE ledgerforge.api_keys
@@ -239,29 +214,12 @@ func (s *Datasource) RevokeAPIKey(ctx context.Context, id, ownerID string) error
 		return ErrAPIKeyNotFound
 	}
 
-	// Invalidate the cache entry for this API key
-	// Note: We need to get the key_prefix to invalidate the correct cache entry
-	getPrefixQuery := `SELECT key_prefix FROM ledgerforge.api_keys WHERE api_key_id = $1`
-	var keyPrefix sql.NullString
-	_ = s.Conn.QueryRowContext(ctx, getPrefixQuery, id).Scan(&keyPrefix)
-
-	if keyPrefix.Valid && s.Cache != nil {
-		cacheKey := getAPIKeyCacheKey(keyPrefix.String)
-		err = s.Cache.Delete(ctx, cacheKey)
-		if err != nil {
-			// Log the error, but don't fail the revocation
-			logrus.WithError(err).Warn("failed to invalidate API key cache")
-		}
-	}
-
 	return nil
 }
 
 // UpdateLastUsed updates the last_used_at timestamp for an API key to the current time.
 // This function is typically called during authentication to track API key usage patterns.
-// Note: This does NOT invalidate the cache to avoid performance overhead on every request.
-// The cached version will still work for authentication, and the timestamp will be updated
-// in the database for auditing purposes.
+// The timestamp is persisted for auditing purposes.
 //
 // Parameters:
 // - ctx: Context for managing the request lifecycle and cancellation.
@@ -282,8 +240,7 @@ func (s *Datasource) UpdateLastUsed(ctx context.Context, id string) error {
 
 // ListAPIKeys retrieves all API keys belonging to a specific owner from the database.
 // The results are ordered by creation date in descending order (newest first).
-// Note: The Key field will contain hashed values. For user display, show only a preview
-// (e.g., last 4 characters of the key ID or a masked version).
+// The Key field is empty; stored hashes never leave the authentication layer.
 //
 // Parameters:
 // - ctx: Context for managing the request lifecycle and cancellation.
@@ -326,8 +283,12 @@ func (s *Datasource) ListAPIKeys(ctx context.Context, ownerID string) ([]*model.
 		if err != nil {
 			return nil, err
 		}
+		apiKey.Key = ""
 		apiKeys = append(apiKeys, apiKey)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return apiKeys, nil
 }

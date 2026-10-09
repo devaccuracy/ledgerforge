@@ -113,15 +113,21 @@ func (a Api) respondPreview(c *gin.Context, preview *model.TransactionPreview, e
 // returned for a projected rejection, using the same classifier the other
 // endpoints resolve errors through.
 func resolvePreviewRejectionCode(preview *model.TransactionPreview) {
-	if preview == nil || preview.Rejection == nil || preview.Rejection.Code != "" {
+	if preview == nil || preview.Rejection == nil {
 		return
 	}
-
-	code, ok := classifyMessage(preview.Rejection.Message)
-	if !ok {
-		code = apierror.ErrTxnValidation
+	rawMessage := preview.Rejection.Message
+	if preview.Rejection.Code == "" {
+		code, ok := classifyMessage(rawMessage)
+		if !ok {
+			code = apierror.ErrTxnValidation
+		}
+		preview.Rejection.Code = string(code)
 	}
-	preview.Rejection.Code = string(code)
+	preview.Rejection.Message = clientErrorMessage(errors.New(rawMessage), apierror.ErrorCode(preview.Rejection.Code))
+	if preview.Rejection.Message != rawMessage {
+		logrus.WithField("error", rawMessage).Debug("preview rejection details suppressed")
+	}
 }
 
 // resolvePreviewRejectionCodes fills in rejection codes across a batch.
@@ -659,9 +665,9 @@ func (a Api) CreateBulkTransactions(c *gin.Context) {
 			code = apierror.ErrGenBadRequest
 		}
 		c.JSON(apierror.StatusForCode(code), gin.H{
-			"error":        result.Error, // Use the detailed error from the result
+			"error":        clientErrorMessage(err, code),
 			"batch_id":     result.BatchID,
-			"error_detail": apierror.NewErrorResponse(code, result.Error, gin.H{"batch_id": result.BatchID}).Error,
+			"error_detail": apierror.NewErrorResponse(code, clientErrorMessage(err, code), gin.H{"batch_id": result.BatchID}).Error,
 		})
 		return
 	}
@@ -783,7 +789,7 @@ func (a Api) respondBulkInflightPreview(c *gin.Context, action string, items []l
 				DryRun:     true,
 				WouldApply: false,
 				Operation:  action,
-				Rejection:  &model.PreviewRejection{Message: err.Error()},
+				Rejection:  &model.PreviewRejection{Message: clientErrorMessage(err, apierror.ErrTxnValidation)},
 			}
 		}
 		if !itemPreview.WouldApply {
@@ -830,7 +836,11 @@ func toAPIResults(outcomes []ledgerforge.BulkInflightOutcome) (model2.BulkInflig
 		} else {
 			r.Status = "failed"
 			r.Code = o.Code
-			r.Message = o.Err.Error()
+			code, ok := resolveErrorCode(o.Err)
+			if !ok {
+				code = apierror.ErrGenInternal
+			}
+			r.Message = clientErrorMessage(o.Err, code)
 			resp.Failed++
 		}
 		resp.Results[i] = r
@@ -900,10 +910,10 @@ func (a Api) queueBulkInflight(ctx context.Context, action string, items []ledge
 			resp.Results = append(resp.Results, model2.BulkInflightResult{TransactionID: it.TransactionID, Status: "queued", Code: "QUEUED"})
 			resp.Succeeded++
 		case errors.Is(err, ledgerforge.ErrInflightActionQueued):
-			resp.Results = append(resp.Results, model2.BulkInflightResult{TransactionID: it.TransactionID, Status: "queued", Code: "ALREADY_QUEUED", Message: err.Error()})
+			resp.Results = append(resp.Results, model2.BulkInflightResult{TransactionID: it.TransactionID, Status: "queued", Code: "ALREADY_QUEUED", Message: clientErrorMessage(err, apierror.ErrTxnValidation)})
 			resp.Succeeded++
 		default:
-			resp.Results = append(resp.Results, model2.BulkInflightResult{TransactionID: it.TransactionID, Status: "failed", Code: ledgerforge.ClassifyInflightError(err), Message: err.Error()})
+			resp.Results = append(resp.Results, model2.BulkInflightResult{TransactionID: it.TransactionID, Status: "failed", Code: ledgerforge.ClassifyInflightError(err), Message: clientErrorMessage(err, apierror.ErrTxnValidation)})
 			resp.Failed++
 		}
 	}
