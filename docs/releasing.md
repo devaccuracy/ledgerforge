@@ -27,7 +27,8 @@ Use a reviewed commit on `main`. Complete this checklist before creating a
 3. Run `make verify`, `make test-integration` and `make vuln` with an up-to-date Go
    patch version. Exercise the [quickstart](../examples/quickstart/README.md).
 4. Review operational changes, backup/restore expectations and upgrade notes.
-   Resolve the README's integration comments when the relevant features land.
+   Exercise the policy/approval example and external-anchor runbook on the
+   release candidate, including the delegation probes after the guardrails fix.
 5. Create and push the version tag through the maintainer's normal review process.
    The [release workflow](../.github/workflows/release.yml) retests that exact
    commit before building archives or publishing the container.

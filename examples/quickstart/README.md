@@ -81,3 +81,26 @@ To discard only this demo's database, add `-v` to that command. Keep the local
 config if restarting the same demo; deleting it generates a new key next time.
 Use the [production deployment guide](../../docs/deployment.md) before exposing
 any service beyond your machine.
+
+Check the documented refund eligibility against the running API:
+
+```sh
+python3 examples/quickstart/refund-contract.py
+```
+
+This regression settles a refund of an APPLIED posting, then voids a reservation
+and verifies that refunding the VOID row is rejected without counter changes.
+
+Check the verification CLI without changing database evidence:
+
+```sh
+python3 examples/quickstart/audit-contract.py
+```
+
+With sealing off, it checks replay and the distinct pending-coverage result. To
+exercise retained roots, add `"transaction": {"hash_chain": {"enabled": true}}`
+to `ledgerforge.local.json`, restart the **server** service and allow at least
+35 seconds for sealing before rerunning. The complete check exports roots,
+verifies them, then supplies a conflicting root and requires an audit failure.
+It does not alter the stored chain or supply external signature authentication.
+See the [external anchoring runbook](../../docs/verification.md).

@@ -46,8 +46,9 @@ Use the higher-level tools for normal financial work:
 
 Every balance and transaction result includes an exact `*_minor` summary. These
 values are base-10 integer strings and are the source of truth for accounting
-decisions. Divide by `currency_multiplier` only to present an amount to a
-human; never make accounting decisions from a floating-point amount.
+decisions. Apply the transaction's explicit precision only for presentation;
+legacy balance `currency_multiplier` metadata is not a conversion guarantee.
+Never make accounting decisions from a floating-point amount.
 
 State-changing tools are intentionally absent until the operator opts in:
 
@@ -61,10 +62,12 @@ eligible transactions, use advanced scheduled or split transaction workflows,
 and commit or void inflight transactions. Each write tool invocation produces a
 structured audit log entry.
 
-Every write requires `confirm: true`. This is an explicit intent check, not an
-authorization system: the MCP client configuration and the operating system
-permissions around it remain the access-control boundary. Set `confirm: true`
-only after an authorized human has approved the final action.
+Every write requires `confirm: true`, an intent check rather than independent
+approval. Bind a constrained agent with `--api-key` or
+`LEDGERFORGE_MCP_API_KEY`; the server resolves that key's validity and scopes on
+each call and applies its server-enforced policy. An unbound process retains
+local datasource authority. See [agent safety](agent-safety.md) for independent
+approval holds and the separate HTTP decision workflow.
 
 For ordinary transfers, use `ledgerforge_transfer_funds` rather than the
 advanced queue tool. It accepts an exact integer amount and an idempotency
@@ -101,3 +104,10 @@ webhook operations.
   tool calls but does not replace identity, authorization, or approval policy.
 - Run the existing LedgerForge workers for queued and scheduled transactions;
   the MCP server is an integration interface, not a replacement worker.
+
+With an API-key identity configured, policy inspection tools/resources expose
+effective rules, UTC capacity and pending approvals. With writes enabled,
+`ledgerforge_submit_policy_transaction` admits an exact transfer under that
+identity. It cannot supply its own independent approval decision. The
+[policy example](../examples/agent-policy/README.md) uses separate HTTP credentials
+for initiation and approval.

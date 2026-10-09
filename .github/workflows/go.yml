@@ -21,13 +21,18 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.x'
+          go-version: '1.26.9'
           cache: true
 
       - name: Verify module metadata
         run: |
           go mod tidy
           git diff --exit-code -- go.mod go.sum
+
+      - name: Release dependency and documentation contracts
+        run: |
+          python3 .github/scripts/test-readiness.py
+          python3 -m unittest discover -s examples/webhook-verification -p 'test_*.py'
 
       - name: Verify formatting
         run: test -z "$(gofmt -l .)"
@@ -88,7 +93,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.x'
+          go-version: '1.26.9'
           cache: true
 
       - name: Migrate Database
@@ -156,7 +161,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.x'
+          go-version: '1.26.9'
 
       - name: Tidy
         run: go mod tidy
@@ -178,7 +183,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26.x'
+          go-version: '1.26.9'
           cache: true
       - name: Check reachable vulnerabilities
         run: make vuln
@@ -189,7 +194,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26.x'
+          go-version: '1.26.9'
           cache: true
       - name: Fuzz smoke (skip cleanly when no targets exist)
         run: .github/scripts/fuzz-smoke.sh
