@@ -70,15 +70,14 @@ func getEventFromStatus(status string) string {
 // Returns:
 // - error: An error if the request or processing fails.
 func processHTTP(data NewWebhook, client *http.Client) error {
-	return processHTTPContext(context.Background(), data, client)
-}
-
-func processHTTPContext(ctx context.Context, data NewWebhook, client *http.Client) error {
 	conf, err := config.Fetch()
 	if err != nil {
 		return err
 	}
+	return processHTTPContext(context.Background(), data, client, conf)
+}
 
+func processHTTPContext(ctx context.Context, data NewWebhook, client *http.Client, conf *config.Configuration) error {
 	payloadBytes, err := json.Marshal(data)
 	if err != nil {
 		return err
@@ -162,10 +161,7 @@ func (b *LedgerForge) SendWebhook(newWebhook NewWebhook) error {
 // Returns:
 // - error: An error if the webhook processing fails.
 func (b *LedgerForge) ProcessWebhook(ctx context.Context, task *asynq.Task) error {
-	conf, err := config.Fetch()
-	if err != nil {
-		return err
-	}
+	conf := b.Config()
 
 	if conf.Notification.Webhook.Url == "" {
 		return nil
@@ -175,9 +171,5 @@ func (b *LedgerForge) ProcessWebhook(ctx context.Context, task *asynq.Task) erro
 		logrus.Errorf("Error unmarshaling task payload: %v", err)
 		return err
 	}
-	err = processHTTPContext(ctx, payload, b.httpClient)
-	if err != nil {
-		return err
-	}
-	return nil
+	return processHTTPContext(ctx, payload, b.httpClient, conf)
 }
