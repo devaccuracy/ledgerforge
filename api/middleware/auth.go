@@ -20,14 +20,15 @@ import (
 	"bytes"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"io"
+	"net/http"
 	"strings"
 
 	"github.com/devaccuracy/ledgerforge"
 	"github.com/devaccuracy/ledgerforge/config"
 	"github.com/devaccuracy/ledgerforge/internal/apierror"
 	"github.com/gin-gonic/gin"
-	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -48,18 +49,20 @@ func abortWithCode(c *gin.Context, code apierror.ErrorCode, message string) {
 // pathToResource maps URL paths to their corresponding resource types.
 // This is used by the authentication middleware to determine the required permissions.
 var pathToResource = map[string]Resource{
-	"ledgers":          ResourceLedgers,
-	"balances":         ResourceBalances,
-	"accounts":         ResourceAccounts,
-	"identities":       ResourceIdentities,
-	"transactions":     ResourceTransactions,
-	"balance-monitors": ResourceBalanceMonitors,
-	"hooks":            ResourceHooks,
-	"api-keys":         ResourceAPIKeys,
-	"search":           ResourceSearch,
-	"reconciliation":   ResourceReconciliation,
-	"metadata":         ResourceMetadata,
-	"backup":           ResourceBackup,
+	"ledgers":            ResourceLedgers,
+	"balances":           ResourceBalances,
+	"balances-snapshots": ResourceBalances,
+	"accounts":           ResourceAccounts,
+	"identities":         ResourceIdentities,
+	"transactions":       ResourceTransactions,
+	"balance-monitors":   ResourceBalanceMonitors,
+	"hooks":              ResourceHooks,
+	"api-keys":           ResourceAPIKeys,
+	"search":             ResourceSearch,
+	"reconciliation":     ResourceReconciliation,
+	"metadata":           ResourceMetadata,
+	"backup":             ResourceBackup,
+	"backup-s3":          ResourceBackup,
 }
 
 // AuthMiddleware handles authentication and authorization for API routes.
@@ -141,33 +144,41 @@ func injectAPIKeyToMetadata(c *gin.Context, apiKeyID string) error {
 		return nil
 	}
 
-	// Read the request body
-	bodyBytes, err := io.ReadAll(c.Request.Body)
+	// Multipart and form submissions contain no JSON metadata.
+	if strings.HasPrefix(c.GetHeader("Content-Type"), "multipart/form-data") || strings.HasPrefix(c.GetHeader("Content-Type"), "application/x-www-form-urlencoded") {
+		return nil
+	}
+	maxBytes := int64(config.DEFAULT_MAX_REQUEST_BODY_SIZE_MB) * 1024 * 1024
+	if conf, err := config.Fetch(); err == nil && conf.Server.MaxRequestBodySizeMB > 0 {
+		maxBytes = conf.Server.MaxRequestBodySizeMB * 1024 * 1024
+	}
+	bodyBytes, err := io.ReadAll(io.LimitReader(c.Request.Body, maxBytes+1))
 	if err != nil {
 		return err
 	}
 	_ = c.Request.Body.Close()
-
-	// Parse the request body as JSON
-	var bodyMap map[string]interface{}
+	if int64(len(bodyBytes)) > maxBytes {
+		return &http.MaxBytesError{Limit: maxBytes}
+	}
+	c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	if len(bytes.TrimSpace(bodyBytes)) == 0 {
+		return nil
+	}
+	// RawMessage preserves all numeric tokens, including nested bulk amounts.
+	var bodyMap map[string]json.RawMessage
 	if err := json.Unmarshal(bodyBytes, &bodyMap); err != nil {
-		// If not valid JSON, restore the original body and continue
-		c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 		return err
 	}
-
-	// Check if meta_data field exists
-	metaData, ok := bodyMap["meta_data"].(map[string]interface{})
-	if !ok {
-		// If meta_data doesn't exist or is not an object, create it
-		metaData = make(map[string]interface{})
+	if bodyMap == nil {
+		return errors.New("request body must be a JSON object")
 	}
-
-	// Add the API key ID to meta_data
-	metaData["LEDGERFORGE_GENERATED_BY"] = apiKeyID
-
-	// Update the meta_data in the body
-	bodyMap["meta_data"] = metaData
+	var metaData map[string]json.RawMessage
+	_ = json.Unmarshal(bodyMap["meta_data"], &metaData)
+	if metaData == nil {
+		metaData = make(map[string]json.RawMessage)
+	}
+	metaData["LEDGERFORGE_GENERATED_BY"], _ = json.Marshal(apiKeyID)
+	bodyMap["meta_data"], _ = json.Marshal(metaData)
 
 	// Convert back to JSON
 	modifiedBody, err := json.Marshal(bodyMap)
@@ -274,13 +285,20 @@ func (m *AuthMiddleware) Authenticate() gin.HandlerFunc {
 		// For POST requests, inject the API key ID into the metadata
 		if c.Request.Method == "POST" && c.Request.Body != nil {
 			if err := injectAPIKeyToMetadata(c, apiKey.APIKeyID); err != nil {
-				logrus.Error("Failed to inject API key ID into metadata:", err)
+				var sizeErr *http.MaxBytesError
+				if errors.As(err, &sizeErr) {
+					abortWithCode(c, apierror.ErrGenPayloadTooLarge, "request body too large")
+				} else {
+					abortWithCode(c, apierror.ErrGenMalformedRequest, "invalid JSON request body")
+				}
+				return
 			}
 		}
 
-		// Update last used timestamp in background
+		// Capture request state before Gin can reuse its context.
+		requestCtx, apiKeyID := c.Request.Context(), apiKey.APIKeyID
 		go func() {
-			_ = m.service.UpdateLastUsed(c.Request.Context(), apiKey.APIKeyID)
+			_ = m.service.UpdateLastUsed(requestCtx, apiKeyID)
 		}()
 
 		c.Set("apiKey", apiKey)
