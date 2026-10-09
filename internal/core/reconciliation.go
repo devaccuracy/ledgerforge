@@ -23,7 +23,6 @@ import (
 	"math/big"
 	"sync"
 
-	"github.com/devaccuracy/ledgerforge/internal/notification"
 	"github.com/devaccuracy/ledgerforge/internal/reconciliation"
 	"github.com/devaccuracy/ledgerforge/model"
 )
@@ -45,7 +44,7 @@ func (b *LedgerForge) reconciliationService() *reconciliation.Service {
 			return b.updateEntityMetadata(ctx, "transactions", id, metadata)
 		}, func(rec model.Reconciliation) {
 			if err := b.queue.queueIndexData(rec.ReconciliationID, "reconciliations", rec); err != nil {
-				notification.NotifyError(err)
+				b.notifyError(err)
 			}
 		})
 	})

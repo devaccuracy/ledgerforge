@@ -19,6 +19,7 @@ package core
 
 import (
 	"embed"
+	"errors"
 	"net/http"
 	"sync"
 	"time"
@@ -36,7 +37,6 @@ import (
 	"github.com/devaccuracy/ledgerforge/internal/tokenization"
 
 	"github.com/devaccuracy/ledgerforge/internal/reconciliation"
-	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -47,7 +47,6 @@ type LedgerForge struct {
 	redis              redis.UniversalClient
 	asynqClient        *asynq.Client
 	datasource         database.IDataSource
-	bt                 *model.BalanceTracker
 	tokenizer          *tokenization.TokenizationService
 	httpClient         *http.Client
 	Hooks              hooks.HookManager
@@ -58,6 +57,8 @@ type LedgerForge struct {
 	reconciliation     *reconciliation.Service
 	reindexOnce        sync.Once
 	reindex            *search.ReindexJobs
+	closeOnce          sync.Once
+	closeErr           error
 }
 
 const (
@@ -82,6 +83,7 @@ func initializeRedisClients(config *config.Configuration) (redis.UniversalClient
 
 	connOpt, err := redis_db.NewConnOpt(config.Redis.Dns, config.Redis.SkipTLSVerify, pool)
 	if err != nil {
+		_ = redisClient.Client().Close()
 		return nil, nil, err
 	}
 	asynqClient := asynq.NewClient(connOpt)
@@ -112,7 +114,7 @@ func initializeHTTPClient() *http.Client {
 }
 
 // NewLedgerForge initializes a new instance of LedgerForge with the provided database datasource.
-// It fetches the configuration, initializes Redis client, balance tracker, queue, and search client.
+// It fetches the configuration, initializes Redis clients, queue, reconciliation, and search services.
 //
 // Parameters:
 // - db database.IDataSource: The datasource for database operations.
@@ -131,7 +133,6 @@ func NewLedgerForge(db database.IDataSource) (*LedgerForge, error) {
 		return nil, err
 	}
 
-	bt := NewBalanceTracker()
 	hotPairManager := hotpairs.NewManager(redisClient, hotpairs.Config{
 		Enabled:                 configuration.Queue.EnableHotLane,
 		HotQueueName:            configuration.Queue.HotQueueName,
@@ -148,7 +149,6 @@ func NewLedgerForge(db database.IDataSource) (*LedgerForge, error) {
 
 	b := &LedgerForge{
 		datasource:  db,
-		bt:          bt,
 		queue:       newQueue,
 		redis:       redisClient,
 		asynqClient: asynqClient,
@@ -161,22 +161,39 @@ func NewLedgerForge(db database.IDataSource) (*LedgerForge, error) {
 		hotPairs:    hotPairManager,
 	}
 
-	notification.RegisterWebhookSender(func(event string, payload interface{}) error {
-		return b.SendWebhook(NewWebhook{
-			Event:   event,
-			Payload: payload,
-		})
-	})
+	b.queue.notifyError = b.notifyError
+	b.reconciliationService()
+	b.reindexJobs()
 
 	return b, nil
 }
 
 // Close properly closes all connections and resources used by the LedgerForge instance.
 func (b *LedgerForge) Close() error {
-	if b.asynqClient != nil {
-		return b.asynqClient.Close()
-	}
-	return nil
+	b.closeOnce.Do(func() {
+		b.reindexJobs().Close()
+		var closeErrors []error
+		if b.queue != nil && b.queue.Inspector != nil {
+			closeErrors = append(closeErrors, b.queue.Inspector.Close())
+		}
+		if b.asynqClient != nil {
+			closeErrors = append(closeErrors, b.asynqClient.Close())
+		}
+		if b.redis != nil {
+			closeErrors = append(closeErrors, b.redis.Close())
+		}
+		if b.httpClient != nil {
+			b.httpClient.CloseIdleConnections()
+		}
+		b.closeErr = errors.Join(closeErrors...)
+	})
+	return b.closeErr
+}
+
+func (b *LedgerForge) notifyError(err error) {
+	notification.NotifyErrorWithSender(err, b.Config(), func(event string, payload interface{}) error {
+		return b.SendWebhook(NewWebhook{Event: event, Payload: payload})
+	})
 }
 
 // Config returns the cached configuration for the LedgerForge instance.

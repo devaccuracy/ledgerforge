@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/devaccuracy/ledgerforge/internal/notification"
 	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
@@ -146,7 +145,7 @@ func (l *LedgerForge) enqueueMetadataUpdatedWebhook(entityType string, entitySna
 	payload, err := metadataUpdatedWebhookData(entitySnapshot)
 	if err != nil {
 		logrus.WithError(err).WithField("entity_type", entityType).Error("failed to build metadata.updated webhook payload; metadata merge is committed, event dropped")
-		notification.NotifyError(err)
+		l.notifyError(err)
 		return
 	}
 	if err := l.SendWebhook(NewWebhook{
@@ -158,7 +157,7 @@ func (l *LedgerForge) enqueueMetadataUpdatedWebhook(entityType string, entitySna
 			"event_id":    payload["event_id"],
 			"entity_type": entityType,
 		}).Error("failed to enqueue metadata.updated webhook; metadata merge is committed, event dropped")
-		notification.NotifyError(err)
+		l.notifyError(err)
 	}
 }
 
@@ -171,7 +170,7 @@ func (l *LedgerForge) queueMetadataIndexRefresh(collection, entityID string) {
 	}
 	go func() {
 		if err := l.queue.queueIndexRefresh(entityID, collection); err != nil {
-			notification.NotifyError(err)
+			l.notifyError(err)
 		}
 	}()
 }
@@ -184,7 +183,7 @@ func (l *LedgerForge) queueTransactionMetadataIndexRefresh(scopeID string) {
 	}
 	go func() {
 		if err := l.queue.queueIndexRefreshScope(scopeID, "transactions"); err != nil {
-			notification.NotifyError(err)
+			l.notifyError(err)
 		}
 	}()
 }

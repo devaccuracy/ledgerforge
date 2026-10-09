@@ -27,7 +27,6 @@ import (
 	"github.com/devaccuracy/ledgerforge/internal/apierror"
 	"github.com/devaccuracy/ledgerforge/internal/filter"
 	"github.com/devaccuracy/ledgerforge/internal/metrics"
-	"github.com/devaccuracy/ledgerforge/internal/notification"
 	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel"
@@ -85,7 +84,7 @@ func (l *LedgerForge) checkBalanceMonitors(ctx context.Context, updatedBalance *
 	monitors, err := l.getBalanceMonitorsCached(ctx, updatedBalance.BalanceID)
 	if err != nil {
 		span.RecordError(err)
-		notification.NotifyError(err)
+		l.notifyError(err)
 		return
 	}
 
@@ -99,7 +98,7 @@ func (l *LedgerForge) checkBalanceMonitors(ctx context.Context, updatedBalance *
 					Payload: monitor,
 				})
 				if err != nil {
-					notification.NotifyError(err)
+					l.notifyError(err)
 				}
 			}(monitor)
 		}
@@ -223,7 +222,7 @@ func (l *LedgerForge) postBalanceActions(ctx context.Context, balance *model.Bal
 		err := l.queue.queueIndexData(balance.BalanceID, "balances", balance)
 		if err != nil {
 			span.RecordError(err)
-			notification.NotifyError(err)
+			l.notifyError(err)
 		}
 		err = l.SendWebhook(NewWebhook{
 			Event:   "balance.created",
@@ -231,7 +230,7 @@ func (l *LedgerForge) postBalanceActions(ctx context.Context, balance *model.Bal
 		})
 		if err != nil {
 			span.RecordError(err)
-			notification.NotifyError(err)
+			l.notifyError(err)
 		}
 		span.AddEvent("Post balance actions completed", trace.WithAttributes(attribute.String("balance.id", balance.BalanceID)))
 	}()

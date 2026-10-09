@@ -25,7 +25,6 @@ import (
 	"strings"
 
 	"github.com/devaccuracy/ledgerforge/internal/filter"
-	"github.com/devaccuracy/ledgerforge/internal/notification"
 	"github.com/devaccuracy/ledgerforge/internal/tokenization"
 	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/sirupsen/logrus"
@@ -37,14 +36,14 @@ func (l *LedgerForge) postIdentityActions(_ context.Context, identity *model.Ide
 	go func() {
 		err := l.queue.queueIndexData(identity.IdentityID, "identities", identity)
 		if err != nil {
-			notification.NotifyError(err)
+			l.notifyError(err)
 		}
 		err = l.SendWebhook(NewWebhook{
 			Event:   "identity.created",
 			Payload: identity,
 		})
 		if err != nil {
-			notification.NotifyError(err)
+			l.notifyError(err)
 		}
 	}()
 }
@@ -151,7 +150,7 @@ func (l *LedgerForge) enqueueIdentityMetadataUpdated(identity *model.Identity) {
 			err = fmt.Errorf("identity %s not found after metadata update", identity.IdentityID)
 		}
 		logrus.WithError(err).WithField("identity_id", identity.IdentityID).Error("failed to load identity for metadata.updated webhook; metadata write is committed, event dropped")
-		notification.NotifyError(err)
+		l.notifyError(err)
 		return
 	}
 	l.enqueueMetadataUpdatedWebhook("identities", identityMetadataSnapshot(stored, identity.MetaData))

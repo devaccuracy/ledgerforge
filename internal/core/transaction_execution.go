@@ -28,7 +28,6 @@ import (
 	"github.com/devaccuracy/ledgerforge/internal/hotpairs"
 	redlock "github.com/devaccuracy/ledgerforge/internal/lock"
 	"github.com/devaccuracy/ledgerforge/internal/metrics"
-	"github.com/devaccuracy/ledgerforge/internal/notification"
 	"github.com/devaccuracy/ledgerforge/internal/search"
 	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/lib/pq"
@@ -243,7 +242,7 @@ func (l *LedgerForge) postTransactionActions(ctx context.Context, transaction *m
 		err := l.queue.queueIndexBatch(batch)
 		if err != nil {
 			span.RecordError(err)
-			notification.NotifyError(err)
+			l.notifyError(err)
 		}
 
 		// Send webhook notification
@@ -253,7 +252,7 @@ func (l *LedgerForge) postTransactionActions(ctx context.Context, transaction *m
 		})
 		if err != nil {
 			span.RecordError(err)
-			notification.NotifyError(err)
+			l.notifyError(err)
 		}
 
 		span.AddEvent("Post-transaction actions completed")

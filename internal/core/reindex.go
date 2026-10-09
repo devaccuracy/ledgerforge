@@ -18,6 +18,7 @@ package core
 
 import (
 	"context"
+
 	"github.com/devaccuracy/ledgerforge/internal/search"
 )
 

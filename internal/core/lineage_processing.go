@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/devaccuracy/ledgerforge/internal/notification"
 	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel/attribute"
@@ -39,7 +38,7 @@ func (l *LedgerForge) processLineage(ctx context.Context, txn *model.Transaction
 	validatedProvider, err := l.validateLineageProvider(ctx, provider, sourceBalance)
 	if err != nil {
 		span.RecordError(err)
-		notification.NotifyError(err)
+		l.notifyError(err)
 		return fmt.Errorf("lineage provider validation failed: %w", err)
 	}
 
@@ -54,7 +53,7 @@ func (l *LedgerForge) processLineage(ctx context.Context, txn *model.Transaction
 	if validatedProvider != "" && destinationBalance != nil && destinationBalance.TrackFundLineage {
 		if err := l.processLineageCredit(ctx, txn, destinationBalance, validatedProvider); err != nil {
 			span.RecordError(err)
-			notification.NotifyError(err)
+			l.notifyError(err)
 			return fmt.Errorf("lineage credit processing failed: %w", err)
 		}
 	}
@@ -63,7 +62,7 @@ func (l *LedgerForge) processLineage(ctx context.Context, txn *model.Transaction
 	if sourceBalance != nil && sourceBalance.TrackFundLineage {
 		if err := l.processLineageDebit(ctx, txn, sourceBalance, destinationBalance); err != nil {
 			span.RecordError(err)
-			notification.NotifyError(err)
+			l.notifyError(err)
 			return fmt.Errorf("lineage debit processing failed: %w", err)
 		}
 	}

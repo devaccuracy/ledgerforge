@@ -38,6 +38,15 @@ import (
 // The function retrieves configuration for the Slack webhook URL, formats the error,
 // and sends it as a JSON payload to the Slack webhook.
 func SlackNotification(err error) {
+	conf, fetchErr := config.Fetch()
+	if fetchErr != nil {
+		logrus.Error(fetchErr)
+		return
+	}
+	slackNotification(err, conf)
+}
+
+func slackNotification(err error, conf *config.Configuration) {
 	// Build the Slack message payload with typed structs and json.Marshal so
 	// error text containing quotes, backslashes, or newlines is safely
 	// encoded instead of corrupting (or injecting into) the JSON template.
@@ -76,13 +85,6 @@ func SlackNotification(err error) {
 		return
 	}
 	data := json.RawMessage(encoded)
-
-	// Fetch the configuration, including the Slack webhook URL
-	conf, err := config.Fetch()
-	if err != nil {
-		logrus.Error(err)
-		return
-	}
 
 	// Convert the Slack message to a JSON request payload
 	payload, err := request.ToJsonReq(&data)
@@ -136,33 +138,29 @@ func getWebhookSender() WebhookSender {
 //
 // This function runs the notification process asynchronously using a goroutine to avoid blocking.
 func NotifyError(systemError error) {
-	go func(systemError error) {
-		// Log the error locally using logrus
-		logrus.Error(systemError)
+	go notifyError(systemError, config.Fetch, getWebhookSender)
+}
 
-		// Fetch the configuration
-		conf, err := config.Fetch()
-		if err != nil {
-			logrus.Error(err)
-			return
-		}
+// NotifyErrorWithSender delivers errors using the originating instance's configuration and sender.
+func NotifyErrorWithSender(systemError error, conf *config.Configuration, sender WebhookSender) {
+	go notifyError(systemError, func() (*config.Configuration, error) { return conf, nil }, func() WebhookSender { return sender })
+}
 
-		// If Slack is configured, send the error notification to Slack
-		if conf.Notification.Slack.WebhookUrl != "" {
-			SlackNotification(systemError)
+func notifyError(systemError error, configuration func() (*config.Configuration, error), resolveSender func() WebhookSender) {
+	logrus.Error(systemError)
+	conf, err := configuration()
+	if err != nil {
+		logrus.Error(err)
+		return
+	}
+	if conf.Notification.Slack.WebhookUrl != "" {
+		slackNotification(systemError, conf)
+	}
+	sender := resolveSender()
+	if sender != nil && conf.Notification.Webhook.Url != "" {
+		payload := map[string]interface{}{"error": systemError.Error(), "time": time.Now()}
+		if err := sender("system.error", payload); err != nil {
+			logrus.Errorf("Error sending webhook notification: %v", err)
 		}
-
-		// If a webhook sender is registered and webhook URL is configured, send the webhook
-		sender := getWebhookSender()
-		if sender != nil && conf.Notification.Webhook.Url != "" {
-			payload := map[string]interface{}{
-				"error": systemError.Error(),
-				"time":  time.Now(),
-			}
-			err := sender("system.error", payload)
-			if err != nil {
-				logrus.Errorf("Error sending webhook notification: %v", err)
-			}
-		}
-	}(systemError)
+	}
 }

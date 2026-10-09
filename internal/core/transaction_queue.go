@@ -439,7 +439,11 @@ func enqueueTransactions(ctx context.Context, queue *Queue, originalTransaction 
 
 	for _, txn := range transactionsToEnqueue {
 		if err := queue.Enqueue(ctx, txn); err != nil {
-			notification.NotifyError(err)
+			if queue.notifyError != nil {
+				queue.notifyError(err)
+			} else {
+				notification.NotifyError(err)
+			}
 			logrus.WithError(err).Error("failed to queue transaction")
 			return err
 		}
