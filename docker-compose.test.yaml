@@ -44,7 +44,7 @@ services:
       postgres:
         condition: service_healthy
   test:
-    image: ${GO_TEST_IMAGE:-golang:1.26}
+    image: ${GO_TEST_IMAGE:-golang:1.26.9}
     network_mode: service:postgres
     working_dir: /src
     volumes:
