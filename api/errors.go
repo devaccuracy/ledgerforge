@@ -144,6 +144,10 @@ func clientErrorMessage(err error, code apierror.ErrorCode) string {
 	if errors.As(err, &apiErrPtr) && apiErrPtr != nil {
 		return apiErrPtr.Message
 	}
+	// Only exact, field-specific validation text is safe to preserve.
+	if code == apierror.ErrTxnInvalidAmount && err.Error() == "precise_amount must be positive" {
+		return "precise_amount must be positive"
+	}
 	messages := map[apierror.ErrorCode]string{
 		apierror.ErrGenNotFound:              "resource not found",
 		apierror.ErrAPIKeyNotFound:           "API key not found",

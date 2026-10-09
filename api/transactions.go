@@ -712,7 +712,7 @@ func (a Api) RecoverQueuedTransactions(c *gin.Context) {
 // than failing the whole request, mirroring BulkInflightUpdate, whose
 // per-item failures do not abort the rest of the batch. Only an
 // infrastructure error aborts.
-func (a Api) respondBulkInflightPreview(c *gin.Context, action string, items []ledgerforge.BulkInflightItem) {
+func (a Api) respondBulkInflightPreview(c *gin.Context, action string, items []ledgerforge.BulkInflightItem, resolutionErrors []error) {
 	preview := model.BulkTransactionPreview{
 		DryRun:     true,
 		WouldApply: true,
@@ -747,17 +747,32 @@ func (a Api) respondBulkInflightPreview(c *gin.Context, action string, items []l
 			strings.Join(uniqueStrings(dupes), ", ")))
 	}
 
-	for _, item := range items {
-		itemPreview, err := a.ledgerforge.PreviewInflightAction(c.Request.Context(), item.TransactionID, action, item.Amount)
+	for i, item := range items {
+		var itemPreview *model.TransactionPreview
+		var err error
+		if resolutionErrors != nil {
+			err = resolutionErrors[i]
+		}
+		if err == nil {
+			itemPreview, err = a.ledgerforge.PreviewInflightAction(c.Request.Context(), item.TransactionID, action, item.Amount)
+		}
 		if err != nil {
 			// The id could not be resolved at all (missing, or an
 			// infrastructure failure). Report it against the item rather than
 			// discarding the projections already gathered.
+			code, ok := resolveErrorCode(err)
+			if !ok {
+				code = apierror.ErrGenInternal
+			}
+			var amountErr inflightAmountError
+			if errors.As(err, &amountErr) {
+				code = apierror.ErrTxnInvalidAmount
+			}
 			itemPreview = &model.TransactionPreview{
 				DryRun:     true,
 				WouldApply: false,
 				Operation:  action,
-				Rejection:  &model.PreviewRejection{Message: clientErrorMessage(err, apierror.ErrTxnValidation)},
+				Rejection:  &model.PreviewRejection{Code: string(code), Message: clientErrorMessage(err, code)},
 			}
 		}
 		if !itemPreview.WouldApply {
@@ -847,7 +862,7 @@ func (a Api) BulkVoidInflight(c *gin.Context) {
 	// Ahead of both the queueing and the synchronous branch: a dry run must
 	// not release a hold on either path.
 	if req.DryRun {
-		a.respondBulkInflightPreview(c, ledgerforge.InflightActionVoid, items)
+		a.respondBulkInflightPreview(c, ledgerforge.InflightActionVoid, items, nil)
 		return
 	}
 
@@ -912,32 +927,45 @@ func (a Api) BulkCommitInflight(c *gin.Context) {
 	}
 
 	items := make([]ledgerforge.BulkInflightItem, len(req.Transactions))
+	resolutionErrors := make([]error, len(req.Transactions))
+	validItems := make([]ledgerforge.BulkInflightItem, 0, len(req.Transactions))
+	positions := make([]int, 0, len(req.Transactions))
+	response := model2.BulkInflightResponse{Results: make([]model2.BulkInflightResult, len(req.Transactions))}
 	for i, it := range req.Transactions {
 		amount, err := a.resolveInflightAmount(c.Request.Context(), it.TransactionID, it.Amount, it.ExactAmount(), it.PreciseAmount)
-		if err != nil {
-			respondError(c, err, withDefault(apierror.ErrTxnInvalidAmount))
-			return
-		}
 		items[i] = ledgerforge.BulkInflightItem{TransactionID: it.TransactionID, Amount: amount}
+		resolutionErrors[i] = err
+		if err != nil {
+			response.Results[i] = inflightResolutionFailure(it.TransactionID, err)
+			response.Failed++
+			continue
+		}
+		validItems = append(validItems, items[i])
+		positions = append(positions, i)
 	}
 
-	// Ahead of both the queueing and the synchronous branch: a dry run must
-	// not settle a hold on either path.
 	if req.DryRun {
-		a.respondBulkInflightPreview(c, ledgerforge.InflightActionCommit, items)
+		a.respondBulkInflightPreview(c, ledgerforge.InflightActionCommit, items, resolutionErrors)
 		return
 	}
 
-	if !req.SkipQueue {
-		c.JSON(http.StatusOK, a.queueBulkInflight(c.Request.Context(), ledgerforge.InflightActionCommit, items))
-		return
+	var processed model2.BulkInflightResponse
+	if len(validItems) > 0 {
+		if !req.SkipQueue {
+			processed = a.queueBulkInflight(c.Request.Context(), ledgerforge.InflightActionCommit, validItems)
+		} else {
+			outcomes, err := a.ledgerforge.BulkInflightUpdate(c.Request.Context(), ledgerforge.BulkInflightCommit, validItems, bulkInflightMaxWorkers)
+			if err != nil {
+				respondError(c, err, withDefault(apierror.ErrGenBadRequest))
+				return
+			}
+			processed, _ = toAPIResults(outcomes)
+		}
 	}
-
-	outcomes, err := a.ledgerforge.BulkInflightUpdate(c.Request.Context(), ledgerforge.BulkInflightCommit, items, bulkInflightMaxWorkers)
-	if err != nil {
-		respondError(c, err, withDefault(apierror.ErrGenBadRequest))
-		return
+	for i, result := range processed.Results {
+		response.Results[positions[i]] = result
 	}
-	resp, _ := toAPIResults(outcomes)
-	c.JSON(http.StatusOK, resp)
+	response.Succeeded += processed.Succeeded
+	response.Failed += processed.Failed
+	c.JSON(http.StatusOK, response)
 }

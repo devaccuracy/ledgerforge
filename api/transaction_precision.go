@@ -22,21 +22,28 @@ import (
 	"math"
 	"math/big"
 
+	ledgerforge "github.com/devaccuracy/ledgerforge"
+	model2 "github.com/devaccuracy/ledgerforge/api/model"
 	"github.com/devaccuracy/ledgerforge/internal/apierror"
 	"github.com/devaccuracy/ledgerforge/model"
 )
+
+// inflightAmountError distinguishes invalid monetary inputs from lookup failures.
+type inflightAmountError struct{ error }
+
+func (e inflightAmountError) Unwrap() error { return e.error }
 
 // Zero means the full remaining hold. Partial major-unit commits must use the
 // original transaction's authoritative scale from the injected datasource.
 func (a Api) resolveInflightAmount(ctx context.Context, id string, amount float64, exact string, precise *big.Int) (*big.Int, error) {
 	if precise != nil {
 		if precise.Sign() <= 0 {
-			return nil, errors.New("precise_amount must be positive")
+			return nil, inflightAmountError{errors.New("precise_amount must be positive")}
 		}
 		return new(big.Int).Set(precise), nil
 	}
 	if math.IsNaN(amount) || math.IsInf(amount, 0) || amount < 0 {
-		return nil, errors.New("amount must be finite and positive")
+		return nil, inflightAmountError{errors.New("amount must be finite and positive")}
 	}
 	if amount == 0 {
 		return big.NewInt(0), nil
@@ -81,5 +88,23 @@ func (a Api) resolveInflightAmount(ctx context.Context, id string, amount float6
 	if transaction == nil || transaction.Precision == 0 {
 		return nil, errors.New("transaction precision is unavailable")
 	}
-	return model.ParseAmount(exact, transaction.Precision)
+	resolved, err := model.ParseAmount(exact, transaction.Precision)
+	if err != nil {
+		return nil, inflightAmountError{err}
+	}
+	return resolved, nil
+}
+
+func inflightResolutionFailure(id string, err error) model2.BulkInflightResult {
+	code, ok := resolveErrorCode(err)
+	if !ok {
+		code = apierror.ErrGenInternal
+	}
+	resultCode := ledgerforge.ClassifyInflightError(err)
+	var amountErr inflightAmountError
+	if errors.As(err, &amountErr) {
+		code = apierror.ErrTxnInvalidAmount
+		resultCode = "INVALID_AMOUNT"
+	}
+	return model2.BulkInflightResult{TransactionID: id, Status: "failed", Code: resultCode, Message: clientErrorMessage(err, code)}
 }

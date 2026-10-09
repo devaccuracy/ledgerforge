@@ -18,6 +18,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -433,42 +434,45 @@ func TestRecordTransactionPrecisionValidation(t *testing.T) {
 // commit/void handler rejects an explicit non-positive precise_amount before any
 // processing, so a zero/negative partial commit can never be applied.
 func TestInflightCommitRejectsNonPositivePreciseAmount(t *testing.T) {
-	cases := []struct {
-		name          string
-		status        string
-		preciseAmount *big.Int
-	}{
-		{"commit negative precise_amount", "commit", big.NewInt(-100)},
-		{"commit zero precise_amount", "commit", big.NewInt(0)},
-		{"void negative precise_amount", "void", big.NewInt(-100)},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			router, _, err := setupRouter(t)
-			if err != nil {
-				t.Fatalf("Failed to setup router: %v", err)
+	for _, status := range []string{"commit", "void"} {
+		for _, precise := range []int64{-100, 0} {
+			for _, skipQueue := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%d/skip_queue=%t", status, precise, skipQueue), func(t *testing.T) {
+					router, b, err := setupRouter(t)
+					require.NoError(t, err)
+					t.Cleanup(func() { require.NoError(t, b.Close()) })
+					source := createTestBalanceWithLedger(t, b, "USD", nil)
+					destination := createTestBalanceWithLedger(t, b, "USD", nil)
+					holdID := createInflightForBulk(t, router, source.BalanceID, destination.BalanceID, "USD", 100)
+					beforeSource, err := b.GetBalanceByID(t.Context(), source.BalanceID, nil, false)
+					require.NoError(t, err)
+					beforeDestination, err := b.GetBalanceByID(t.Context(), destination.BalanceID, nil, false)
+					require.NoError(t, err)
+					response := doJSON(router, http.MethodPut, "/transactions/inflight/"+holdID, model2.InflightUpdate{Status: status, PreciseAmount: big.NewInt(precise), SkipQueue: skipQueue})
+					require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+					raw, detail := decodeDetail(t, response)
+					require.Equal(t, "TXN_INVALID_AMOUNT", string(detail.Code))
+					require.Equal(t, "precise_amount must be positive", detail.Message)
+					require.Equal(t, detail.Message, raw["error"])
+					afterSource, err := b.GetBalanceByID(t.Context(), source.BalanceID, nil, false)
+					require.NoError(t, err)
+					afterDestination, err := b.GetBalanceByID(t.Context(), destination.BalanceID, nil, false)
+					require.NoError(t, err)
+					require.Equal(t, beforeSource, afterSource)
+					require.Equal(t, beforeDestination, afterDestination)
+					hold, err := b.GetTransaction(t.Context(), holdID)
+					require.NoError(t, err)
+					require.Equal(t, "INFLIGHT", hold.Status)
+					children, err := b.GetDataSource().GetTransactionsByParent(t.Context(), holdID, 100, 0)
+					require.NoError(t, err)
+					require.Empty(t, children, "no posting or queued intent may be created")
+					inspector := monetaryTestInspector(t, b)
+					task, taskErr := inspector.GetTaskInfo(b.Config().Queue.InflightCommitQueue, "inflight-action:"+holdID)
+					require.Nil(t, task)
+					require.True(t, errors.Is(taskErr, asynq.ErrTaskNotFound) || errors.Is(taskErr, asynq.ErrQueueNotFound), "invalid amounts must not be queued: %v", taskErr)
+				})
 			}
-
-			payload := model2.InflightUpdate{
-				Status:        tc.status,
-				PreciseAmount: tc.preciseAmount,
-			}
-			payloadBytes, _ := request.ToJsonReq(&payload)
-			response := map[string]interface{}{}
-			resp, reqErr := SetUpTestRequest(TestRequest{
-				Payload:  payloadBytes,
-				Response: &response,
-				Method:   "PUT",
-				Route:    "/transactions/inflight/" + model.GenerateUUIDWithSuffix("txn"),
-				Auth:     "",
-				Router:   router,
-			})
-			require.NoError(t, reqErr)
-			assert.Equal(t, http.StatusBadRequest, resp.Code)
-			bodyBytes, _ := json.Marshal(response)
-			assert.Contains(t, string(bodyBytes), "precise_amount must be positive")
-		})
+		}
 	}
 }
 
