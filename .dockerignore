@@ -2,3 +2,9 @@ ledgerforge
 .env
 .idea
 
+
+# Keep local credentials and worktree metadata out of image build contexts.
+.git
+ledgerforge.json
+ledgerforge-mcp
+examples/quickstart/ledgerforge.local.json

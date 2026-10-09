@@ -7,6 +7,8 @@
     "dns": "redis:6379"
   },
   "server": {
-    "port": "5001"
+    "port": "5001",
+    "secure": true,
+    "secret_key": "REPLACE_WITH_A_RANDOM_SECRET"
   }
 }

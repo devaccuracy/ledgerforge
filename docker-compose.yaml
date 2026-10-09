@@ -12,18 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 services:
-  init:
-    image: alpine:3.19
-    container_name: init
-    working_dir: /workspace
-    volumes:
-      - .:/workspace
-    entrypoint: ["/bin/sh", "/workspace/ledgerforge-init.sh"]
-    restart: "no"
-
   server:
     image: ${LEDGERFORGE_IMAGE:-ghcr.io/devaccuracy/ledgerforge:main}
-    container_name: server
     restart: on-failure
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -31,39 +21,57 @@ services:
     environment:
       TZ: ${TZ:-Etc/UTC}
     ports:
-      - "5001:5001"
+      - "127.0.0.1:${LEDGERFORGE_API_PORT:-5001}:5001"
     depends_on:
-      - init
-      - redis
-      - postgres
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     volumes:
-      - ./ledgerforge.json:/ledgerforge.json
+      - type: bind
+        source: ./ledgerforge.json
+        target: /ledgerforge.json
+        read_only: true
+        bind:
+          create_host_path: false
+
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5001; printf 'GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3; head -n 1 <&3 | grep -q '200'"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
 
   worker:
     image: ${LEDGERFORGE_IMAGE:-ghcr.io/devaccuracy/ledgerforge:main}
-    container_name: worker
     restart: on-failure
     entrypoint: ["ledgerforge", "workers"]
     ports:
-      - "5004:5004"
+      - "127.0.0.1:5004:5004"
     depends_on:
-      - init
-      - redis
-      - postgres
+      server:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     volumes:
-      - ./ledgerforge.json:/ledgerforge.json
+      - type: bind
+        source: ./ledgerforge.json
+        target: /ledgerforge.json
+        read_only: true
+        bind:
+          create_host_path: false
 
   redis:
     image: redis:7.2.4
-    container_name: redis
     restart: on-failure
 
   postgres:
     image: ${POSTGRES_IMAGE:-postgres:16}
-    container_name: ${POSTGRES_CONTAINER:-postgres}
     restart: on-failure
     ports:
-      - "${POSTGRES_OUTER_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_OUTER_PORT:-55432}:5432"
     environment:
       TZ: ${TZ:-Etc/UTC}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
@@ -79,7 +87,6 @@ services:
 
   typesense:
     image: typesense/typesense:29.0
-    container_name: typesense
     profiles:
       - search
     command:
@@ -87,7 +94,7 @@ services:
     environment:
       TYPESENSE_MEMORY_USED_MAX_PERCENTAGE: "${TYPESENSE_MEMORY_USED_MAX_PERCENTAGE:-85}"
     ports:
-      - "8108:8108"
+      - "127.0.0.1:8108:8108"
     volumes:
       - typesense_data:/data
     logging:
@@ -100,13 +107,12 @@ services:
 
   jaeger:
     image: jaegertracing/all-in-one:latest
-    container_name: jaeger
     profiles:
       - tracing
     ports:
-      - "16686:16686" # Jaeger UI
-      - "4317:4317" # OTLP gRPC
-      - "4318:4318" # OTLP HTTP
+      - "127.0.0.1:16686:16686" # Jaeger UI
+      - "127.0.0.1:4317:4317" # OTLP gRPC
+      - "127.0.0.1:4318:4318" # OTLP HTTP
     environment:
       - COLLECTOR_OTLP_ENABLED=true
     healthcheck:
@@ -117,11 +123,10 @@ services:
 
   prometheus:
     image: prom/prometheus:latest
-    container_name: prometheus
     profiles:
       - monitoring
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
     depends_on:

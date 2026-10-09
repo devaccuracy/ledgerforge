@@ -1,145 +1,124 @@
 # LedgerForge
 
-[![Build and Test Status](https://github.com/devaccuracy/ledgerforge/actions/workflows/go.yml/badge.svg)](https://github.com/devaccuracy/ledgerforge/actions/workflows/go.yml)
-[![Docker Build Status](https://github.com/devaccuracy/ledgerforge/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/devaccuracy/ledgerforge/actions/workflows/docker-publish.yml)
-[![Linter Status](https://github.com/devaccuracy/ledgerforge/actions/workflows/lint.yml/badge.svg)](https://github.com/devaccuracy/ledgerforge/actions/workflows/lint.yml)
-[![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
+[![Build and Test](https://github.com/devaccuracy/ledgerforge/actions/workflows/go.yml/badge.svg)](https://github.com/devaccuracy/ledgerforge/actions/workflows/go.yml)
 
-LedgerForge is a financial infrastructure platform building production-grade, open-source ledger systems for teams that move money.
+LedgerForge is an open-source double-entry ledger for applications that move
+money. Use it to record wallet transfers, billing activity, reservations and
+refunds through an HTTP API, a Go library or a local MCP server.
 
-LedgerForge Core is a high-performance double-entry ledger for developers building wallets, billing systems, reconciliation workflows, and money-movement infrastructure with correctness, traceability, and operational control.
+PostgreSQL stores the financial records. Redis supports queues and background
+workers. Search and observability services are optional. LedgerForge records
+money movement; connecting payment rails and defining your accounting model
+remain application responsibilities.
 
-Learn more at [ledgerforge.io](https://ledgerforge.io).
+## Accounting guarantees
 
-## Links
+- **Exact amounts:** postings and balance arithmetic use integer units. Supply
+  `precise_amount` with an explicit `precision` to avoid floating-point input
+  loss; `1250` at precision `100` represents `12.50`.
+- **Double entry:** each applied transfer debits its source and credits its
+  destination by the same amount. Split transfers distribute that amount
+  across their legs.
+- **Immutable postings:** corrections and refunds create linked transactions.
+  Financial postings are preserved; descriptive metadata can be updated.
+- **Idempotency by reference:** reuse the same unique transaction `reference`
+  after a timeout. Duplicate references are rejected; look up the original
+  outcome instead of retrying with a new reference.
 
-- Docs: [https://ledgerforge.io/docs](https://ledgerforge.io/docs)
-- GitHub: [github.com/devaccuracy/ledgerforge](https://github.com/devaccuracy/ledgerforge)
-- Security reports: [security@ledgerforge.io](mailto:security@ledgerforge.io)
+See [ledger concepts](docs/concepts.md) for amount handling, balance semantics
+and asynchronous transaction states.
 
-## Status
+## Quickstart: a balanced transfer
 
-This repository contains LedgerForge Core, the open-source ledger engine for self-hosted deployments.
+Requires Docker with Compose and Python 3. From a checkout:
 
-LedgerForge is built for teams evaluating ledger infrastructure locally, then moving toward production deployment when workload, security, and operating requirements are clear. Managed deployment and hosted operations workflows are handled through private onboarding.
-
-Required Apache License 2.0 attribution is documented in `NOTICE.md`.
-
-## Installation
-
-```bash
+```sh
 git clone https://github.com/devaccuracy/ledgerforge.git
 cd ledgerforge
-cp .env.example .env
+./examples/quickstart/start.sh
+./examples/quickstart/transfer.sh
+```
+
+This **local-only demo** builds the current checkout, generates a random master
+key, runs migrations and binds the API to `127.0.0.1:5001`. It creates two USD
+balances and posts `12.50` synchronously using integer units. The source gets a
+bounded demo overdraft of `12.50`; the result is `-1250` and `1250` units, with
+equal total debits and credits. A retry with the same reference must leave
+those balances unchanged.
+
+```text
+source: -1250 units
+destination: 1250 units
+total debits = total credits = 1250 units
+reference retry: balances unchanged
+```
+
+Stop it with `docker compose -p ledgerforge-demo -f examples/quickstart/compose.yaml down`.
+See the [example guide](examples/quickstart/README.md) for the API payload,
+credentials and cleanup. These credentials and database defaults are for local
+use. Read the [deployment guide](docs/deployment.md) before exposing a service.
+
+## Why LedgerForge
+
+- Model balances by ledger, identity and currency, with explicit overdraft
+  controls and historical balance snapshots.
+- Choose synchronous posting or queued execution. Reserve funds with inflight
+  transactions, then commit, partially commit or void the hold.
+- Use split and bulk transactions, scheduling and dry-run projections to build
+  application workflows around the same accounting model.
+- Reconcile external records, track fund lineage and receive transaction and
+  metadata events through webhooks.
+- Operate your own PostgreSQL and Redis deployment, with optional Typesense
+  search, Prometheus metrics and OpenTelemetry exports.
+- Connect a local MCP client. The MCP server registers write tools only with
+  explicit `--allow-write`; review its [authority model](docs/mcp.md) before
+  granting access.
+
+<!-- Integration placeholder: document the merged integrity verification capability and CLI here. -->
+<!-- Integration placeholder: document merged audit checkpoints and independent verification here. -->
+<!-- Integration placeholder: document merged server-enforced agent spending policies and approvals here. -->
+
+## Run the published image locally
+
+```sh
 cp ledgerforge.example.json ledgerforge.json
+# Replace server.secret_key with a random secret before starting.
+# For example, generate one with: openssl rand -hex 32
+docker compose up -d
 ```
 
-## Example configuration
+The config explicitly enables authentication. API requests use the
+`X-LedgerForge-Key` header. Keep `ledgerforge.json` private and out of version
+control. The `:main` image tracks tested main-branch commits; pin a release tag
+or digest in production with `LEDGERFORGE_IMAGE`.
 
-```json
-{
-  "project_name": "LedgerForge",
-  "data_source": {
-    "dns": "postgres://postgres:password@postgres:5432/ledgerforge?sslmode=disable"
-  },
-  "redis": {
-    "dns": "redis:6379"
-  },
-  "server": {
-    "port": "5001"
-  }
-}
-```
+## Documentation
 
-## Running locally
-
-Start the bundled services and LedgerForge containers:
-
-```bash
-docker compose up
-```
-
-Build and run the CLI directly:
-
-```bash
-go build -o ledgerforge ./cmd/ledgerforge
-./ledgerforge --help
-```
-
-Run database migrations:
-
-```bash
-./ledgerforge migrate up
-```
-
-## What LedgerForge Core Provides
-
-- A double-entry ledger for balances, ledgers, transactions, inflight transactions, scheduled transactions, overdrafts, and historical balance snapshots.
-- Multi-currency balance tracking for accounts and wallets.
-- Transaction workflows including split transactions, bulk transactions, and two-phase commit-style inflight flows.
-- Reconciliation primitives for matching external records against internal ledger activity.
-- Identity and account models for linking financial entities to balances and transaction flows.
-- Webhook, queue, search, metrics, and operational hooks for production financial systems.
-- PostgreSQL-backed persistence with Redis-backed queues and operational workers.
-
-Additional capabilities include transaction and refund dry runs, bulk inflight
-commit and void operations, deterministic identity IDs, structured error codes,
-queue and search backpressure, remote monitoring exports, and a tamper-evident
-transaction hash chain. Use `ledgerforge verify-chain` to check sealed history.
-
-Metadata changes emit webhook events and refresh search documents from the
-stored entity. See [metadata update webhooks](docs/metadata-webhooks.md) for
-payloads and delivery guarantees. Docker Compose creates `ledgerforge.json`
-when it is missing; enable optional search and tracing services with
-`--profile search` and `--profile tracing`.
-
-## Deployment Options
-
-- **Self-hosted Core:** run LedgerForge locally or on your own infrastructure with Docker, PostgreSQL, and Redis.
-- **Managed production planning:** request private onboarding for workload review, Kubernetes or private-cloud planning, observability, backups, and operating runbooks.
-
-LedgerForge is API-first. Teams can run the open-source Core in their own environment and integrate through the HTTP API or wrap ledger workflows in their own services.
-
-## MCP integration
-
-LedgerForge includes a local, stdio-based MCP server for secure agent and tool
-integration. It is read-only by default; state-changing tools require an
-explicit `--allow-write` opt-in.
-
-```bash
-make build-mcp
-./ledgerforge-mcp --config ./ledgerforge.json
-```
-
-See the [MCP server guide](docs/mcp.md) for client configuration and production
-access guidance.
+- [Concepts: amounts, balances and transaction states](docs/concepts.md)
+- [Deployment: secrets, TLS, limits and webhook verification](docs/deployment.md)
+- [Architecture and trust boundaries](ARCHITECTURE.md)
+- [MCP server](docs/mcp.md)
+- [Metrics and monitoring](docs/metrics.md)
+- [Metadata webhooks](docs/metadata-webhooks.md)
+- [Contributing and isolated integration tests](CONTRIBUTING.md)
+- [Changelog](CHANGELOG.md) and [security policy](SECURITY.md)
+- [Online documentation](https://ledgerforge.io/docs)
 
 ## Development
 
-```bash
-go test -short ./...
-make build
-docker compose config
+```sh
+make verify
+make test-integration
+make vuln
+make cover
 ```
 
-`go test -short ./...` covers the hermetic fast path. Service-backed integration tests expect local PostgreSQL and Redis, which you can start with `docker compose --profile search up`. The full suite also exercises Typesense.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for prerequisites and test isolation.
 
-## Origin And Attribution
+## Community and license
 
-LedgerForge is derived from an upstream Apache License 2.0 project.
+Use [GitHub issues](https://github.com/devaccuracy/ledgerforge/issues) for bugs
+and feature requests. Follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+Report vulnerabilities privately to [security@ledgerforge.io](mailto:security@ledgerforge.io).
 
-License notices and attribution are documented in `NOTICE.md`.
-
-LedgerForge Core is maintained as the open-source foundation of LedgerForge's financial infrastructure platform.
-
-## Contributing
-
-Contributions and feedback are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) before opening issues or pull requests.
-
-## Security
-
-LedgerForge is financial infrastructure software. Please do not open public issues for suspected vulnerabilities. Report security concerns privately to [security@ledgerforge.io](mailto:security@ledgerforge.io). See [SECURITY.md](SECURITY.md).
-
-## License
-
-LedgerForge is distributed under the Apache License 2.0. Original upstream copyright and license notices are retained where applicable.
+Licensed under [Apache 2.0](LICENSE.md). Required notices are in [NOTICE.md](NOTICE.md).
