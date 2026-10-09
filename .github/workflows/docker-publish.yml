@@ -3,12 +3,18 @@ name: Build and Publish Docker Image
 on:
   push:
     branches: ["main"]
-    tags: ["v*.*.*"]
   pull_request:
     branches: ["main"]
 
+permissions:
+  contents: read
+
 jobs:
+  checks:
+    uses: ./.github/workflows/go.yml
+
   push_to_registry:
+    needs: checks
     name: Build (and push when allowed)
     runs-on: ubuntu-latest
     permissions:
@@ -39,7 +45,9 @@ jobs:
         with:
           images: ghcr.io/devaccuracy/ledgerforge
           tags: |
+            type=raw,value=main,enable={{is_default_branch}}
             type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
             type=ref,event=tag
             type=semver,pattern={{version}}
 

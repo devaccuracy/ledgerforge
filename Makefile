@@ -13,11 +13,14 @@
 # limitations under the License.
 
 PROJECT ?= ledgerforge
+GOVULNCHECK_VERSION ?= v1.1.4
+TEST_ARGS ?= -count=1 ./...
+COVER_DIR ?= /tmp/ledgerforge-coverage-$(shell id -u)
 GO_FILES := $(shell find . -type f -name '*.go' -not -path './vendor/*')
 
 .PHONY: \
 	print-project init generate fmt fmt-check tidy-check vet test test-integration \
-	build build-mcp verify docker-run run run-workers build-run build-test-run \
+	build build-mcp verify vuln cover docker-run run run-workers build-run build-test-run \
 	migrate-up migrate-down backup backup-s3 \
 	printProject docker_run run_workers build_run build_test_run migrate_up migrate_down backup_s3
 
@@ -49,8 +52,23 @@ vet:
 test:
 	go test -short ./...
 
+# Run in a private compose network, including migrations; always clean up this run.
+# Override TEST_ARGS to select packages or enable the race detector.
 test-integration:
-	go test ./...
+	@project="ledgerforge-test-$$(id -u)-$$$$"; \
+	trap 'docker compose -p "$$project" -f docker-compose.test.yaml down -v' EXIT; \
+	docker compose -p "$$project" -f docker-compose.test.yaml run --rm test $(TEST_ARGS)
+
+vuln:
+	@tool_dir=$$(mktemp -d); \
+	trap 'rm -r "$$tool_dir"' EXIT; \
+	GOBIN="$$tool_dir" go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) && \
+	"$$tool_dir/govulncheck" ./...
+
+cover:
+	@mkdir -p "$(COVER_DIR)"
+	go test -short -coverprofile="$(COVER_DIR)/coverage.out" -covermode=atomic ./...
+	go tool cover -html="$(COVER_DIR)/coverage.out" -o "$(COVER_DIR)/index.html"
 
 # Mutation testing on the money-critical fast packages (model, filter).
 # Plants hundreds of one-line bugs and re-runs the tests against each one;
@@ -82,7 +100,7 @@ build-mcp:
 verify: tidy-check fmt-check vet test build build-mcp
 
 docker-run:
-	docker run -v $(CURDIR)/ledgerforge.json:/ledgerforge.json -p 5001:5001 ghcr.io/devaccuracy/ledgerforge:main
+	docker run --mount type=bind,source="$(CURDIR)/ledgerforge.json",target=/ledgerforge.json,readonly -p 127.0.0.1:5001:5001 ghcr.io/devaccuracy/ledgerforge:main
 
 docker_run: docker-run
 

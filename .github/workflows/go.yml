@@ -6,6 +6,8 @@ on:
   pull_request:
     branches: [ "main" ]
 
+  workflow_call:
+
 permissions:
   contents: read
 
@@ -19,7 +21,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: 1.25.0
+          go-version: '1.26.x'
           cache: true
 
       - name: Verify module metadata
@@ -28,7 +30,7 @@ jobs:
           git diff --exit-code -- go.mod go.sum
 
       - name: Verify formatting
-        run: test -z "$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
+        run: test -z "$(gofmt -l .)"
 
       - name: Vet
         run: go vet ./...
@@ -86,7 +88,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: 1.25.0
+          go-version: '1.26.x'
           cache: true
 
       - name: Migrate Database
@@ -96,16 +98,23 @@ jobs:
           LEDGERFORGE_REDIS_DNS: localhost:6379
 
       - name: Test
-        run: go test -v -p 1 ./...
+        run: go test -v -p 1 -coverprofile=coverage.out -covermode=atomic ./...
         env:
           LEDGERFORGE_TYPESENSE_DNS: http://localhost:8108
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: coverage.out
+          if-no-files-found: error
 
   race:
     runs-on: ubuntu-latest
 
     services:
       postgres:
-        image: postgres:latest
+        image: postgres:16
         env:
           POSTGRES_DB: ledgerforge
           POSTGRES_USER: postgres
@@ -119,7 +128,7 @@ jobs:
           --health-retries 5
 
       redis:
-        image: redis:latest
+        image: redis:7.2.4
         ports:
           - 6379:6379
         options: >-
@@ -147,7 +156,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: 1.25.0
+          go-version: '1.26.x'
 
       - name: Tidy
         run: go mod tidy
@@ -162,3 +171,25 @@ jobs:
         run: go test -race -p 1 ./...
         env:
           LEDGERFORGE_TYPESENSE_DNS: http://localhost:8108
+
+  vulnerability:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+      - name: Check reachable vulnerabilities
+        run: make vuln
+
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+      - name: Fuzz smoke (skip cleanly when no targets exist)
+        run: .github/scripts/fuzz-smoke.sh
