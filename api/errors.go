@@ -136,6 +136,11 @@ func clientErrorMessage(err error, code apierror.ErrorCode) string {
 	if apierror.StatusForCode(code) >= 500 {
 		return sanitizedInternalMessage
 	}
+	// Preserve field-specific validation without echoing wrapped backend text.
+	if code == apierror.ErrTxnInvalidAmount && err != nil &&
+		(strings.Contains(err.Error(), "precise_amount must be positive") || strings.Contains(err.Error(), "transaction precise amount must be positive")) {
+		return "precise_amount must be positive"
+	}
 	var apiErr apierror.APIError
 	if errors.As(err, &apiErr) {
 		return apiErr.Message

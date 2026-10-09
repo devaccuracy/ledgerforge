@@ -27,6 +27,7 @@ import (
 
 	"github.com/devaccuracy/ledgerforge"
 	"github.com/devaccuracy/ledgerforge/config"
+	"github.com/devaccuracy/ledgerforge/database"
 	"github.com/devaccuracy/ledgerforge/internal/apierror"
 	"github.com/devaccuracy/ledgerforge/internal/policy"
 	"github.com/gin-gonic/gin"
@@ -256,6 +257,10 @@ func (m *AuthMiddleware) Authenticate() gin.HandlerFunc {
 
 		// If not master key, try API key authentication
 		apiKey, err := m.service.GetAPIKeyByKey(c.Request.Context(), key)
+		if errors.Is(err, database.ErrLegacyAPIKeyVerificationBusy) {
+			abortWithCode(c, apierror.ErrGenRateLimited, "legacy API key verification is busy; retry later")
+			return
+		}
 		if err != nil {
 			abortWithCode(c, apierror.ErrAuthInvalidAPIKey, "Invalid API key")
 			return

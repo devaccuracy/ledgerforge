@@ -121,6 +121,8 @@ func TestGetAPIKey_NotFound(t *testing.T) {
 		WithArgs(keyPrefix).
 		WillReturnRows(sqlmock.NewRows([]string{"api_key_id", "key", "name", "owner_id", "scopes", "expires_at", "created_at", "last_used_at", "is_revoked", "revoked_at", "key_prefix"}))
 
+	mock.ExpectQuery(regexp.QuoteMeta(legacyAPIKeyQuery)).WillReturnRows(sqlmock.NewRows([]string{"api_key_id", "key", "name", "owner_id", "scopes", "expires_at", "created_at", "last_used_at", "is_revoked", "revoked_at", "key_prefix"}))
+
 	apiKey, err := ds.GetAPIKey(context.Background(), key)
 	assert.Error(t, err)
 	assert.Nil(t, apiKey)

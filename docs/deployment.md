@@ -34,6 +34,17 @@ Keep it in a secret manager and use scoped API keys for applications. Rotate
 keys when access changes. Do not include credentials in images, repositories,
 logs, example commands or support reports. Protect the config file on disk.
 
+Legacy bcrypt API keys without a stored prefix remain usable by default through
+`server.allow_legacy_api_keys` (`LEDGERFORGE_SERVER_ALLOW_LEGACY_API_KEYS`). Only
+active keys enter this compatibility lookup, after indexed lookup finds no
+candidate. At most two legacy scans run concurrently per process; excess
+requests receive 429 and should retry with backoff. A successful lookup backfills
+the prefix. Startup logs report the count of keys still lacking a prefix.
+Rotate unused legacy credentials: create replacement keys with the required
+owner, scopes, expiry and policy, update clients, then revoke the old keys. After
+active clients have migrated, set `server.allow_legacy_api_keys: false` on every
+API/MCP process to disable legacy verification. Indexed keys keep working.
+
 Environment variables override loaded JSON fields. Supported settings include
 `LEDGERFORGE_SERVER_SECURE`, `LEDGERFORGE_SERVER_SECRET_KEY`,
 `LEDGERFORGE_DATA_SOURCE_DNS` and `LEDGERFORGE_REDIS_DNS`. The compose files mount

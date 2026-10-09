@@ -109,6 +109,9 @@ var (
 var ConfigStore atomic.Value
 
 type ServerConfig struct {
+	// AllowLegacyAPIKeys enables the bounded compatibility lookup for active
+	// bcrypt keys without key_prefix. Default true; disable after rotating old keys.
+	AllowLegacyAPIKeys   *bool  `json:"allow_legacy_api_keys" envconfig:"LEDGERFORGE_SERVER_ALLOW_LEGACY_API_KEYS"`
 	SSL                  bool   `json:"ssl"                      envconfig:"LEDGERFORGE_SERVER_SSL"`
 	CertStoragePath      string `json:"cert_storage_path"        envconfig:"LEDGERFORGE_CERT_STORAGE_PATH"`
 	Secure               bool   `json:"secure"                   envconfig:"LEDGERFORGE_SERVER_SECURE"`
@@ -182,8 +185,8 @@ type WebhookConfig struct {
 	// SigningSecret is shared by notifications and transaction hooks. When unset,
 	// Server.SecretKey is the legacy fallback. With neither set, delivery is unsigned.
 	SigningSecret string `json:"signing_secret" envconfig:"LEDGERFORGE_WEBHOOK_SIGNING_SECRET"`
-	// BlockPrivateDestinations rejects private, loopback and link-local addresses
-	// at registration and connection time. Default false preserves local receivers.
+	// BlockPrivateDestinations rejects non-global special-purpose and translation
+	// addresses at registration and connection time. Default false preserves local receivers.
 	BlockPrivateDestinations bool `json:"block_private_destinations" envconfig:"LEDGERFORGE_WEBHOOK_BLOCK_PRIVATE_DESTINATIONS"`
 	// TimeoutSec defaults to 30 seconds and is capped at 120 seconds.
 	TimeoutSec int               `json:"timeout_sec" envconfig:"LEDGERFORGE_WEBHOOK_TIMEOUT_SEC"`
@@ -381,6 +384,10 @@ func (cnf *Configuration) setDefaultValues() {
 	}
 
 	// Server defaults
+	if cnf.Server.AllowLegacyAPIKeys == nil {
+		allowed := true
+		cnf.Server.AllowLegacyAPIKeys = &allowed
+	}
 	if cnf.Server.Port == "" {
 		cnf.Server.Port = DEFAULT_PORT
 		logrus.WithField("port", DEFAULT_PORT).Warn("port not specified in config, setting default")

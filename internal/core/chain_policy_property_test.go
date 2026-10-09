@@ -32,15 +32,15 @@ func TestAuditUnifiedImmutabilityPolicy(t *testing.T) {
 	ctx := context.Background()
 	assertPolicy := func() {
 		t.Helper()
-		var policies, separateChainPolicies, rateColumns int
-		require.NoError(t, ds.Conn.QueryRowContext(ctx, `SELECT count(*) FILTER (WHERE tgname = 'prevent_transaction_update_trigger'),
-   count(*) FILTER (WHERE tgname = 'prevent_sealed_chain_update_trigger')
-   FROM pg_trigger WHERE tgrelid = 'ledgerforge.transactions'::regclass AND NOT tgisinternal`).Scan(&policies, &separateChainPolicies))
-		require.Equal(t, 1, policies)
-		require.Zero(t, separateChainPolicies)
-		require.NoError(t, ds.Conn.QueryRowContext(ctx, `SELECT count(*) FROM information_schema.columns
-   WHERE table_schema = 'ledgerforge' AND table_name = 'transactions' AND column_name = 'rate'`).Scan(&rateColumns))
-		require.Equal(t, 1, rateColumns)
+		for _, assignment := range []string{
+			"amount = amount + 1", "precise_amount = precise_amount + 1", "precision = precision + 1",
+			"rate = rate + 1", "parent_transaction = transaction_id", "source = destination",
+			"effective_date = COALESCE(effective_date, created_at) + interval '1 day'",
+			"id = id + 1000000", "transaction_id = transaction_id || '_changed'",
+		} {
+			_, err := ds.Conn.ExecContext(ctx, `UPDATE ledgerforge.transactions SET `+assignment+` WHERE transaction_id = $1`, txn.TransactionID)
+			require.ErrorContains(t, err, "Cannot modify transaction data", assignment)
+		}
 	}
 	assertDeleteBlocked := func() {
 		t.Helper()
@@ -63,7 +63,7 @@ func TestAuditUnifiedImmutabilityPolicy(t *testing.T) {
 	}
 	assertPolicy()
 	assertDeleteBlocked()
-	for _, assignment := range []string{"rate = rate + 1", "overdraft_limit = overdraft_limit + 1", "queue_action = 'COMMIT'"} {
+	for _, assignment := range []string{"overdraft_limit = overdraft_limit + 1", "queue_action = 'COMMIT'"} {
 		_, err := ds.Conn.ExecContext(ctx, `UPDATE ledgerforge.transactions SET `+assignment+` WHERE transaction_id = $1`, txn.TransactionID)
 		require.ErrorContains(t, err, "Cannot modify transaction data", assignment)
 	}
@@ -72,20 +72,35 @@ func TestAuditUnifiedImmutabilityPolicy(t *testing.T) {
 	require.Equal(t, 1, count, "an unsealed row must accept all chain bookkeeping, including chain_version")
 	assertSealed()
 
-	// The lifecycle migration neither owns the rate column nor replaces the
-	// chain policy, even when rolled back and reapplied independently.
+	// Roll back through the lifecycle migration by ID, including any successors.
+	// The rate and chain policy belong to an earlier migration and must survive.
+	const lifecycleID = "1791500001.sql"
+	const lifecycleVersion int64 = 1791500001
 	migrations := migrate.EmbedFileSystemMigrationSource{FileSystem: SQLFiles, Root: "sql"}
-	count, err = migrate.ExecMax(ds.Conn, "postgres", migrations, migrate.Down, 1)
+	migrationSet := migrate.MigrationSet{SchemaName: "ledgerforge"}
+	plan, _, err := migrationSet.PlanMigrationToVersion(ds.Conn, "postgres", migrations, migrate.Down, lifecycleVersion)
+	require.NoError(t, err)
+	require.NotEmpty(t, plan)
+	require.Equal(t, lifecycleID, plan[len(plan)-1].Id)
+	count, err = migrationSet.ExecVersion(ds.Conn, "postgres", migrations, migrate.Down, lifecycleVersion)
+	require.NoError(t, err)
+	require.Equal(t, len(plan), count)
+	var lifecycleApplied, claimsExist bool
+	require.NoError(t, ds.Conn.QueryRow(`SELECT EXISTS (SELECT 1 FROM ledgerforge.gorp_migrations WHERE id = $1),
+        to_regclass('ledgerforge.refund_claims') IS NOT NULL`, lifecycleID).Scan(&lifecycleApplied, &claimsExist))
+	require.False(t, lifecycleApplied, "the lifecycle migration itself must have been rolled back")
+	require.False(t, claimsExist, "rolling back a successor alone does not exercise lifecycle Down")
+	assertPolicy()
+	assertSealed()
+	count, err = migrationSet.ExecVersion(ds.Conn, "postgres", migrations, migrate.Up, lifecycleVersion)
 	require.NoError(t, err)
 	require.Equal(t, 1, count)
 	assertPolicy()
 	assertSealed()
-	count, err = migrate.ExecMax(ds.Conn, "postgres", migrations, migrate.Up, 1)
+	count, err = migrationSet.Exec(ds.Conn, "postgres", migrations, migrate.Up)
 	require.NoError(t, err)
-	require.Equal(t, 1, count)
-	assertPolicy()
-	assertSealed()
-	count, err = migrate.Exec(ds.Conn, "postgres", migrations, migrate.Up)
+	require.Equal(t, len(plan)-1, count, "reapply exactly the rolled-back successors")
+	count, err = migrationSet.Exec(ds.Conn, "postgres", migrations, migrate.Up)
 	require.NoError(t, err)
 	require.Zero(t, count, "migrate up remains idempotent")
 	result, err := ds.VerifyChainSnapshot(ctx, nil)
