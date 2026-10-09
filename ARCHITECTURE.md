@@ -80,14 +80,14 @@ its write opt-in and tool confirmation are operator controls. With `--api-key`
 or `LEDGERFORGE_MCP_API_KEY`, tools resolve current key validity/scopes and carry
 that trusted principal into spending admission. Unbound MCP retains local
 deployment-level authority. Ordinary inflight holds reserve funds; policy-held
-transactions additionally require an independent persisted approval decision. Keep database credentials and local MCP access within the
-operator's trust boundary.
+transactions additionally require an independent persisted approval decision.
+Keep database credentials and local MCP access within the operator's trust boundary.
 
 Webhook receivers and outbound hook destinations are separate trust decisions.
 The dedicated `notification.webhook.signing_secret` authenticates delivery;
 `server.secret_key` remains a legacy fallback. Set the dedicated secret so
-receivers need no API administrator credential. Public metrics use a separate bearer
-token; worker monitoring and infrastructure endpoints should remain private.
+receivers need no API administrator credential. Public metrics use a separate
+bearer token; worker monitoring and infrastructure endpoints should remain private.
 See [deployment guidance](docs/deployment.md).
 
 Reconciliation and reindex services are owned by their LedgerForge instance.

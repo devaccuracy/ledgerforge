@@ -77,7 +77,8 @@ def transfer_payload(amount, **extra):
 def must_deny(key, method, path, payload=None):
     before = [balance(source), balance(destination)]
     status, result = request(key, method, path, payload)
-    if status not in (400, 403):
+    expected = (403,) if path.startswith("/approvals/") else (400, 403)
+    if status not in expected:
         raise RuntimeError(f"Expected policy denial, got {status}: {result}")
     for old, current in zip(before, [balance(source), balance(destination)]):
         for field in ["balance", "credit_balance", "debit_balance", "inflight_credit_balance", "inflight_debit_balance"]:
