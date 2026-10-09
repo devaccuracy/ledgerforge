@@ -99,36 +99,74 @@ Set `server.metrics_bearer_token` (`LEDGERFORGE_METRICS_BEARER_TOKEN`) before
 exposing metrics to a shared monitoring network. Keep worker queue monitoring
 private. See [metrics](metrics.md) for endpoints and configuration.
 
-## Webhook verification
+## Webhook verification and destinations
 
-The current notification webhook signs the raw JSON body using
-`server.secret_key`. Requests include `X-LedgerForge-Timestamp` (Unix seconds)
-and `X-LedgerForge-Signature` (a hexadecimal HMAC-SHA256 digest). Verify:
+Set a dedicated `notification.webhook.signing_secret`
+(`LEDGERFORGE_WEBHOOK_SIGNING_SECRET`) for notification webhooks and transaction
+hooks. It takes precedence over `server.secret_key`; the API master secret is a
+legacy fallback only when the dedicated value is empty. With both empty,
+delivery is unsigned. A dedicated secret lets a receiver verify notifications
+without holding API administrator credentials. Store and rotate it separately.
 
-```text
-expected = hex(HMAC-SHA256(secret, timestamp + "." + raw_request_body))
+```json
+{
+  "notification": {
+    "webhook": {
+      "url": "https://receiver.example/events",
+      "signing_secret": "REPLACE_WITH_A_SEPARATE_RANDOM_SECRET",
+      "block_private_destinations": true,
+      "timeout_sec": 30
+    }
+  }
+}
 ```
 
-Use a constant-time comparison. Reject missing or malformed headers and
-stale timestamps; choose a freshness window such as five minutes with
-synchronized clocks. Read and bound the raw body before decoding JSON; signing
-re-serialized JSON will not reliably reproduce the signature. Since the current
-signing secret is also the API master secret, a receiver holding it has ledger
-administrator credentials: keep receivers in the same trust boundary.
+Requests include `X-LedgerForge-Timestamp` (Unix seconds) and
+`X-LedgerForge-Signature` (hexadecimal HMAC-SHA256). Verify the exact received
+bytes, before parsing JSON:
 
-Do not configure notification headers with either reserved signature header;
-the current configuration can override them. With an empty signing secret,
-notification delivery is unsigned. Keep an explicit nonempty secret and verify
-signatures at the receiver.
+```text
+hex(HMAC-SHA256(secret, timestamp+"."+raw_body))
+```
 
-Delivery is asynchronous and can be duplicated. Non-2xx responses return an
+Compare signatures in constant time. Reject malformed or missing headers and
+stale timestamps; a five-minute freshness window is a reasonable starting point
+with synchronized clocks. Also reject timestamps too far in the future.
+Re-serializing JSON changes the signed bytes. Bound the body size before reading
+it. The [receiver verification example](../examples/webhook-verification/README.md)
+includes freshness, raw-body and wrong-secret regression tests.
+
+Signature and timestamp headers are protected: delivery replaces configured
+values with its generated headers, or removes them when no signing secret is
+available. Custom headers cannot supply their own signature or timestamp.
+
+Enable `notification.webhook.block_private_destinations`
+(`LEDGERFORGE_WEBHOOK_BLOCK_PRIVATE_DESTINATIONS`) for deployments that send only
+to public receivers. It defaults to false for compatibility with local/internal
+receivers. Hook registration and updates validate absolute HTTP(S) URLs without
+credentials or fragments. Destination checks also run when establishing the
+connection, with DNS resolution and dialing tied to the permitted addresses.
+Redirects are not followed. Restrict egress at the network boundary as well,
+especially if you deliberately permit internal receivers.
+
+Notification delivery uses `notification.webhook.timeout_sec`
+(`LEDGERFORGE_WEBHOOK_TIMEOUT_SEC`), defaulting to 30 seconds and capped at 120.
+Hook response bodies are bounded to 1 MiB. Use HTTPS destinations and restrict
+who can register or edit hooks.
+
+Delivery is asynchronous and may be duplicated. Non-2xx responses return an
 error for worker retry. Persist the receiver's result before acknowledging with
-2xx and deduplicate by a stable entity/event key suitable for your workflow.
-A timestamp freshness check alone does not prevent duplicate processing.
+2xx; use a stable entity/event key and atomic receiver idempotency to avoid
+applying a duplicate business operation. Timestamp freshness does not by itself
+prevent duplicate processing. See [metadata webhooks](metadata-webhooks.md) for
+payloads and [security](security.md) for key management.
 
-Use HTTPS destinations, restrict hook registration permissions and control
-outbound network access. Review registered hook URLs and redirect behavior;
-authentication alone does not make outbound destinations safe. See
-[metadata webhooks](metadata-webhooks.md) for event payloads.
+## Verification and upgrade operations
 
-<!-- Integration placeholder: update signing-secret and outbound-destination guidance after the security changes merge. -->
+Run both accounting replay and audit verification as described in
+[verification](verification.md). Enable the hash-chain processor in the API server config explicitly and
+retain checkpoint exports outside the ledger database. Plan schema upgrades
+with a tested backup, a representative seeded upgrade and a maintenance window
+for migrations that backfill or validate transaction history. Measure lock time
+on production-sized data; a fresh-database test is insufficient evidence for a
+large historical upgrade.

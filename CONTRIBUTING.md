@@ -7,9 +7,10 @@ Use GitHub issues for bugs and proposals; report vulnerabilities through the
 
 ## Development setup
 
-Install Go **1.26 or newer**, Git, Docker and the Docker Compose plugin. The
-module declares Go 1.25 compatibility; CI and the integration runner use the
-current Go 1.26 patch line. The quickstart also needs Python 3.
+Install Go **1.26.9 or newer**, Git, Docker and the Docker Compose plugin. The
+module requires Go 1.26 and selects toolchain 1.26.9; CI, images and the
+integration runner pin that patched toolchain. Python 3 runs the release
+contract checks and examples.
 
 ```sh
 git clone https://github.com/devaccuracy/ledgerforge.git
@@ -55,6 +56,7 @@ Redis must be isolated; many integration tests use fixed localhost addresses.
 ```sh
 make vuln
 make cover
+python3 .github/scripts/test-readiness.py
 .github/scripts/fuzz-smoke.sh
 ```
 

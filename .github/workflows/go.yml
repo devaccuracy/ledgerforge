@@ -29,6 +29,11 @@ jobs:
           go mod tidy
           git diff --exit-code -- go.mod go.sum
 
+      - name: Release dependency and documentation contracts
+        run: |
+          python3 .github/scripts/test-readiness.py
+          python3 -m unittest discover -s examples/webhook-verification -p 'test_*.py'
+
       - name: Verify formatting
         run: test -z "$(gofmt -l .)"
 

@@ -15,6 +15,8 @@ make production integrations stable while allowing the ledger engine to evolve.
 | `database` | Persistence interfaces and PostgreSQL implementations. |
 | `model` | Shared ledger domain types and validation. |
 | `config` | Configuration loading and defaults. |
+| `internal/integrity` | Read-only accounting replay over a consistent persistence snapshot. |
+| `internal/policy` | Trusted principals, policy validation and spending admission contracts; PostgreSQL stores reservations and decisions. |
 | `internal/reconciliation` | External uploads, reconciliation execution, matching strategies, progress, and matching rules. Consumes a narrow repository and core-injected batch and side-effect callbacks. |
 | `internal/search` | Search transport and indexing, plus per-instance background reindex admission, progress, and cancellation. |
 | `tests/architecture` | Parser-based import rules protecting domain services from facade, core, HTTP, and Gin dependencies. |
@@ -74,18 +76,27 @@ flowchart LR
 
 The HTTP master key has deployment-wide authority. Scoped keys govern API
 resource access. The local MCP process opens its own configured datasource;
-its write opt-in and tool confirmation are operator controls, not independent
-human approval. Inflight holds likewise reserve funds without creating an
-approval boundary. Keep database credentials and local MCP access within the
+its write opt-in and tool confirmation are operator controls. With `--api-key`
+or `LEDGERFORGE_MCP_API_KEY`, tools resolve current key validity/scopes and carry
+that trusted principal into spending admission. Unbound MCP retains local
+deployment-level authority. Ordinary inflight holds reserve funds; policy-held
+transactions additionally require an independent persisted approval decision. Keep database credentials and local MCP access within the
 operator's trust boundary.
 
 Webhook receivers and outbound hook destinations are separate trust decisions.
-The current notification signature uses the API master secret, so sharing it
-also shares administrative credentials. Public metrics use a separate bearer
+The dedicated `notification.webhook.signing_secret` authenticates delivery;
+`server.secret_key` remains a legacy fallback. Set the dedicated secret so
+receivers need no API administrator credential. Public metrics use a separate bearer
 token; worker monitoring and infrastructure endpoints should remain private.
 See [deployment guidance](docs/deployment.md).
 
-<!-- Integration placeholder: update package responsibilities and boundaries after the architecture extraction merges. -->
+Reconciliation and reindex services are owned by their LedgerForge instance.
+`Close` cancels/waits for their work and closes owned queue, cache, hooks and
+notifier resources. Borrowed datasource lifetime remains the caller's duty.
+Import-graph tests protect the extracted domain packages from HTTP, facade and
+core dependencies. See [verification](docs/verification.md) and
+[agent safety](docs/agent-safety.md) for the independent evidence and approval
+trust boundaries.
 
 ## Validation
 
