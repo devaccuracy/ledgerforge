@@ -64,16 +64,11 @@ though it has the approval scope. The independent key approves the same ID;
 retrying that decision must not settle twice. Usage is `4000` with `6000` units
 remaining for that UTC day.
 
-## Delegation regression probes: require the guardrails fix
+## Delegation regression probes
 
 ```sh
 ./examples/agent-policy/run.sh --delegation-probes
 ```
-
-These additional assertions **depend on the follow-up guardrails delegation fix**.
-They intentionally fail on integration snapshot `44eddbc`, which did not yet
-inherit policies or reject descendant approvers. Do not treat the base example
-passing as evidence of delegation safety on that snapshot.
 
 The probes create a child and grandchild with no local policy, then require:
 
@@ -82,7 +77,21 @@ The probes create a child and grandchild with no local policy, then require:
   allowance. A `4000`-unit admission after shared usage of `7000` is denied even
   though it is below the operation cap and the source has sufficient funds.
 - Both a direct child and an indirect descendant are denied when attempting to
-  approve the initiator's hold. A separately provisioned approver can settle it.
+  approve or reject the initiator's hold. A separately provisioned approver can
+  settle it.
+- A sibling delegation cannot approve or reject a child's request. The
+  non-delegated root may approve that descendant's hold with explicit approval
+  scope, but remains unable to approve its own requests.
+
+After the shared-budget checks reach `9500` units of spend, the administrator
+tightens the root's approval threshold to zero. A child's `100`-unit transfer
+then requires review: self, descendant and sibling decisions are denied, while
+the explicit non-delegated root approves it. Shared spend finishes at `9600`.
+
+Effective policies intersect permissions and limits; a child policy can narrow
+them, and deleting that local policy leaves inherited constraints. Keys created
+before ancestry persistence are roots: rotate old delegated keys before relying
+on family restrictions. See [key operations](../../docs/security.md).
 
 See [agent safety](../../docs/agent-safety.md) for the threat model, policy narrowing,
 UTC reservations and MCP identity binding. These tests use independent server

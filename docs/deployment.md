@@ -181,3 +181,9 @@ with a tested backup, a representative seeded upgrade and a maintenance window
 for migrations that backfill or validate transaction history. Measure lock time
 on production-sized data; a fresh-database test is insufficient evidence for a
 large historical upgrade.
+
+Follow [integrity upgrade maintenance](upgrade-notes.md) for the concrete
+execution-control and audit migrations. Stop old servers and workers before
+the transition, migrate with a bounded lock timeout, then start compatible
+processes and run both read-only verification commands. Concurrent index builds
+and separate constraint validation still need I/O capacity and recovery checks.

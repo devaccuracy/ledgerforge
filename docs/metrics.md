@@ -11,9 +11,10 @@ LedgerForge exposes OpenTelemetry metrics via a Prometheus-compatible `/metrics`
 
 ## Authentication
 
-When `server.secure` is enabled, the `/metrics` endpoint requires a bearer token:
+Set a metrics bearer token to require it even when `server.secure` is disabled.
+With secure mode enabled, a token is required:
 
-1. Set `"metrics_bearer_token": "<your-token>"` in `ledgerforge.json` (or `LEDGERFORGE_METRICS_BEARER_TOKEN`)
+1. Set `"server": {"metrics_bearer_token": "<your-token>"}` in `ledgerforge.json` (or `LEDGERFORGE_METRICS_BEARER_TOKEN`)
 2. Configure Prometheus to send the token:
 
 ```yaml
@@ -27,6 +28,8 @@ scrape_configs:
 ```
 
 If secure mode is enabled without a token configured, the endpoint returns `403 Forbidden`.
+The worker `/monitoring/` dashboard uses the same bearer-token rules; `/health`
+remains public. Keep the monitoring listener on a private network.
 
 ## Export Modes
 
@@ -47,7 +50,9 @@ If secure mode is enabled without a token configured, the endpoint returns `403 
 | `ledgerforge_transaction_duration_seconds` | Histogram | `status` | Wall-clock time of `RecordTransaction()` in seconds. Use to monitor processing latency and set SLOs. |
 | `ledgerforge_transaction_rejected_total` | Counter | `reason` | Rejected transactions by reason. Use to alert on elevated rejection rates. |
 
-**`status` values**: `APPLIED`, `REJECTED`, `INFLIGHT`, `VOID`, `COMMIT`
+**`status` values** reflect the recorded transaction state, such as `APPLIED`,
+`REJECTED`, `INFLIGHT` or `VOID`. Duration also records `status="error"` when no
+transaction result is available.
 
 **`reason` values**: `insufficient_funds`, `overdraft_limit`, `lock_contention`, `max_retries`, `other`
 
@@ -58,11 +63,18 @@ If secure mode is enabled without a token configured, the endpoint returns `403 
 | Prometheus Name | Type | Attributes | Description |
 |----------------|------|------------|-------------|
 | `ledgerforge_queue_enqueued_total` | Counter | `queue_name` | Transactions enqueued for async processing. Use to monitor inflow rate per queue. |
+| `ledgerforge_queue_backpressure_rejected_total` | Counter | `reason` | Enqueue attempts rejected by the queue capacity limit. |
 | `ledgerforge_queue_processing_duration_seconds` | Histogram | `result` | Time spent processing a transaction in the worker. Use to detect worker slowdowns. |
 
 **`queue_name` values**: `new:transaction_1` through `new:transaction_N` (sharded queues), `hot_transactions` (hot lane)
 
 **`result` values**: `success`
+
+### Search Backpressure Metrics
+
+| Prometheus Name | Type | Attributes | Description |
+| --- | --- | --- | --- |
+| `ledgerforge_search_backpressure_retry_total` | Counter | `source` | Indexing retries caused by Typesense memory backpressure; reindex uses `source="reindex"`. |
 
 ### Balance Metrics
 
@@ -102,6 +114,20 @@ If secure mode is enabled without a token configured, the endpoint returns `403 
 | `ledgerforge_worker_retries_total` | Counter | `reason` | Worker retry events. Sustained retries indicate systemic issues. |
 
 **`reason` values**: `insufficient_funds`, `other`
+
+### Audit Chain Metrics
+
+| Prometheus Name | Type | Attributes | Description |
+| --- | --- | --- | --- |
+| `ledgerforge_chain_backlog` | Gauge | — | Unsealed rows older than the configured trailing delay. |
+| `ledgerforge_chain_head_seq` | Gauge | — | Last sealed sequence. |
+| `ledgerforge_chain_lag_seconds` | Gauge | — | Seconds since chain state was last updated. |
+
+The API server's enabled hash-chain processor records these gauges on its poll
+ticks. Backlog excludes rows inside the trailing delay, while `audit verify`
+reports all unsealed rows as pending. An idle ledger can have increasing lag
+with zero backlog; interpret lag with recent traffic and coverage. See
+[verification](verification.md) for pending coverage and retained roots.
 
 ## Example Prometheus Queries
 

@@ -80,13 +80,13 @@ class ReleaseReadinessTests(unittest.TestCase):
         files += list((ROOT / "examples").rglob("*.md"))
         for file in files:
             content = file.read_text()
-            self.assertNotRegex(content.lower(), r"integration placeholder|integration comments")
+            self.assertNotRegex(content.lower(), r"integration placeholder|integration comments|after the guardrails fix|depend on the follow-up")
             for target in re.findall(r"\]\(([^)]+)\)", content):
                 target = target.split("#", 1)[0]
                 if target and not re.match(r"[a-z]+:", target):
                     self.assertTrue((file.parent / target).exists(), str(file) + ": " + target)
         self.assertIn("the API server owns the hash-chain processor", read("docs/verification.md"))
-        for guide in ["docs/verification.md", "docs/agent-safety.md", "docs/security.md"]:
+        for guide in ["docs/verification.md", "docs/agent-safety.md", "docs/security.md", "docs/upgrade-notes.md"]:
             self.assertIn(guide, read("README.md"))
 
 

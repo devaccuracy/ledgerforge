@@ -49,6 +49,9 @@ permits unbounded overdraft, so set a limit when the account model requires one.
 throughout your integration and send it explicitly when creating transactions.
 The API accepts positive integral precision; an omitted transaction precision
 ultimately defaults to `1` when no stored precision is available.
+HTTP numeric controls must survive decoding without changing their decimal
+value: lossy precision or overdraft-cap tokens are rejected. For example,
+precision `9007199254740993` cannot be rounded silently to `9007199254740992`.
 
 `precise_amount` is a JSON integer. Send either it or the compatibility
 `amount` field: the create API rejects requests supplying both with a nonzero
@@ -96,7 +99,9 @@ Split transfers distribute value among the specified legs. Bulk APIs offer
 explicit atomic and asynchronous options; select the required behavior and
 inspect their reported outcomes instead of assuming every batch is atomic.
 
-Financial postings are preserved. Descriptive metadata can change. Correct an
+Financial postings and accepted execution controls are preserved. Customer
+metadata can change, but reserved execution, lineage, policy and recovery keys
+cannot be changed through the metadata API. Correct an
 applied posting through an additional transaction or the refund API so the
 history retains the original operation and its reversal.
 

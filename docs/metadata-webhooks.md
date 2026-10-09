@@ -45,6 +45,11 @@ from that request, which replaces what was stored.
 The DB JSONB-merges `meta_data_patch` onto every matching row. The event does
 not re-read merged `meta_data`.
 
+Transaction patches reject reserved execution/lineage keys and `policy_` or
+`recovery_` prefixes. Customer fields remain mutable; accepted execution controls
+are stored separately and cannot be changed through metadata. See
+[security](security.md) for the boundary.
+
 ## Consumer notes
 
 - **Bulk IDs (`bulk_…`)** — one event is emitted for the request, but the DB
@@ -68,6 +73,7 @@ not re-read merged `meta_data`.
 - **Search reindex** — metadata updates enqueue an index refresh task (entity
   ID or transaction scope only). The index worker re-reads Postgres before
   upserting so queue ordering cannot leave Typesense on an older snapshot.
-  Rows include `effective_date` and flags restored from `meta_data`.
-  `inflight_expiry_date` is not stored in Postgres today, so it cannot be
-  restored on metadata-only reindex (same limitation as full DB reindex).
+  Rows include `effective_date` and flags restored from immutable execution
+  controls. New records persist inflight expiry/commit dates in those controls;
+  older records may lack scheduling evidence. Metadata-only reindex cannot
+  reconstruct dates absent from the original persisted history.

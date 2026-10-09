@@ -33,9 +33,13 @@ PostgreSQL `REPEATABLE READ` snapshot. It replays integer debits, credits,
 inflight reservations and lifecycle releases, then compares derived counters
 with stored counters. Checks include invalid amounts/scales, missing balances,
 malformed parent/child relationships, reversal consistency and conservation in
-compatible accounting components. Queued and scheduled intents do not count as
-settled economic legs. The command never repairs balances or calls reconciliation
-triggers. It exits nonzero when its report has issues.
+compatible accounting components. Terminal completions must match their
+persisted intent's amounts, endpoints, currency and precision; duplicate terminal
+completions are reported. Immutable execution evidence distinguishes grouping
+parents from economic lineage. Pending accepted inflight commits participate in
+reservation bounds, including when a remainder has already been voided.
+Queued and scheduled intents do not count as settled economic legs. The command
+never repairs balances or calls reconciliation triggers. It exits nonzero when its report has issues.
 
 The JSON fields are `verified`, `balances`, `transactions` and `issues`.
 Each issue supplies a kind and, where applicable, a transaction/balance ID,
@@ -48,7 +52,7 @@ prove application authorization, verify customer intent, confirm bank activity,
 or recover an opening position omitted from history. Use external reconciliation
 and independently retained audit checkpoints for those separate concerns.
 
-## Hash chain v2 and checkpoints
+## Versioned hash chains and checkpoints
 
 Enable sealing in the config used by the API server:
 
@@ -62,18 +66,23 @@ Enable sealing in the config used by the API server:
 
 The feature is disabled by default. Start or restart `ledgerforge start` with
 that config; the API server owns the hash-chain processor. Queue workers alone
-do not seal the audit chain. The default poll interval is five seconds and trailing delay is thirty seconds;
-recent rows will therefore remain unsealed temporarily. Redis and PostgreSQL
+do not seal the audit chain. The default poll interval is five seconds and the
+trailing delay is thirty seconds; recent rows will therefore remain unsealed temporarily. Redis and PostgreSQL
 must remain available to the server process.
 
-New seals use canonical hash chain v2: a domain identifier, version and
-length-delimited fields are hashed with SHA-256. This removes delimiter ambiguity
-from v1. The v2 record includes the previous hash, database and transaction IDs,
-source/destination, decimal and precise amounts, precision, retained rate,
+Canonical v2 uses a domain identifier, version and length-delimited fields hashed
+with SHA-256. This removes delimiter ambiguity from v1. The v2 record includes
+the previous hash, database and transaction IDs, source/destination, decimal and precise amounts, precision, retained rate,
 currency, status, reference, parent, effective date and creation time. Numeric
-values come from PostgreSQL text without a floating-point round trip. Customer
-metadata is intentionally excluded. A sealed commitment cannot be changed
-through ordinary transaction updates.
+values come from PostgreSQL text without a floating-point round trip.
+
+New seals use **v3**, which embeds the unchanged v2 payload and additionally
+commits the overdraft cap, queue action, immutable execution controls, scheduled
+time and original historical rate evidence. The controls include execution
+flags, grouping/lineage decisions and inflight expiry/commit dates. Mutable
+customer metadata is excluded; reserved execution metadata is part of the
+immutable evidence. Existing v1/v2 hashes keep their original encoding. A sealed
+commitment cannot be changed through ordinary transaction updates.
 
 Each sealed batch records a checkpoint with `sequence`, `count`, `head_hash`
 and `created_at`. Sequence is the order in which the audit worker observed rows,
@@ -148,17 +157,27 @@ do not replace the anchor with the current database export to clear the finding.
 
 ## Legacy and schema limitations
 
-Existing v1 seals remain versioned and verifiable with their original encoder;
-they do not retroactively gain v2's field coverage. v1 used delimiter-separated
-fields and omitted precision and economic parent/effective-date fields. Historical
-INSERT journals, schema changes and rate semantics require version-aware
-interpretation; replay may return `unsupported_legacy` rather than assume an
-amount or lifecycle relationship. Missing parents and ambiguous non-unit-rate
-histories are examples. A finding is not automatically proof of malicious change.
+Existing v1/v2 seals remain verifiable with their original encoders; they do not
+retroactively gain v3's execution-control coverage. v1 used delimiter-separated
+fields and omitted precision and economic parent/effective-date fields. v2 added
+those fields but omitted the controls added in v3.
+
+New postings identify economic schema 1: retained `rate` is economically ignored
+and both legs use the same exact units. Historical non-unit rates without that
+evidence remain ambiguous. Replay returns `unsupported_legacy` rather than
+guessing their credit semantics, missing parent history or fractional/missing
+precise amounts. A finding is not automatically proof of malicious change.
+
+Legacy execution controls are read from original INSERT-journal evidence rather
+than current customer metadata. Upgrades preserve historical rate evidence; a
+recorded schema transition can account for the original rate versus its restored
+default when an older installation already ran the rate-dropping migration.
+That bounded exception does not authorize later rate mutations. See
+[integrity upgrade maintenance](upgrade-notes.md) before migrating seeded history.
 
 A successful replay does not prove that every financial execution control was
 committed by an older hash schema. Preserve migration evidence and independently
 retained roots, and review the canonical version's field coverage before making
-an integrity claim. Test upgrades on seeded history, including existing v1 seals.
+an integrity claim. Test upgrades on seeded history, including existing v1/v2 seals.
 Neither checker repairs missing evidence or certifies history predating retained
 records. See [deployment](deployment.md) for migration and backup operations.

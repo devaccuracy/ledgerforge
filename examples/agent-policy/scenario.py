@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Executable HTTP assertions; delegation probes require the guardrails fix."""
+"""Executable HTTP assertions for spending policies and delegation families."""
 import argparse
 from datetime import datetime, timedelta, timezone
 import json
@@ -106,11 +106,12 @@ try:
     scopes = ["transactions:write", "transactions:read", "balances:read", "api-keys:write", "approvals:write"]
     agent = create_key("limited-agent", scopes)
     approver = create_key("independent-reviewer", ["approvals:write"])
-    success(master, "PUT", "/policies/" + agent["api_key_id"], {
+    document = {
         "rules": [{"currency": "USD", "precision": 100, "max_transaction": "5000",
                    "daily_limit": "10000", "approval_above": "2000"}],
         "ledger_ids": [ledger["ledger_id"]], "balance_ids": [source, destination],
-    })
+    }
+    success(master, "PUT", "/policies/" + agent["api_key_id"], document)
     under = success(agent["key"], "POST", "/transactions", transfer_payload(1000))
     if under["status"] != "APPLIED":
         raise RuntimeError("Under-threshold transfer did not apply")
@@ -148,12 +149,29 @@ try:
         admission = held["meta_data"]["policy_admission_id"]
         assert_balances(7000, held=2500)
         for descendant in [child, grandchild]:
-            must_deny(descendant["key"], "POST", "/approvals/" + admission + "/approve")
+            for action in ["approve", "reject"]:
+                must_deny(descendant["key"], "POST", "/approvals/" + admission + "/" + action)
         success(approver["key"], "POST", "/approvals/" + admission + "/approve")
         assert_balances(9500)
         print("PASS: inherited cap; shared ancestor budget; child and descendant approval denied")
+
+        # Tighten the root threshold so a small descendant request needs review.
+        document["rules"][0]["approval_above"] = "0"
+        success(master, "PUT", "/policies/" + agent["api_key_id"], document)
+        sibling = create_key("delegated-sibling", scopes, creator=agent["key"])
+        held = success(child["key"], "POST", "/transactions", transfer_payload(100))
+        if held["status"] != "INFLIGHT":
+            raise RuntimeError("Inherited zero threshold did not create a hold")
+        admission = held["meta_data"]["policy_admission_id"]
+        assert_balances(9500, held=100)
+        for actor in [child, grandchild, sibling]:
+            for action in ["approve", "reject"]:
+                must_deny(actor["key"], "POST", "/approvals/" + admission + "/" + action)
+        success(agent["key"], "POST", "/approvals/" + admission + "/approve")
+        assert_balances(9600)
+        print("PASS: sibling/descendant decisions denied; explicit non-delegated root approved its child's hold")
     else:
-        print("Delegation probes not run: add --delegation-probes after the guardrails fix is merged.")
+        print("Run with --delegation-probes to also check inherited budgets and approval-family boundaries.")
 finally:
     # Revoke every example credential even when a probe fails; never print their secrets.
     for key_id in reversed(created_keys):

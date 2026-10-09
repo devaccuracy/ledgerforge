@@ -20,7 +20,8 @@ remain application responsibilities.
   destination by the same amount. Split transfers distribute that amount
   across their legs.
 - **Immutable postings:** corrections and refunds create linked transactions.
-  Financial postings are preserved; descriptive metadata can be updated.
+  Financial postings and accepted execution controls are preserved; customer
+  metadata can be updated.
 - **Idempotency by reference:** reuse the same unique transaction `reference`
   after a timeout. Duplicate references are rejected; look up the original
   outcome instead of retrying with a new reference.
@@ -69,7 +70,8 @@ use. Read the [deployment guide](docs/deployment.md) before exposing a service.
   [verification guide](docs/verification.md) for coverage and legacy limits.
 - **Agent guardrails:** per-key currency/precision limits, balance/ledger
   allowlists, durable daily reservations and approval holds enforced by the
-  server. Bind MCP to an API key and keep independent approver credentials
+  server. Delegated keys inherit restrictions and share ancestor budgets.
+  Bind MCP to an API key and keep independent approver credentials
   outside the agent's authority. See [agent safety](docs/agent-safety.md) and the
   [executable policy example](examples/agent-policy/README.md).
 - **A hardened API:** owner-bound key management, constrained delegation,
@@ -102,6 +104,7 @@ or digest in production with `LEDGERFORGE_IMAGE`.
 
 - [Concepts: amounts, balances and transaction states](docs/concepts.md)
 - [Deployment: secrets, TLS, limits and webhook verification](docs/deployment.md)
+- [Integrity upgrade maintenance and historical evidence](docs/upgrade-notes.md)
 - [Accounting verification and external audit anchoring](docs/verification.md)
 - [Agent spending policies and independent approval](docs/agent-safety.md)
 - [API security, delegation and rotation](docs/security.md)

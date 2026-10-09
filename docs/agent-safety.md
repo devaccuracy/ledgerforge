@@ -73,7 +73,17 @@ expiry, currency/precision permissions, allowlists and spending limits, but cann
 remove a parent's constraints. Parent and sibling delegations share the ancestor's
 daily budget: creating ten keys does not create ten copies of its allowance.
 Admission must satisfy every applicable ancestor policy and reserve capacity in
-the shared budgets. See [key delegation rules](security.md).
+the shared budgets. Effective rules intersect currency/precision pairs and
+allowlists, and take the smallest declared limits and approval thresholds. An
+empty intersection denies all spending. Removing a child's local policy leaves
+inherited restrictions in place; delegated policy managers cannot edit ancestor
+policies or install a broader local policy.
+
+`GET /policies/effective` exposes `inherited_from` and `deny_all` when applicable.
+Capacity includes each charged ancestor in `budgets`; `remaining_minor` is the
+smallest remaining allowance across those budgets. `used_minor` reflects the
+budget with the smallest declared daily limit, so consult `budgets` to inspect
+the whole family's usage. See [key delegation rules](security.md).
 
 Daily capacity uses the UTC admission date. A hold admitted before midnight
 retains its reservation in that day's usage when later settled or released; it
@@ -93,8 +103,14 @@ Above the threshold, the server forces an inflight hold and records a pending
 approval decision bound to the transaction details. A scheduled commit cannot
 supply approval authority, and ordinary commit paths cannot settle a pending
 policy hold. The initiating key cannot approve **or reject** its own request.
-Its delegation descendants also cannot act as independent approvers: the
-initiator cannot manufacture approval authority by minting another key.
+Its delegation descendants also cannot act as independent approvers. Within
+the initiator's delegation root, other delegated members are denied too,
+including siblings and intermediate ancestors. The non-delegated root itself
+may decide a descendant's request if it has explicit `approvals:write`; it
+cannot decide its own request. A key from another root may decide, including
+an approver delegated within that separate review authority. The master key
+has administrator approval authority. Wildcard scopes alone do not grant the
+explicit approval or policy-management powers.
 
 Use a separately provisioned approver with explicit `approvals:write`. Keep that
 credential out of the agent's environment and enforce the human review process
@@ -155,6 +171,6 @@ FX-valued budget or payment-rail fraud detection.
 Use [verification](verification.md), reconciliation, credential isolation and
 operational monitoring alongside policies. The
 [agent-policy example](../examples/agent-policy/README.md) exercises a limited
-transfer, threshold hold, denied self-approval and independent approval. Its
-optional delegation probes require the follow-up delegation/ancestor-budget fix;
-those probes intentionally fail on the earlier `44eddbc` snapshot.
+transfer, threshold hold, denied self-approval and independent approval. Run its
+delegation probes to check inherited limits, shared ancestor capacity and
+denied approval by descendants and siblings.
