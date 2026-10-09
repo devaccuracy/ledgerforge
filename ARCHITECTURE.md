@@ -34,9 +34,60 @@ make production integrations stable while allowing the ledger engine to evolve.
   persistence internals directly. Write tools are registered only when the
   operator enables them.
 
+## Financial persistence boundary
+
+Postings pair a source debit with an equal destination credit in integer units.
+Committed balances derive from credit minus debit counters. Inflight counters
+track reservations separately. A posting and its balance changes are persisted
+through the database transaction path; balance versions detect stale concurrent
+updates. PostgreSQL is authoritative for financial records and unique references.
+Application locks and Redis coordination help manage contention but do not
+replace database constraints.
+
+A request may execute synchronously or persist/dispatch work for queue workers.
+An accepted or queued response is distinct from a settled posting. Workers handle
+scheduled execution, inflight expiry/commit and asynchronous notifications.
+Recovery must preserve transaction identity and references across retries.
+Operators need both persistent database storage and a queue recovery plan.
+
+Search indexes, metrics and webhooks are downstream views of ledger activity.
+They may lag or retry independently; financial decisions should read stored
+transactions and balances. A dry-run projection does not lock in a future outcome.
+
+## Trust boundaries
+
+```mermaid
+flowchart LR
+  Client[Application client] --> API[HTTP authentication and API]
+  Operator[Local MCP operator] --> MCP[Stdio MCP tools]
+  API --> Core[Ledger orchestration]
+  MCP --> Core
+  Core --> PG[(PostgreSQL records and constraints)]
+  Core --> Redis[(Redis queues)]
+  Redis --> Worker[Workers]
+  Worker --> PG
+  Worker --> Views[Search and webhook receivers]
+```
+
+The HTTP master key has deployment-wide authority. Scoped keys govern API
+resource access. The local MCP process opens its own configured datasource;
+its write opt-in and tool confirmation are operator controls, not independent
+human approval. Inflight holds likewise reserve funds without creating an
+approval boundary. Keep database credentials and local MCP access within the
+operator's trust boundary.
+
+Webhook receivers and outbound hook destinations are separate trust decisions.
+The current notification signature uses the API master secret, so sharing it
+also shares administrative credentials. Public metrics use a separate bearer
+token; worker monitoring and infrastructure endpoints should remain private.
+See [deployment guidance](docs/deployment.md).
+
+<!-- Integration placeholder: update package responsibilities and boundaries after the architecture extraction merges. -->
+
 ## Validation
 
 Run `make verify` before opening a pull request. It checks module consistency,
-formatting, static analysis, hermetic tests, and CLI compilation. Service-backed
-tests additionally require PostgreSQL and Redis; use `make test-integration`
-after starting the compose services.
+formatting, static analysis, hermetic tests, and CLI compilation. Use
+`make test-integration` for a disposable compose stack with PostgreSQL,
+Redis and Typesense. Its test container shares the services' private namespace,
+so fixed localhost test addresses never connect to unrelated host services.
