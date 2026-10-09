@@ -45,6 +45,7 @@ type Queue struct {
 	Inspector   *asynq.Inspector
 	config      *config.Configuration
 	redis       redis.UniversalClient
+	notifyError func(error)
 	bpMu        sync.Mutex
 	bpCheckedAt time.Time
 	bpReject    bool

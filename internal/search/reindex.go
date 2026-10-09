@@ -22,8 +22,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/devaccuracy/ledgerforge/database"
 	"github.com/devaccuracy/ledgerforge/internal/metrics"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
@@ -51,17 +51,25 @@ type ReindexConfig struct {
 	BackpressureRetryInterval time.Duration
 }
 
+// ReindexRepository supplies the projections needed to rebuild the search index.
+type ReindexRepository interface {
+	GetAllLedgers(int, int) ([]model.Ledger, error)
+	GetAllIdentitiesPaginated(int, int) ([]model.Identity, error)
+	GetAllBalances(int, int) ([]model.Balance, error)
+	GetAllTransactions(context.Context, int, int) ([]model.Transaction, error)
+}
+
 // ReindexService handles reindexing operations.
 type ReindexService struct {
 	client     *TypesenseClient
-	datasource database.IDataSource
+	datasource ReindexRepository
 	config     ReindexConfig
 	progress   *ReindexProgress
 	mu         sync.RWMutex
 }
 
 // NewReindexService creates a new ReindexService instance.
-func NewReindexService(client *TypesenseClient, datasource database.IDataSource, config ReindexConfig) *ReindexService {
+func NewReindexService(client *TypesenseClient, datasource ReindexRepository, config ReindexConfig) *ReindexService {
 	if config.BatchSize <= 0 {
 		config.BatchSize = 1000
 	}
@@ -337,7 +345,8 @@ func (r *ReindexService) indexLedgers(ctx context.Context) error {
 }
 
 func (r *ReindexService) indexIdentities(ctx context.Context) error {
-	r.updateProgress("indexing_identities", r.progress.ProcessedRecords, r.progress.TotalRecords)
+	progress := r.GetProgress()
+	r.updateProgress("indexing_identities", progress.ProcessedRecords, progress.TotalRecords)
 	logrus.Info("Starting to index identities")
 
 	var offset int
@@ -393,7 +402,8 @@ func (r *ReindexService) indexIdentities(ctx context.Context) error {
 }
 
 func (r *ReindexService) indexBalances(ctx context.Context) error {
-	r.updateProgress("indexing_balances", r.progress.ProcessedRecords, r.progress.TotalRecords)
+	progress := r.GetProgress()
+	r.updateProgress("indexing_balances", progress.ProcessedRecords, progress.TotalRecords)
 	logrus.Info("Starting to index balances")
 
 	var offset int
@@ -449,7 +459,8 @@ func (r *ReindexService) indexBalances(ctx context.Context) error {
 }
 
 func (r *ReindexService) indexTransactions(ctx context.Context) error {
-	r.updateProgress("indexing_transactions", r.progress.ProcessedRecords, r.progress.TotalRecords)
+	progress := r.GetProgress()
+	r.updateProgress("indexing_transactions", progress.ProcessedRecords, progress.TotalRecords)
 	logrus.Info("Starting to index transactions")
 
 	var offset int
@@ -538,7 +549,7 @@ func (t *TypesenseClient) DropAllCollections(ctx context.Context) error {
 	return nil
 }
 
-func dbHasData(ctx context.Context, ds database.IDataSource) bool {
+func dbHasData(ctx context.Context, ds ReindexRepository) bool {
 	ledgers, err := ds.GetAllLedgers(2, 0)
 	if err != nil {
 		logrus.WithError(err).Debug("could not check ledgers for reindex")
@@ -586,7 +597,7 @@ func typesenseHasData(ctx context.Context, client *TypesenseClient) bool {
 	return *resp.NumDocuments > 0
 }
 
-func shouldReindex(ctx context.Context, client *TypesenseClient, ds database.IDataSource) bool {
+func shouldReindex(ctx context.Context, client *TypesenseClient, ds ReindexRepository) bool {
 	if !dbHasData(ctx, ds) {
 		return false
 	}
@@ -596,7 +607,7 @@ func shouldReindex(ctx context.Context, client *TypesenseClient, ds database.IDa
 	return true
 }
 
-func TryReindexIfNeeded(ctx context.Context, client *TypesenseClient, ds database.IDataSource) {
+func TryReindexIfNeeded(ctx context.Context, client *TypesenseClient, ds ReindexRepository) {
 	if client == nil || ds == nil {
 		return
 	}

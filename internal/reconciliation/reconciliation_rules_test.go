@@ -13,7 +13,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-package core
+package reconciliation
 
 import (
 	"context"
@@ -55,7 +55,7 @@ func reconAssertNoCall(t *testing.T, m *mocks.MockDataSource, method string) {
 }
 
 func TestRecon_ValidateRuleBasics(t *testing.T) {
-	b := &LedgerForge{}
+	b := &Service{}
 
 	tests := []struct {
 		name    string
@@ -97,7 +97,7 @@ func TestRecon_ValidateRuleBasics(t *testing.T) {
 }
 
 func TestRecon_ValidateOperator(t *testing.T) {
-	b := &LedgerForge{}
+	b := &Service{}
 
 	for _, op := range []string{"equals", "greater_than", "less_than", "contains"} {
 		assert.NoError(t, b.validateOperator(op), "operator %q must be valid", op)
@@ -111,7 +111,7 @@ func TestRecon_ValidateOperator(t *testing.T) {
 }
 
 func TestRecon_ValidateField(t *testing.T) {
-	b := &LedgerForge{}
+	b := &Service{}
 
 	for _, f := range []string{"amount", "date", "description", "reference", "currency"} {
 		assert.NoError(t, b.validateField(f), "field %q must be valid", f)
@@ -123,7 +123,7 @@ func TestRecon_ValidateField(t *testing.T) {
 }
 
 func TestRecon_ValidateDrift(t *testing.T) {
-	b := &LedgerForge{}
+	b := &Service{}
 
 	tests := []struct {
 		name     string
@@ -167,7 +167,7 @@ func TestRecon_ValidateDrift(t *testing.T) {
 }
 
 func TestRecon_ValidateCriteria(t *testing.T) {
-	b := &LedgerForge{}
+	b := &Service{}
 
 	t.Run("missing field rejected", func(t *testing.T) {
 		err := b.validateCriteria(model.MatchingCriteria{Operator: "equals"})
@@ -211,7 +211,7 @@ func TestRecon_ValidateCriteria(t *testing.T) {
 }
 
 func TestRecon_ValidateRule(t *testing.T) {
-	b := &LedgerForge{}
+	b := &Service{}
 
 	t.Run("valid rule passes", func(t *testing.T) {
 		rule := reconValidRule()
@@ -236,7 +236,7 @@ func TestRecon_CreateMatchingRule(t *testing.T) {
 
 	t.Run("success assigns id and timestamps", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		b := &LedgerForge{datasource: mockDS}
+		b := testService(mockDS)
 
 		var recorded *model.MatchingRule
 		mockDS.On("RecordMatchingRule", mock.Anything, mock.AnythingOfType("*model.MatchingRule")).
@@ -258,7 +258,7 @@ func TestRecon_CreateMatchingRule(t *testing.T) {
 
 	t.Run("validation failure never hits the datasource", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		b := &LedgerForge{datasource: mockDS}
+		b := testService(mockDS)
 
 		invalid := reconValidRule()
 		invalid.Criteria[0].AllowableDrift = 100.5 // > 100, invalid for amount/equals
@@ -271,7 +271,7 @@ func TestRecon_CreateMatchingRule(t *testing.T) {
 
 	t.Run("datasource error propagates", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		b := &LedgerForge{datasource: mockDS}
+		b := testService(mockDS)
 
 		dbErr := errors.New("insert failed")
 		mockDS.On("RecordMatchingRule", mock.Anything, mock.Anything).Return(dbErr).Once()
@@ -288,7 +288,7 @@ func TestRecon_GetMatchingRule(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		b := &LedgerForge{datasource: mockDS}
+		b := testService(mockDS)
 
 		want := &model.MatchingRule{RuleID: "rule_1", Name: "r"}
 		mockDS.On("GetMatchingRule", mock.Anything, "rule_1").Return(want, nil).Once()
@@ -301,7 +301,7 @@ func TestRecon_GetMatchingRule(t *testing.T) {
 
 	t.Run("error propagates", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		b := &LedgerForge{datasource: mockDS}
+		b := testService(mockDS)
 
 		dbErr := errors.New("not found")
 		mockDS.On("GetMatchingRule", mock.Anything, "rule_missing").Return((*model.MatchingRule)(nil), dbErr).Once()
@@ -326,7 +326,7 @@ func TestRecon_UpdateMatchingRule(t *testing.T) {
 
 	t.Run("success preserves original CreatedAt", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		b := &LedgerForge{datasource: mockDS}
+		b := testService(mockDS)
 
 		mockDS.On("GetMatchingRule", mock.Anything, "rule_1").Return(existing, nil).Once()
 		var persisted *model.MatchingRule
@@ -349,7 +349,7 @@ func TestRecon_UpdateMatchingRule(t *testing.T) {
 
 	t.Run("lookup error propagates and update is not attempted", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		b := &LedgerForge{datasource: mockDS}
+		b := testService(mockDS)
 
 		dbErr := errors.New("rule not found")
 		mockDS.On("GetMatchingRule", mock.Anything, "rule_x").Return((*model.MatchingRule)(nil), dbErr).Once()
@@ -364,7 +364,7 @@ func TestRecon_UpdateMatchingRule(t *testing.T) {
 
 	t.Run("invalid update rejected before persisting", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		b := &LedgerForge{datasource: mockDS}
+		b := testService(mockDS)
 
 		mockDS.On("GetMatchingRule", mock.Anything, "rule_1").Return(existing, nil).Once()
 
@@ -378,7 +378,7 @@ func TestRecon_UpdateMatchingRule(t *testing.T) {
 
 	t.Run("datasource update error propagates", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		b := &LedgerForge{datasource: mockDS}
+		b := testService(mockDS)
 
 		dbErr := errors.New("update failed")
 		mockDS.On("GetMatchingRule", mock.Anything, "rule_1").Return(existing, nil).Once()
@@ -397,7 +397,7 @@ func TestRecon_DeleteMatchingRule(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		b := &LedgerForge{datasource: mockDS}
+		b := testService(mockDS)
 		mockDS.On("DeleteMatchingRule", mock.Anything, "rule_1").Return(nil).Once()
 		assert.NoError(t, b.DeleteMatchingRule(ctx, "rule_1"))
 		mockDS.AssertExpectations(t)
@@ -405,7 +405,7 @@ func TestRecon_DeleteMatchingRule(t *testing.T) {
 
 	t.Run("error propagates", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		b := &LedgerForge{datasource: mockDS}
+		b := testService(mockDS)
 		dbErr := errors.New("delete failed")
 		mockDS.On("DeleteMatchingRule", mock.Anything, "rule_1").Return(dbErr).Once()
 		assert.ErrorIs(t, b.DeleteMatchingRule(ctx, "rule_1"), dbErr)
@@ -417,7 +417,7 @@ func TestRecon_ListMatchingRules(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		b := &LedgerForge{datasource: mockDS}
+		b := testService(mockDS)
 		want := []*model.MatchingRule{{RuleID: "rule_1"}, {RuleID: "rule_2"}}
 		mockDS.On("GetMatchingRules", mock.Anything).Return(want, nil).Once()
 
@@ -428,7 +428,7 @@ func TestRecon_ListMatchingRules(t *testing.T) {
 
 	t.Run("error propagates", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		b := &LedgerForge{datasource: mockDS}
+		b := testService(mockDS)
 		dbErr := errors.New("list failed")
 		mockDS.On("GetMatchingRules", mock.Anything).Return(([]*model.MatchingRule)(nil), dbErr).Once()
 
@@ -443,7 +443,7 @@ func TestRecon_GetMatchingRulesByIDs(t *testing.T) {
 
 	t.Run("empty id list returns no rules and touches nothing", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		b := &LedgerForge{datasource: mockDS}
+		b := testService(mockDS)
 
 		rules, err := b.getMatchingRules(ctx, nil)
 		require.NoError(t, err)
@@ -453,7 +453,7 @@ func TestRecon_GetMatchingRulesByIDs(t *testing.T) {
 
 	t.Run("resolves ids in order", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		b := &LedgerForge{datasource: mockDS}
+		b := testService(mockDS)
 
 		r1 := &model.MatchingRule{RuleID: "rule_1", Name: "first"}
 		r2 := &model.MatchingRule{RuleID: "rule_2", Name: "second"}
@@ -470,7 +470,7 @@ func TestRecon_GetMatchingRulesByIDs(t *testing.T) {
 
 	t.Run("error on any id aborts the whole fetch", func(t *testing.T) {
 		mockDS := new(mocks.MockDataSource)
-		b := &LedgerForge{datasource: mockDS}
+		b := testService(mockDS)
 
 		dbErr := errors.New("missing rule")
 		mockDS.On("GetMatchingRule", mock.Anything, "rule_1").Return(&model.MatchingRule{RuleID: "rule_1"}, nil).Once()

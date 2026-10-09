@@ -418,7 +418,7 @@ func serverCommands(b *ledgerforgeInstance) *cobra.Command {
 			if err != nil {
 				logrus.Errorf("TypeSense initialization error: %v", err)
 			} else if tsClient != nil {
-				search.TryReindexIfNeeded(ctx, tsClient, b.ledgerforge.GetDataSource())
+				b.ledgerforge.TryReindexIfNeeded(ctx)
 			}
 
 			// Close database connection pool on shutdown

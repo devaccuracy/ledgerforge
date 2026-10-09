@@ -21,7 +21,6 @@ import (
 	"context"
 
 	"github.com/devaccuracy/ledgerforge/internal/filter"
-	"github.com/devaccuracy/ledgerforge/internal/notification"
 	"github.com/devaccuracy/ledgerforge/model"
 )
 
@@ -36,14 +35,14 @@ func (l *LedgerForge) postLedgerActions(_ context.Context, ledger *model.Ledger)
 	go func() {
 		err := l.queue.queueIndexData(ledger.LedgerID, "ledgers", ledger)
 		if err != nil {
-			notification.NotifyError(err)
+			l.notifyError(err)
 		}
 		err = l.SendWebhook(NewWebhook{
 			Event:   "ledger.created",
 			Payload: ledger,
 		})
 		if err != nil {
-			notification.NotifyError(err)
+			l.notifyError(err)
 		}
 	}()
 }

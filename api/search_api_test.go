@@ -71,38 +71,35 @@ func TestMultiSearchValidation(t *testing.T) {
 }
 
 func TestReindexProgressLifecycle(t *testing.T) {
-	router, _, err := setupRouter(t)
-	if err != nil {
-		t.Fatalf("Failed to setup router: %v", err)
-	}
-
 	t.Run("No reindex started returns 404", func(t *testing.T) {
-		resetReindexManager()
+		router, _, err := setupRouter(t)
+		require.NoError(t, err)
 		resp := doJSONRequest(router, "GET", "/search/reindex", nil)
 		assert.Equal(t, http.StatusNotFound, resp.Code)
 	})
-
-	t.Run("StartReindex always accepts", func(t *testing.T) {
-		resetReindexManager()
+	t.Run("StartReindex accepts default, explicit and malformed bodies", func(t *testing.T) {
 		for _, body := range [][]byte{[]byte(`{}`), []byte(`{"batch_size": 500}`), []byte(`{malformed`)} {
-			resetReindexManager()
+			router, _, err := setupRouter(t)
+			require.NoError(t, err)
 			resp := doJSONRequest(router, "POST", "/search/reindex", body)
 			assert.Equal(t, http.StatusAccepted, resp.Code)
 		}
 	})
-
-	t.Run("Progress available after start", func(t *testing.T) {
-		resetReindexManager()
+	t.Run("Progress belongs to the originating instance", func(t *testing.T) {
+		router, _, err := setupRouter(t)
+		require.NoError(t, err)
+		otherRouter, _, err := setupRouter(t)
+		require.NoError(t, err)
 		resp := doJSONRequest(router, "POST", "/search/reindex", []byte(`{}`))
 		require.Equal(t, http.StatusAccepted, resp.Code)
-
 		resp = doJSONRequest(router, "GET", "/search/reindex", nil)
 		assert.Equal(t, http.StatusOK, resp.Code)
-
 		var progress map[string]interface{}
 		require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &progress))
 		assert.Contains(t, progress, "status")
 		assert.Contains(t, progress, "paused")
+		resp = doJSONRequest(otherRouter, "GET", "/search/reindex", nil)
+		assert.Equal(t, http.StatusNotFound, resp.Code)
 	})
 }
 
@@ -123,7 +120,6 @@ func TestSearchWithTypesense(t *testing.T) {
 	require.NoError(t, err)
 
 	// Index existing data, then wait for the reindex to finish.
-	resetReindexManager()
 	resp := doJSONRequest(router, "POST", "/search/reindex", []byte(`{}`))
 	require.Equal(t, http.StatusAccepted, resp.Code)
 
@@ -169,7 +165,6 @@ func TestReindexConflictWithTypesense(t *testing.T) {
 	dns := skipWithoutTypesense(t)
 	router, _ := setupTypesenseRouter(t, dns)
 
-	resetReindexManager()
 	resp := doJSONRequest(router, "POST", "/search/reindex", []byte(`{}`))
 	require.Equal(t, http.StatusAccepted, resp.Code)
 
@@ -193,5 +188,4 @@ func TestReindexConflictWithTypesense(t *testing.T) {
 		}
 		time.Sleep(time.Second)
 	}
-	resetReindexManager()
 }

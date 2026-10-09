@@ -13,7 +13,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-package core
+package reconciliation
 
 import (
 	"context"
@@ -38,7 +38,7 @@ func TestOneToManyReconciliation(t *testing.T) {
 	}
 	config.ConfigStore.Store(cnf)
 	mockDS := new(mocks.MockDataSource)
-	ledgerforge := &LedgerForge{datasource: mockDS}
+	ledgerforge := testService(mockDS)
 
 	ctx := context.Background()
 	externalTxns := []*model.Transaction{
@@ -101,7 +101,7 @@ func TestOneToManyReconciliationNoMatches(t *testing.T) {
 	}
 	config.ConfigStore.Store(cnf)
 	mockDS := new(mocks.MockDataSource)
-	ledgerforge := &LedgerForge{datasource: mockDS}
+	ledgerforge := testService(mockDS)
 
 	ctx := context.Background()
 	externalTxns := []*model.Transaction{
@@ -150,7 +150,7 @@ func TestManyToOneReconciliationUsesUploadID(t *testing.T) {
 	}
 	config.ConfigStore.Store(cnf)
 	mockDS := new(mocks.MockDataSource)
-	ledgerforge := &LedgerForge{datasource: mockDS}
+	ledgerforge := testService(mockDS)
 
 	ctx := context.Background()
 	internalTxns := []*model.Transaction{
@@ -199,7 +199,7 @@ func TestManyToOneReconciliationUsesUploadID(t *testing.T) {
 
 // TestMatchingRules tests the matching rules functionality
 func TestMatchingRules(t *testing.T) {
-	ledgerforge := &LedgerForge{}
+	ledgerforge := &Service{}
 
 	// A single captured timestamp keeps the date-drift case exactly at the
 	// 3600s boundary; two time.Now() calls would add nanoseconds and
@@ -358,7 +358,7 @@ func TestReconciliationEdgeCases(t *testing.T) {
 	config.ConfigStore.Store(cnf)
 	mockDS := new(mocks.MockDataSource)
 
-	ledgerforge := &LedgerForge{datasource: mockDS}
+	ledgerforge := testService(mockDS)
 
 	ctx := context.Background()
 
