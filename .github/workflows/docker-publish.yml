@@ -52,7 +52,7 @@ jobs:
             type=semver,pattern={{version}}
 
       - name: Build (and push when allowed)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
