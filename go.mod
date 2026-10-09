@@ -12,7 +12,7 @@ require (
 	github.com/caddyserver/certmagic v0.22.0
 	github.com/didip/tollbooth/v7 v7.0.2
 	github.com/gin-gonic/gin v1.10.0
-	github.com/go-ozzo/ozzo-validation/v4 v4.3.0
+	github.com/go-ozzo/ozzo-validation/v4 v4.4.1
 	github.com/go-redis/cache/v9 v9.0.0
 	github.com/go-redis/redismock/v9 v9.2.0
 	github.com/google/uuid v1.6.0
