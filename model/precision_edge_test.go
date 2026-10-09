@@ -60,16 +60,16 @@ func TestParseFixedAmount_Table(t *testing.T) {
 			wantErr:   "invalid precise_distribution format",
 		},
 		{
-			name:      "precise distribution int64 overflow rejected",
+			name:      "precise distribution beyond int64 remains exact",
 			dist:      Distribution{Identifier: "a", PreciseDistribution: "9223372036854775808"},
 			precision: precision100,
-			wantErr:   "invalid precise_distribution format",
+			want:      "9223372036854775808",
 		},
 		{
-			name:      "negative precise distribution parses (validated later)",
+			name:      "negative precise distribution rejected",
 			dist:      Distribution{Identifier: "a", PreciseDistribution: "-5"},
 			precision: precision100,
-			want:      "-5",
+			wantErr:   "cannot be negative",
 		},
 		{
 			name:      "fixed major amount is scaled by precision",
@@ -96,10 +96,10 @@ func TestParseFixedAmount_Table(t *testing.T) {
 			wantErr:   "invalid fixed amount format",
 		},
 		{
-			name:      "empty distribution yields zero",
+			name:      "empty distribution rejected",
 			dist:      Distribution{Identifier: "a"},
 			precision: precision100,
-			want:      "0",
+			wantErr:   "required",
 		},
 		{
 			name:      "precise distribution takes priority over major-unit distribution",

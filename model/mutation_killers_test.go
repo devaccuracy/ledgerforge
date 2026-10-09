@@ -145,7 +145,7 @@ func TestValidate_ZeroAmountRejected(t *testing.T) {
 	err := txn.validate()
 	require.Error(t, err, "a zero amount with no precise amount must be rejected, not just negative ones")
 
-	positive := &Transaction{Amount: 0.01}
+	positive := &Transaction{Amount: 0.01, Precision: 100}
 	assert.NoError(t, positive.validate())
 }
 

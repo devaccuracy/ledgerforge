@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"math"
 	"math/big"
-	"strconv"
 	"strings"
 	"time"
 
@@ -156,9 +155,6 @@ func processFixedDistributions(distributions []Distribution, state *distribution
 		if err != nil {
 			return err
 		}
-		if fixedAmountDec.IsZero() {
-			continue
-		}
 
 		if fixedAmountDec.Cmp(state.amountLeftDec) > 0 {
 			return errors.New("fixed amount exceeds remaining transaction amount")
@@ -174,27 +170,33 @@ func processFixedDistributions(distributions []Distribution, state *distribution
 // parseFixedAmount parses a fixed amount from a distribution
 func parseFixedAmount(dist Distribution, precisionDec decimal.Decimal) (decimal.Decimal, error) {
 	if dist.PreciseDistribution != "" {
-		preciseAmount, err := strconv.ParseInt(dist.PreciseDistribution, 10, 64)
-		if err != nil {
+		if len(dist.PreciseDistribution) > 4096 {
+			return decimal.Zero, errors.New("precise_distribution exceeds 4096 characters")
+		}
+		amount, ok := new(big.Int).SetString(dist.PreciseDistribution, 10)
+		if !ok {
 			return decimal.Zero, errors.New("invalid precise_distribution format: must be an integer value in minor units")
 		}
-		return decimal.NewFromInt(preciseAmount), nil
+		if amount.Sign() < 0 {
+			return decimal.Zero, errors.New("distribution amount cannot be negative")
+		}
+		return decimal.NewFromBigInt(amount, 0), nil
 	}
-
 	if dist.Distribution != "" {
-		fixedAmount, err := strconv.ParseFloat(dist.Distribution, 64)
+		amount, err := parseMonetaryDecimal(dist.Distribution)
 		if err != nil {
 			return decimal.Zero, errors.New("invalid fixed amount format")
 		}
-		return decimal.NewFromFloat(fixedAmount).Mul(precisionDec), nil
+		if amount.Sign() < 0 {
+			return decimal.Zero, errors.New("distribution amount cannot be negative")
+		}
+		return amount.Mul(precisionDec), nil
 	}
-
-	return decimal.Zero, nil
+	return decimal.Zero, errors.New("distribution amount is required")
 }
 
 // processPercentageDistributions handles the second pass: percentage distributions
 func processPercentageDistributions(distributions []Distribution, state *distributionState) error {
-	hundredDec := decimal.NewFromInt(100)
 	minValueDec := decimal.NewFromInt(1)
 
 	for _, dist := range distributions {
@@ -203,15 +205,17 @@ func processPercentageDistributions(distributions []Distribution, state *distrib
 		}
 
 		percentageStr := dist.Distribution[:len(dist.Distribution)-1]
-		percentage, err := strconv.ParseFloat(percentageStr, 64)
+		percentageDec, err := parseMonetaryDecimal(percentageStr)
 		if err != nil {
 			return errors.New("invalid percentage format")
 		}
 
-		percentageDec := decimal.NewFromFloat(percentage)
+		if percentageDec.Sign() < 0 {
+			return errors.New("distribution percentage cannot be negative")
+		}
 		state.totalPercentage = state.totalPercentage.Add(percentageDec)
 
-		rawAmountDec := state.totalAmountDec.Mul(percentageDec).Div(hundredDec)
+		rawAmountDec := state.totalAmountDec.Mul(percentageDec).Shift(-2)
 
 		if rawAmountDec.Sign() > 0 && rawAmountDec.Cmp(minValueDec) < 0 {
 			state.percentAmounts[dist.Identifier] = decimal.Zero
@@ -225,7 +229,7 @@ func processPercentageDistributions(distributions []Distribution, state *distrib
 // validateDistributions checks that total distributions don't exceed limits
 func validateDistributions(state *distributionState) error {
 	hundredDec := decimal.NewFromInt(100)
-	if state.totalPercentage.Cmp(hundredDec) > 0 || state.fixedTotalDec.Cmp(state.totalAmountDec) > 0 {
+	if state.totalPercentage.Cmp(hundredDec) > 0 || state.fixedTotalDec.Add(state.totalAmountDec.Mul(state.totalPercentage).Shift(-2)).Cmp(state.totalAmountDec) > 0 {
 		return errors.New("total distributions exceed 100% or total amount")
 	}
 	return nil
@@ -237,8 +241,7 @@ func adjustPercentageAmounts(state *distributionState) {
 		return
 	}
 
-	hundredDec := decimal.NewFromInt(100)
-	targetTotal := state.totalAmountDec.Mul(state.totalPercentage).Div(hundredDec)
+	targetTotal := state.totalAmountDec.Mul(state.totalPercentage).Shift(-2)
 
 	currentTotal := decimal.Zero
 	for _, amount := range state.percentAmounts {
@@ -261,7 +264,7 @@ func findLargestDecimal(amounts map[string]decimal.Decimal) (string, decimal.Dec
 	var largestKey string
 	var largestAmount decimal.Decimal
 	for id, amount := range amounts {
-		if amount.Cmp(largestAmount) > 0 {
+		if largestKey == "" || amount.Cmp(largestAmount) > 0 || (amount.Cmp(largestAmount) == 0 && id < largestKey) {
 			largestAmount = amount
 			largestKey = id
 		}
@@ -312,7 +315,7 @@ func balanceDistributions(state *distributionState) {
 	var largestKey string
 	largestAmount := big.NewInt(0)
 	for id, amount := range state.result {
-		if amount.Cmp(largestAmount) > 0 {
+		if largestKey == "" || amount.Cmp(largestAmount) > 0 || (amount.Cmp(largestAmount) == 0 && id < largestKey) {
 			largestAmount = amount
 			largestKey = id
 		}
@@ -324,25 +327,47 @@ func balanceDistributions(state *distributionState) {
 	}
 }
 
-// CalculateDistributionsPrecise calculates distributions using big.Int for precision
+// CalculateDistributionsPrecise parses components exactly, truncates fractional
+// minor units, then assigns the remainder to the largest allocation. Equal
+// allocations are ordered lexicographically by identifier. This preserves the
+// existing allocation policy while making every split conserve its total.
 func CalculateDistributionsPrecise(ctx context.Context, totalPreciseAmount *big.Int, distributions []Distribution, precision int64) (map[string]*big.Int, error) {
 	_, span := tracer.Start(ctx, "CalculateDistributionsPrecise")
 	defer span.End()
 
 	span.AddEvent("Starting precise distribution calculation", trace.WithAttributes(
-		attribute.String("total_precise_amount", totalPreciseAmount.String()),
+		attribute.String("total_precise_amount", fmt.Sprint(totalPreciseAmount)),
 		attribute.Int("distribution.count", len(distributions)),
 	))
 
-	if totalPreciseAmount.Cmp(big.NewInt(0)) == 0 {
-		return handleZeroAmount(distributions), nil
+	if totalPreciseAmount == nil || totalPreciseAmount.Sign() < 0 {
+		return nil, errors.New("total amount must be non-negative")
+	}
+	if precision <= 0 {
+		return nil, errors.New("precision must be positive")
+	}
+	if len(distributions) == 0 {
+		return nil, errors.New("distributions are required")
+	}
+	seen := make(map[string]bool, len(distributions))
+	leftCount := 0
+	for _, dist := range distributions {
+		if dist.Identifier == "" || seen[dist.Identifier] {
+			return nil, errors.New("distribution identifiers must be non-empty and unique")
+		}
+		seen[dist.Identifier] = true
+		if dist.Distribution != "" && dist.PreciseDistribution != "" {
+			return nil, errors.New("provide either distribution or precise_distribution, not both")
+		}
+		if dist.isLeftDistribution() {
+			leftCount++
+		}
+	}
+	if leftCount > 1 {
+		return nil, errors.New("multiple identifiers with 'left' distribution")
 	}
 
 	totalAmountDec := decimal.NewFromBigInt(totalPreciseAmount, 0)
-
-	if result := handleSmallAmount(totalAmountDec, totalPreciseAmount, distributions); result != nil {
-		return result, nil
-	}
 
 	state := &distributionState{
 		totalAmountDec: totalAmountDec,
@@ -368,8 +393,15 @@ func CalculateDistributionsPrecise(ctx context.Context, totalPreciseAmount *big.
 		return nil, err
 	}
 
+	if totalPreciseAmount.Sign() == 0 {
+		return handleZeroAmount(distributions), nil
+	}
+
 	adjustPercentageAmounts(state)
 	combineDistributions(state)
+	if state.fixedTotalDec.IsZero() && state.totalPercentage.IsZero() && leftCount == 0 {
+		return nil, errors.New("distributions must allocate a positive amount")
+	}
 
 	if err := processLeftDistribution(distributions, state); err != nil {
 		span.RecordError(err)
@@ -382,26 +414,11 @@ func CalculateDistributionsPrecise(ctx context.Context, totalPreciseAmount *big.
 	return state.result, nil
 }
 
-// handleZeroAmount returns zero amounts for all distributions when total is zero
+// handleZeroAmount returns independent zero allocations for each identifier.
 func handleZeroAmount(distributions []Distribution) map[string]*big.Int {
-	result := make(map[string]*big.Int)
+	result := make(map[string]*big.Int, len(distributions))
 	for _, dist := range distributions {
 		result[dist.Identifier] = big.NewInt(0)
-	}
-	return result
-}
-
-// handleSmallAmount assigns entire amount to first distribution for very small amounts
-func handleSmallAmount(totalAmountDec decimal.Decimal, totalPreciseAmount *big.Int, distributions []Distribution) map[string]*big.Int {
-	minAmountDec := decimal.NewFromInt(1)
-	if totalAmountDec.Cmp(minAmountDec) > 0 || totalAmountDec.Sign() <= 0 || len(distributions) == 0 {
-		return nil
-	}
-
-	result := make(map[string]*big.Int)
-	result[distributions[0].Identifier] = totalPreciseAmount
-	for i := 1; i < len(distributions); i++ {
-		result[distributions[i].Identifier] = big.NewInt(0)
 	}
 	return result
 }
@@ -420,11 +437,17 @@ func (transaction *Transaction) SplitTransactionPrecise(ctx context.Context) ([]
 
 	span.AddEvent("Starting precise distribution calculation", trace.WithAttributes(
 		attribute.String("transaction.id", transaction.TransactionID),
-		attribute.String("transaction.precise_amount", transaction.PreciseAmount.String()),
+		attribute.String("transaction.precise_amount", fmt.Sprint(transaction.PreciseAmount)),
 		attribute.Int("distribution.count", len(ds)),
 	))
 
-	// Use PreciseAmount for distribution calculation
+	// Use PreciseAmount for distribution calculation.
+	if err := ValidatePrecision(transaction.Precision); err != nil {
+		return nil, err
+	}
+	if transaction.Precision <= 0 || transaction.Precision >= math.Exp2(63) {
+		return nil, errors.New("split precision must be a positive int64 scale")
+	}
 	precisionInt := int64(transaction.Precision)
 	distributions, err := CalculateDistributionsPrecise(ctx, transaction.PreciseAmount, ds, precisionInt)
 	if err != nil {
@@ -432,32 +455,14 @@ func (transaction *Transaction) SplitTransactionPrecise(ctx context.Context) ([]
 		return nil, err
 	}
 
-	// Walk the distributions in the order the caller supplied them rather than
-	// ranging over the map CalculateDistributionsPrecise returns.
-	//
-	// Go randomises map iteration, and both the write-back below and the
-	// reference suffix are positional, so map order decided which Distribution
-	// entry received which leg's TransactionID. With two sources that was wrong
-	// roughly a quarter of the time: the response told the caller that the
-	// first source's leg was some transaction id that actually belonged to the
-	// second. The "-1"/"-2" reference suffixes moved between identifiers the
-	// same way, so the same split produced a different identifier-to-reference
-	// mapping on each run.
-	//
-	// Iterating ds fixes both: leg n always belongs to ds[n], and every entry
-	// is matched to its own amount by identifier instead of by position.
+	// Emit legs in caller order and attribute child IDs by identifier.
 	var transactions []*Transaction
 	counter := 1
-	emitted := make(map[string]bool, len(ds))
 	for _, d := range ds {
-		// The distribution map is keyed by identifier, so repeating one
-		// identifier yields a single merged amount. Emit it once; the extra
-		// entries share that leg rather than duplicating the money.
 		preciseAmount, ok := distributions[d.Identifier]
-		if !ok || emitted[d.Identifier] {
+		if !ok {
 			continue
 		}
-		emitted[d.Identifier] = true
 
 		newTransaction := *transaction                               // Create a copy of the original transaction
 		newTransaction.TransactionID = GenerateUUIDWithSuffix("txn") // Set the transaction ID
@@ -471,8 +476,6 @@ func (transaction *Transaction) SplitTransactionPrecise(ctx context.Context) ([]
 		newTransaction.Destinations = nil                            // Clear the Destinations slice
 		newTransaction.ParentTransaction = transaction.TransactionID // Set the parent transaction ID
 
-		// Attribute the leg to every entry naming this identifier, so a
-		// repeated identifier does not leave one of its entries blank.
 		if len(transaction.Sources) > 0 {
 			newTransaction.Source = d.Identifier // Set the source
 			for i := range transaction.Sources {

@@ -72,11 +72,11 @@ func (l *LedgerForge) QueueTransaction(ctx context.Context, transaction *model.T
 
 	// Initialize transaction metadata and status
 	originalRef := transaction.Reference
-	setTransactionMetadata(transaction)
 	if err := transaction.ValidateAmount(); err != nil {
 		span.RecordError(err)
 		return nil, err
 	}
+	setTransactionMetadata(transaction)
 	setTransactionStatus(transaction)
 	originalTxnID := transaction.TransactionID
 

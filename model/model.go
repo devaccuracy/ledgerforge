@@ -8,42 +8,12 @@ import (
 	"fmt"
 	"math/big"
 	"strconv"
-	"sync"
 
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 
 	"github.com/shopspring/decimal"
 )
-
-// precisionCache stores transaction precisions fetched from the database.
-// It is read-through over the database (the source of truth) and is bounded
-// and concurrency-safe via precisionCacheMu.
-var (
-	precisionCacheMu sync.RWMutex
-	precisionCache   = make(map[string]float64)
-)
-
-const precisionCacheMaxEntries = 100_000
-
-// getCachedPrecision returns a cached precision for transactionID, if present.
-func getCachedPrecision(transactionID string) (float64, bool) {
-	precisionCacheMu.RLock()
-	defer precisionCacheMu.RUnlock()
-	precision, found := precisionCache[transactionID]
-	return precision, found
-}
-
-// setCachedPrecision stores a precision, resetting the cache if it reaches the
-// size bound (entries are immutable, so a reset only forces re-fetches).
-func setCachedPrecision(transactionID string, precision float64) {
-	precisionCacheMu.Lock()
-	defer precisionCacheMu.Unlock()
-	if len(precisionCache) >= precisionCacheMaxEntries {
-		precisionCache = make(map[string]float64)
-	}
-	precisionCache[transactionID] = precision
-}
 
 // GenerateUUIDWithSuffix generates a UUID with a given module name as a suffix.
 // This is useful for creating unique identifiers with context-specific prefixes.
@@ -187,8 +157,8 @@ func canProcessTransaction(transaction *Transaction, sourceBalance *Balance) err
 		// products (0.29*100 -> 28), rejecting transactions exactly at the
 		// configured limit.
 		overdraftLimitPrecise := decimal.NewFromFloat(transaction.OverdraftLimit).
-			Mul(decimal.NewFromFloat(transaction.Precision)).Round(0).IntPart()
-		overdraftLimitBigInt := new(big.Int).SetInt64(overdraftLimitPrecise)
+			Mul(decimal.NewFromFloat(transaction.Precision)).Round(0).BigInt()
+		overdraftLimitBigInt := overdraftLimitPrecise
 
 		// Negative of overdraft limit (as balance will be negative)
 		negativeOverdraftLimit := new(big.Int).Neg(overdraftLimitBigInt)
@@ -283,6 +253,10 @@ func (balance *Balance) RollbackInflightDebit(amount *big.Int) error {
 // 2. If Amount exists: converts it to a PreciseAmount
 // This function is now a wrapper that sets default precision if needed and calls applyPrecisionLogic.
 func ApplyPrecision(transaction *Transaction) *big.Int {
+	// Preserve invalid input for validation instead of panicking in decimal math.
+	if err := transaction.validateMonetaryFields(); err != nil {
+		return big.NewInt(0)
+	}
 	if transaction.Precision == 0 {
 		transaction.Precision = 1
 	}
@@ -311,89 +285,44 @@ func applyPrecisionLogic(transaction *Transaction) *big.Int {
 	return transaction.PreciseAmount
 }
 
-// fetchTransactionPrecisionFromDB is a placeholder for fetching precision from the database.
-// In a real application, this would query your database.
-// It returns the precision, a boolean indicating if found, and an error.
-func fetchTransactionPrecisionFromDB(db *sql.DB, transactionID string) (float64, bool, error) {
-	// Check cache first
-	if precision, found := getCachedPrecision(transactionID); found {
-		logrus.WithFields(logrus.Fields{
-			"transaction_id": transactionID,
-			"precision":      precision,
-		}).Debug("cache hit for transaction precision")
-		return precision, true, nil
+// ApplyPrecisionWithDBLookupChecked resolves precision authoritatively without
+// process-global state. API callers use their injected datasource instead.
+func ApplyPrecisionWithDBLookupChecked(transaction *Transaction, db *sql.DB) (*big.Int, error) {
+	if transaction == nil || db == nil || transaction.TransactionID == "" {
+		return nil, errors.New("database and transaction ID are required for precision lookup")
 	}
-
 	var precision float64
-	// First try to find precision by transaction_id
-	query := `
-		SELECT precision
-		FROM ledgerforge.transactions
-		WHERE transaction_id = $1
-		OR parent_transaction = $1
-		LIMIT 1`
-	err := db.QueryRow(query, transactionID).Scan(&precision)
-	if err == sql.ErrNoRows {
-		return 0, false, nil
-	}
+	err := db.QueryRow(`SELECT precision FROM ledgerforge.transactions
+ WHERE transaction_id = $1 OR parent_transaction = $1
+ ORDER BY (transaction_id = $1) DESC, transaction_id LIMIT 1`, transaction.TransactionID).Scan(&precision)
 	if err != nil {
-		logrus.WithError(err).WithField("transaction_id", transactionID).Error("error querying precision")
-		return 0, false, err
+		return nil, fmt.Errorf("fetch transaction precision: %w", err)
 	}
-	if precision <= 0 { // Or any other validation for valid precision
-		logrus.WithFields(logrus.Fields{
-			"transaction_id": transactionID,
-			"precision":      precision,
-		}).Warn("invalid precision found in DB")
-		return 0, false, nil // Treat invalid precision as not found for fallback logic
+	if err := ValidatePrecision(precision); err != nil {
+		return nil, err
 	}
-
-	// Store in cache
-	setCachedPrecision(transactionID, precision)
-	logrus.WithFields(logrus.Fields{
-		"transaction_id": transactionID,
-		"precision":      precision,
-	}).Debug("cache miss, fetched precision from DB and cached")
-	return precision, true, nil
+	if precision == 0 {
+		return nil, errors.New("stored transaction precision must be positive")
+	}
+	copy := *transaction
+	copy.Precision = precision
+	amount, err := ApplyPrecisionChecked(&copy)
+	if err != nil {
+		return nil, err
+	}
+	*transaction = copy
+	return amount, nil
 }
 
-// ApplyPrecisionWithDBLookup attempts to fetch precision from the database
-// and then applies it to the transaction. Falls back to transaction-defined
-// precision or a default of 1 if DB lookup fails or precision is invalid.
+// ApplyPrecisionWithDBLookup is retained for compatibility. Lookup failures
+// return nil; callers needing the cause should use the checked variant.
 func ApplyPrecisionWithDBLookup(transaction *Transaction, db *sql.DB) *big.Int {
-	var dbPrecision float64
-	var found bool
-	var err error
-
-	if db != nil && transaction.TransactionID != "" {
-		dbPrecision, found, err = fetchTransactionPrecisionFromDB(db, transaction.TransactionID)
-		if err != nil {
-			logrus.WithError(err).WithField("transaction_id", transaction.TransactionID).Warn("error fetching precision from DB, using local/default precision")
-			// Fall through to use local or default precision
-		}
-	} else {
-		logrus.Debug("DB connection or TransactionID is nil/empty; skipping DB lookup for precision")
+	amount, err := ApplyPrecisionWithDBLookupChecked(transaction, db)
+	if err != nil {
+		logrus.WithError(err).Warn("could not resolve transaction precision")
+		return nil
 	}
-
-	if found && dbPrecision > 0 {
-		transaction.Precision = dbPrecision
-		logrus.WithFields(logrus.Fields{
-			"transaction_id": transaction.TransactionID,
-			"precision":      transaction.Precision,
-		}).Debug("using precision from DB")
-	} else {
-		if transaction.Precision == 0 {
-			logrus.WithField("transaction_id", transaction.TransactionID).Debug("precision not found in DB, defaulting to 1")
-			transaction.Precision = 1
-		} else {
-			logrus.WithFields(logrus.Fields{
-				"transaction_id": transaction.TransactionID,
-				"precision":      transaction.Precision,
-			}).Debug("precision not found in DB, using pre-set precision")
-		}
-	}
-
-	return applyPrecisionLogic(transaction)
+	return amount
 }
 
 // convertPreciseToDecimal converts the precise integer amount to a decimal value
@@ -407,7 +336,25 @@ func convertPreciseToDecimal(transaction *Transaction) {
 	precisionDec := decimal.NewFromFloat(transaction.Precision)
 
 	// Perform division with exact decimal arithmetic
-	resultDec := preciseAmountDec.Div(precisionDec)
+	// Preserve every decimal place for terminating divisions. Other integer
+	// scales have repeating decimal expansions; PreciseAmount stays authoritative.
+	denominator := precisionDec.BigInt()
+	places := int32(0)
+	for _, factor := range []int64{2, 5} {
+		count := int32(0)
+		divisor := big.NewInt(factor)
+		for new(big.Int).Mod(denominator, divisor).Sign() == 0 {
+			denominator.Quo(denominator, divisor)
+			count++
+		}
+		if count > places {
+			places = count
+		}
+	}
+	if denominator.Cmp(big.NewInt(1)) != 0 {
+		places = int32(len(precisionDec.BigInt().String()) + 16)
+	}
+	resultDec := preciseAmountDec.DivRound(precisionDec, places)
 
 	// Store the exact string representation
 	transaction.AmountString = resultDec.String()
@@ -420,26 +367,11 @@ func convertPreciseToDecimal(transaction *Transaction) {
 // convertDecimalToPrecise converts a decimal amount to precise integer
 // by multiplying by precision
 func convertDecimalToPrecise(transaction *Transaction) *big.Int {
-	// We should avoid float multiplication due to precision loss
-	// Convert the components to strings first and use the decimal package
-
-	// Using decimal package approach
-	amountStr := strconv.FormatFloat(transaction.Amount, 'f', -1, 64)
-	precisionStr := strconv.FormatFloat(transaction.Precision, 'f', 0, 64)
-
-	amountDec, _ := decimal.NewFromString(amountStr)
-	precisionDec, _ := decimal.NewFromString(precisionStr)
-
-	// Round to the nearest minor unit: an amount finer than the precision
-	// (e.g. 1.005 at precision 100) would otherwise produce a non-integer
-	// string that big.Int.SetString silently rejects, yielding zero.
-	preciseAmount := amountDec.Mul(precisionDec).Round(0)
-
-	// Convert to big.Int
-	result := new(big.Int)
-	result.SetString(preciseAmount.String(), 10)
-
-	return result
+	amount, err := ParseAmount(transaction.decimalAmount(), transaction.Precision)
+	if err != nil {
+		return big.NewInt(0)
+	}
+	return amount
 }
 
 // ValidateAmount is the exported ingest check used by QueueTransaction so
@@ -448,17 +380,10 @@ func (transaction *Transaction) ValidateAmount() error {
 	return transaction.validate()
 }
 
-// validate checks if the transaction has a positive amount.
-//
-// Amount is checked first, and unconditionally. PreciseAmount is derived from
-// Amount x Precision and is set on every path that reaches here, so the
-// PreciseAmount branch below always returns early — which left the Amount
-// check unreachable in practice. A negative Amount paired with a negative
-// Precision yields a positive PreciseAmount, so checking only the product
-// silently accepted a transaction whose own recorded amount was negative.
+// validate checks all monetary inputs before conversion or persistence.
 func (transaction *Transaction) validate() error {
-	if transaction.Amount < 0 {
-		return errors.New("transaction amount must be positive")
+	if err := transaction.validateMonetaryFields(); err != nil {
+		return err
 	}
 	if transaction.PreciseAmount != nil {
 		if transaction.PreciseAmount.Sign() <= 0 {
@@ -466,21 +391,20 @@ func (transaction *Transaction) validate() error {
 		}
 		return nil
 	}
-	if transaction.Amount <= 0 {
-		return errors.New("transaction amount must be positive")
-	}
-	return nil
+	_, err := ParseAmount(transaction.decimalAmount(), transaction.Precision)
+	return err
 }
 
 // UpdateBalances updates the balances for both the source and destination based on the transaction details.
 // It ensures precision is applied and checks for overdraft before updating.
 func UpdateBalances(transaction *Transaction, source, destination *Balance) error {
 	// Apply precision to get precise amount
-	transaction.PreciseAmount = ApplyPrecision(transaction)
-	err := transaction.validate()
+	amount, err := ApplyPrecisionChecked(transaction)
 	if err != nil {
 		return err
 	}
+
+	transaction.PreciseAmount = amount
 
 	// Check if source has sufficient funds
 	err = canProcessTransaction(transaction, source)
