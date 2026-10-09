@@ -54,20 +54,23 @@ func assertSealed(t *testing.T, ds database.IDataSource, txnID string) (int64, s
 	conn := ds.(*database.Datasource).Conn
 	var seq int64
 	var prev, stored string
+	var version int
 	var r model.ChainRow
 	err := conn.QueryRowContext(context.Background(), `
 		SELECT chain_seq, COALESCE(chain_prev_hash, ''), COALESCE(chain_hash, ''),
 		       transaction_id, COALESCE(source, ''), COALESCE(destination, ''),
 		       COALESCE(amount::text, ''), COALESCE(precise_amount::text, ''),
 		       COALESCE(currency, ''), COALESCE(status, ''), COALESCE(reference, ''),
-		       created_at
+		       created_at, id::text, precision::text, rate::text, COALESCE(parent_transaction, ''), effective_date, chain_version
 		FROM ledgerforge.transactions WHERE transaction_id = $1`, txnID).
 		Scan(&seq, &prev, &stored, &r.TransactionID, &r.Source, &r.Destination,
-			&r.Amount, &r.PreciseAmount, &r.Currency, &r.Status, &r.Reference, &r.CreatedAt)
+			&r.Amount, &r.PreciseAmount, &r.Currency, &r.Status, &r.Reference, &r.CreatedAt, &r.ID, &r.Precision, &r.Rate, &r.ParentTransaction, &r.EffectiveDate, &version)
 	require.NoError(t, err)
 	require.Greater(t, seq, int64(0), "txn %s must be chained", txnID)
 	require.NotEmpty(t, stored)
-	assert.Equal(t, stored, model.ComputeChainHash(prev, r), "stored chain_hash must recompute for %s", txnID)
+	hash, err := model.ComputeChainHashVersion(version, prev, r)
+	require.NoError(t, err)
+	assert.Equal(t, stored, hash, "stored chain_hash must recompute for %s", txnID)
 	return seq, stored
 }
 

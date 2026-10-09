@@ -154,14 +154,7 @@ func (p *ChainProcessor) recordMetrics(ctx context.Context, cutoff time.Time) {
 }
 
 // ChainVerifyResult is the outcome of replaying the chain from genesis.
-type ChainVerifyResult struct {
-	Verified    bool
-	LastSeq     int64
-	HeadHash    string
-	BrokenSeq   int64
-	BrokenTxnID string
-	Reason      string
-}
+type ChainVerifyResult = model.ChainVerifyResult
 
 // VerifyChain replays the whole chain from genesis, checking that each row's
 // chain_seq is contiguous, its chain_prev_hash matches the running head, and its
@@ -169,6 +162,12 @@ type ChainVerifyResult struct {
 // link, or success with the final head. progress (optional) is called with each
 // verified seq.
 func (l *LedgerForge) VerifyChain(ctx context.Context, progress func(seq int64)) (ChainVerifyResult, error) {
+	if reader, ok := l.datasource.(interface {
+		VerifyChainSnapshot(context.Context, func(int64)) (model.ChainVerifyResult, error)
+	}); ok {
+		return reader.VerifyChainSnapshot(ctx, progress)
+	}
+
 	state, err := l.datasource.GetChainState(ctx)
 	if err != nil {
 		return ChainVerifyResult{}, err
@@ -196,7 +195,12 @@ func (l *LedgerForge) VerifyChain(ctx context.Context, progress func(seq int64))
 				return ChainVerifyResult{BrokenSeq: ct.ChainSeq, BrokenTxnID: ct.Row.TransactionID,
 					Reason: "chain_prev_hash does not match the running head"}, nil
 			}
-			if model.ComputeChainHash(head, ct.Row) != ct.ChainHash {
+			version := ct.CanonicalVersion
+			if version == 0 {
+				version = 1
+			} // legacy datasource implementations
+			hash, hashErr := model.ComputeChainHashVersion(version, head, ct.Row)
+			if hashErr != nil || hash != ct.ChainHash {
 				return ChainVerifyResult{BrokenSeq: ct.ChainSeq, BrokenTxnID: ct.Row.TransactionID,
 					Reason: "recomputed hash does not match stored chain_hash"}, nil
 			}
@@ -210,7 +214,7 @@ func (l *LedgerForge) VerifyChain(ctx context.Context, progress func(seq int64))
 	}
 
 	// The replayed head must match the recorded head at the recorded length.
-	if lastSeq == state.LastSeq && head != state.HeadHash {
+	if lastSeq != state.LastSeq || head != state.HeadHash {
 		return ChainVerifyResult{BrokenSeq: lastSeq, Reason: "replayed head does not match chain_state head_hash"}, nil
 	}
 
