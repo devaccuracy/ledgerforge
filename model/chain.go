@@ -17,8 +17,12 @@ limitations under the License.
 package model
 
 import (
+	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
+	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -29,27 +33,27 @@ const ChainGenesisHash = "000000000000000000000000000000000000000000000000000000
 
 // ChainRow carries the canonical, immutable fields of a transaction that the
 // hash chain seals. The chainer and the verifier both build it from the same DB
-// columns so a recomputed hash is always reproducible. NULL columns are empty
-// strings. Every field here is enforced immutable by the transactions
-// immutability trigger, so a sealed row's hash can never change under a normal
-// write.
+// columns so a recomputed hash is reproducible. Numeric values are read as
+// exact PostgreSQL text, never converted through floating point.
 type ChainRow struct {
-	TransactionID string
-	Source        string
-	Destination   string
-	Amount        string // NUMERIC rendered as text
-	PreciseAmount string // NUMERIC rendered as text (the authoritative ledger amount)
-	Currency      string
-	Status        string
-	Reference     string
-	CreatedAt     time.Time
+	ID                string
+	Precision         string
+	Rate              string
+	ParentTransaction string
+	EffectiveDate     *time.Time
+	TransactionID     string
+	Source            string
+	Destination       string
+	Amount            string // NUMERIC rendered as text
+	PreciseAmount     string // NUMERIC rendered as text (the authoritative ledger amount)
+	Currency          string
+	Status            string
+	Reference         string
+	CreatedAt         time.Time
 }
 
-// ComputeChainHash returns SHA256(prevHash || canonical fields). It is
-// deterministic and the single source of truth for the chain, shared by the
-// background chainer and the verifier. It seals the raw immutable fields
-// directly; the per-row HashTxn() value is deliberately excluded as it is just a
-// function of fields already sealed here.
+// ComputeChainHash is the legacy v1 encoding, retained for existing commitments.
+// New seals use ComputeChainHashVersion with canonical version 2.
 func ComputeChainHash(prevHash string, r ChainRow) string {
 	canonical := strings.Join([]string{
 		prevHash,
@@ -80,8 +84,69 @@ type ChainState struct {
 // ChainedTransaction is a transaction read back in chain order for
 // verification: its canonical fields plus the stored chain linkage.
 type ChainedTransaction struct {
-	Row           ChainRow
-	ChainSeq      int64
-	ChainPrevHash string
-	ChainHash     string
+	CanonicalVersion int
+	Row              ChainRow
+	ChainSeq         int64
+	ChainPrevHash    string
+	ChainHash        string
+}
+
+// CanonicalChainV2 is a domain-separated, length-delimited encoding. Each length
+// is an unsigned big-endian uint64 byte count. Numeric text retains its exact
+// stored representation; timestamps denote UTC instants. Mutable metadata is
+// intentionally excluded from the financial commitment.
+func CanonicalChainV2(prevHash string, r ChainRow) []byte {
+	var b bytes.Buffer
+	effective := ""
+	if r.EffectiveDate != nil {
+		effective = r.EffectiveDate.UTC().Format(time.RFC3339Nano)
+	}
+	for _, field := range []string{"ledgerforge.transaction-chain", "2", prevHash,
+		r.ID, r.TransactionID, r.Source, r.Destination, r.Amount, r.PreciseAmount,
+		r.Precision, r.Rate, r.Currency, r.Status, r.Reference, r.ParentTransaction,
+		effective, r.CreatedAt.UTC().Format(time.RFC3339Nano)} {
+		_ = binary.Write(&b, binary.BigEndian, uint64(len(field)))
+		b.WriteString(field)
+	}
+	return b.Bytes()
+}
+
+// ComputeChainHashVersion preserves v1 commitments already in the database.
+func ComputeChainHashVersion(version int, prevHash string, r ChainRow) (string, error) {
+	switch version {
+	case 1:
+		return ComputeChainHash(prevHash, r), nil
+	case 2:
+		sum := sha256.Sum256(CanonicalChainV2(prevHash, r))
+		return hex.EncodeToString(sum[:]), nil
+	default:
+		return "", fmt.Errorf("unsupported chain canonical version %s", strconv.Itoa(version))
+	}
+}
+
+// ChainCheckpoint is an exportable root. External signatures or anchors can
+// attest to it independently of the database that holds the chain.
+type ChainCheckpoint struct {
+	Sequence  int64     `json:"sequence"`
+	Count     int64     `json:"count"`
+	HeadHash  string    `json:"head_hash"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// ChainVerifyResult distinguishes broken commitments from asynchronous coverage.
+type ChainVerifyResult struct {
+	Verified    bool         `json:"verified"`
+	LastSeq     int64        `json:"last_sequence"`
+	HeadHash    string       `json:"head_hash"`
+	BrokenSeq   int64        `json:"broken_sequence,omitempty"`
+	BrokenTxnID string       `json:"broken_transaction_id,omitempty"`
+	Reason      string       `json:"reason,omitempty"`
+	Pending     int64        `json:"pending"`
+	Tampering   []ChainIssue `json:"tampering"`
+}
+
+type ChainIssue struct {
+	Sequence      int64  `json:"sequence,omitempty"`
+	TransactionID string `json:"transaction_id,omitempty"`
+	Reason        string `json:"reason"`
 }
