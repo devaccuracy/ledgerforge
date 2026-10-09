@@ -467,6 +467,24 @@ func (l *LedgerForge) executeTransactionPlan(ctx context.Context, plan transacti
 // processQueuedTransaction routes queued work through the shared executor so the planner can
 // choose between normal queued batching, hot-lane batching, and single-transaction fallback.
 func (l *LedgerForge) processQueuedTransaction(ctx context.Context, transaction *model.Transaction, hotLane bool) (transactionExecutionResult, error) {
+	if transaction.ParentTransaction != "" && transaction.ParentKind != "group" {
+		intent, err := l.datasource.GetTransaction(ctx, transaction.ParentTransaction)
+		if err != nil {
+			return transactionExecutionResult{}, fmt.Errorf("read queued execution controls: %w", err)
+		}
+		if intent.Status == StatusQueued || intent.Status == StatusScheduled {
+			parentKind := transaction.ParentKind
+			intent.ExecutionControls().Apply(transaction)
+			transaction.ParentKind = parentKind
+			transaction.OverdraftLimit = intent.OverdraftLimit
+			transaction.QueueAction = intent.QueueAction
+			if intent.QueueAction == StatusCommit {
+				transaction.Inflight = false
+			}
+			hotLane = transaction.QueueLane == hotpairs.LaneHot
+		}
+	}
+
 	if err := l.verifyQueuedPolicy(ctx, transaction); err != nil {
 		return transactionExecutionResult{}, err
 	}
@@ -832,7 +850,7 @@ func (l *LedgerForge) prepareTransactionOutbox(ctx context.Context, transaction 
 	}
 
 	// Skip lineage for commits of inflight transactions - lineage was already created for the original.
-	isInflightCommit := transaction.ParentTransaction != "" && transaction.MetaData != nil && transaction.MetaData["inflight"] == true
+	isInflightCommit := transaction.ParentTransaction != "" && transaction.QueueAction == StatusCommit
 	if isInflightCommit {
 		return nil
 	}

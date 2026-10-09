@@ -52,6 +52,7 @@ func (l *LedgerForge) processBulkTransactions(ctx context.Context, transactions 
 		txn.Inflight = inflight
 		txn.SkipQueue = skipQueue // Process synchronously within the batch context first
 		txn.ParentTransaction = batchID
+		txn.ParentKind = "group"
 
 		// Add sequence number to metadata
 		if txn.MetaData == nil {

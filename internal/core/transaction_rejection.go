@@ -76,8 +76,8 @@ func (l *LedgerForge) RejectTransaction(ctx context.Context, transaction *model.
 
 	if transaction.Atomic {
 		logrus.Info(transaction.ParentTransaction, "parent transaction", transaction.Atomic, "atomic", transaction.Inflight, "inflight")
-		parentTransactionID, ok := transaction.MetaData["QUEUED_PARENT_TRANSACTION"].(string)
-		if !ok {
+		parentTransactionID := transaction.QueuedParent
+		if parentTransactionID == "" {
 			return nil, fmt.Errorf("parent transaction ID not found in meta data")
 		}
 		l.handleAsyncBulkTransactionFailure(ctx, errors.New("transaction rejected"), parentTransactionID, transaction.Atomic, transaction.Inflight)

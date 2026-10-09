@@ -18,7 +18,6 @@ package database
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -41,7 +40,7 @@ func (d Datasource) GetStuckQueuedTransactions(ctx context.Context, threshold ti
 	// a failed REJECTED write, and operators can still find it here or via
 	// POST /transactions/recover.
 	rows, err := d.Conn.QueryContext(ctx, `
-		SELECT transaction_id, parent_transaction, source, reference, amount, COALESCE(precise_amount::text, '0'), precision, currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date, rate, overdraft_limit, queue_action
+		SELECT transaction_id, parent_transaction, source, reference, amount, COALESCE(precise_amount::text, '0'), precision, currency, destination, description, status, created_at, ledgerforge.transaction_metadata(transaction_id, meta_data) AS meta_data, scheduled_for, hash, effective_date, rate, overdraft_limit, queue_action
 		FROM ledgerforge.transactions t
 		WHERE t.status = 'QUEUED'
 		  AND t.created_at < $1
@@ -81,7 +80,7 @@ func (d Datasource) GetStuckQueuedTransactions(ctx context.Context, threshold ti
 		// A single row with malformed metadata (e.g. a legacy array-shaped
 		// meta_data) must not abort the whole recovery sweep; skip it and keep
 		// recovering the rest.
-		if err = json.Unmarshal(metaDataJSON, &txn.MetaData); err != nil {
+		if err = model.DecodeTransactionMetadata(metaDataJSON, txn); err != nil {
 			logrus.Warnf("skipping stuck transaction %s: unparseable metadata: %v", txn.TransactionID, err)
 			continue
 		}

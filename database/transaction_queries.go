@@ -19,7 +19,6 @@ package database
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 
 	"github.com/devaccuracy/ledgerforge/internal/apierror"
@@ -38,7 +37,7 @@ func (d Datasource) GetTransaction(ctx context.Context, id string) (*model.Trans
 
 	// Execute the SQL query to retrieve the transaction by its ID
 	row := d.Conn.QueryRowContext(ctx, `
-		SELECT transaction_id, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, parent_transaction, hash, effective_date, rate, overdraft_limit, queue_action
+		SELECT transaction_id, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, ledgerforge.transaction_metadata(transaction_id, meta_data) AS meta_data, parent_transaction, hash, effective_date, rate, overdraft_limit, queue_action
 		FROM ledgerforge.transactions
 		WHERE transaction_id = $1
 	`, id)
@@ -61,7 +60,7 @@ func (d Datasource) GetTransaction(ctx context.Context, id string) (*model.Trans
 	txn.ParentTransaction = nullableString(parentTransaction)
 
 	// Unmarshal the metadata JSON into the transaction's MetaData field
-	err = json.Unmarshal(metaDataJSON, &txn.MetaData)
+	err = model.DecodeTransactionMetadata(metaDataJSON, txn)
 	if err != nil {
 		span.RecordError(err)
 		return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to unmarshal metadata", err)
@@ -218,7 +217,7 @@ func (d Datasource) GetTransactionByRef(ctx context.Context, reference string) (
 
 	// Query the transaction by reference
 	row := d.Conn.QueryRowContext(ctx, `
-		SELECT transaction_id, source, reference, amount, precise_amount, currency, destination, description, status, created_at, meta_data, parent_transaction, effective_date, precision, rate, overdraft_limit, queue_action
+		SELECT transaction_id, source, reference, amount, precise_amount, currency, destination, description, status, created_at, ledgerforge.transaction_metadata(transaction_id, meta_data) AS meta_data, parent_transaction, effective_date, precision, rate, overdraft_limit, queue_action
 		FROM ledgerforge.transactions
 		WHERE reference = $1
 	`, reference)
@@ -240,7 +239,7 @@ func (d Datasource) GetTransactionByRef(ctx context.Context, reference string) (
 	txn.ParentTransaction = nullableString(parentTransaction)
 
 	// Unmarshal the metadata JSON into the transaction's MetaData field
-	err = json.Unmarshal(metaDataJSON, &txn.MetaData)
+	err = model.DecodeTransactionMetadata(metaDataJSON, &txn)
 	if err != nil {
 		span.RecordError(err)
 		return model.Transaction{}, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to unmarshal metadata", err)
@@ -274,7 +273,7 @@ func (d Datasource) GetAllTransactions(ctx context.Context, limit, offset int) (
 
 	// Execute the query to retrieve all transactions
 	rows, err := d.Conn.QueryContext(ctx, `
-		SELECT transaction_id, source, reference, amount, precise_amount, precision, currency, destination, description, status, hash, created_at, effective_date, meta_data, parent_transaction
+		SELECT transaction_id, source, reference, amount, precise_amount, precision, currency, destination, description, status, hash, created_at, effective_date, ledgerforge.transaction_metadata(transaction_id, meta_data) AS meta_data, parent_transaction
 		FROM ledgerforge.transactions
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2
@@ -339,7 +338,7 @@ func (d Datasource) GetAllTransactions(ctx context.Context, limit, offset int) (
 		}
 
 		// Unmarshal metadata into the transaction's MetaData field
-		err = json.Unmarshal(metaDataJSON, &transaction.MetaData)
+		err = model.DecodeTransactionMetadata(metaDataJSON, &transaction)
 		if err != nil {
 			span.RecordError(err)
 			return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to unmarshal metadata", err)

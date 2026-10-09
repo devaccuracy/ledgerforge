@@ -963,7 +963,7 @@ func TestPrepareTransactionForSearchIndexPreservesTypesenseFields(t *testing.T) 
 	assert.False(t, txn.Inflight, "DB read leaves struct flags false until hydrated")
 	assert.False(t, txn.AllowOverdraft)
 
-	prepareTransactionForSearchIndex(txn)
+	require.NoError(t, model.DecodeTransactionMetadata([]byte(`{"__execution_controls":{"inflight":true,"allow_overdraft":true}}`), txn))
 	assert.True(t, txn.Inflight)
 	assert.True(t, txn.AllowOverdraft)
 

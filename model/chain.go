@@ -36,6 +36,12 @@ const ChainGenesisHash = "000000000000000000000000000000000000000000000000000000
 // columns so a recomputed hash is reproducible. Numeric values are read as
 // exact PostgreSQL text, never converted through floating point.
 type ChainRow struct {
+	HistoricalRate    string
+	OverdraftLimit    string
+	QueueAction       string
+	ExecutionControls string
+	ScheduledFor      *time.Time
+
 	ID                string
 	Precision         string
 	Rate              string
@@ -53,7 +59,7 @@ type ChainRow struct {
 }
 
 // ComputeChainHash is the legacy v1 encoding, retained for existing commitments.
-// New seals use ComputeChainHashVersion with canonical version 2.
+// New seals use ComputeChainHashVersion with canonical version 3.
 func ComputeChainHash(prevHash string, r ChainRow) string {
 	canonical := strings.Join([]string{
 		prevHash,
@@ -111,6 +117,21 @@ func CanonicalChainV2(prevHash string, r ChainRow) []byte {
 	return b.Bytes()
 }
 
+// CanonicalChainV3 retains the exact v2 payload and adds immutable execution
+// evidence under a new domain version. V1 and v2 remain byte-for-byte stable.
+func CanonicalChainV3(prevHash string, r ChainRow) []byte {
+	var b bytes.Buffer
+	scheduled := ""
+	if r.ScheduledFor != nil {
+		scheduled = r.ScheduledFor.UTC().Format(time.RFC3339Nano)
+	}
+	for _, field := range []string{"ledgerforge.transaction-chain", "3", string(CanonicalChainV2(prevHash, r)), r.OverdraftLimit, r.QueueAction, r.ExecutionControls, scheduled, r.HistoricalRate} {
+		_ = binary.Write(&b, binary.BigEndian, uint64(len(field)))
+		b.WriteString(field)
+	}
+	return b.Bytes()
+}
+
 // ComputeChainHashVersion preserves v1 commitments already in the database.
 func ComputeChainHashVersion(version int, prevHash string, r ChainRow) (string, error) {
 	switch version {
@@ -118,6 +139,9 @@ func ComputeChainHashVersion(version int, prevHash string, r ChainRow) (string, 
 		return ComputeChainHash(prevHash, r), nil
 	case 2:
 		sum := sha256.Sum256(CanonicalChainV2(prevHash, r))
+		return hex.EncodeToString(sum[:]), nil
+	case 3:
+		sum := sha256.Sum256(CanonicalChainV3(prevHash, r))
 		return hex.EncodeToString(sum[:]), nil
 	default:
 		return "", fmt.Errorf("unsupported chain canonical version %s", strconv.Itoa(version))

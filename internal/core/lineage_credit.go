@@ -153,6 +153,7 @@ func (l *LedgerForge) queueShadowCreditTransaction(ctx context.Context, txn *mod
 		Precision:     txn.Precision,
 		Reference:     fmt.Sprintf("%s_shadow_%s", txn.Reference, provider),
 		Description:   fmt.Sprintf("Shadow credit from %s", provider),
+		ShadowFor:     txn.TransactionID,
 		MetaData: map[string]interface{}{
 			"_shadow_for":   txn.TransactionID,
 			"_provider":     provider,

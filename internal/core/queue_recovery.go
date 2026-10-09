@@ -180,7 +180,6 @@ func (p *QueuedTransactionRecoveryProcessor) recoverWithThreshold(ctx context.Co
 // processStuckTransaction replays one stuck queued transaction, preserving the existing recovery
 // attempt tracking and rejection semantics while preferring the shared queued executor path.
 func (p *QueuedTransactionRecoveryProcessor) processStuckTransaction(ctx context.Context, stuckTxn *model.Transaction) error {
-	restoreTransactionFlagsFromMetadata(stuckTxn)
 
 	attempts := 0
 	if stuckTxn.MetaData != nil {
@@ -206,7 +205,7 @@ func (p *QueuedTransactionRecoveryProcessor) processStuckTransaction(ctx context
 	}
 
 	if stuckTxn.Atomic {
-		if parentID, ok := stuckTxn.MetaData["QUEUED_PARENT_TRANSACTION"].(string); ok && parentID != "" {
+		if parentID := stuckTxn.QueuedParent; parentID != "" {
 			siblings, err := p.ledgerforge.datasource.GetTransactionsByParent(ctx, parentID, 100, 0)
 			if err != nil {
 				return err
@@ -263,7 +262,7 @@ func (p *QueuedTransactionRecoveryProcessor) rejectStuckTransaction(ctx context.
 // tryRecordRecoveredTransaction routes stuck-transaction replay through the shared queued
 // processing path, selecting hot-lane execution when the queued metadata requires it.
 func (p *QueuedTransactionRecoveryProcessor) tryRecordRecoveredTransaction(ctx context.Context, queueCopy *model.Transaction) (transactionExecutionResult, error) {
-	hotLane := hotpairs.QueueLaneFromMetadata(queueCopy.MetaData) == hotpairs.LaneHot
+	hotLane := queueCopy.QueueLane == hotpairs.LaneHot
 	return p.processQueuedTransaction(ctx, queueCopy, hotLane)
 }
 

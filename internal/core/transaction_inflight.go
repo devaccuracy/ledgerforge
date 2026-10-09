@@ -81,8 +81,7 @@ func (l *LedgerForge) GetInflightTransactionsByParentID(ctx context.Context, par
 func IsInflightTransaction(transaction *model.Transaction) bool {
 	return transaction.Status == StatusInflight ||
 		(transaction.Status == StatusQueued &&
-			transaction.MetaData != nil &&
-			transaction.MetaData["inflight"] == true)
+			transaction.Inflight)
 }
 
 func clearTerminalInflightMetadata(transaction *model.Transaction) {
@@ -413,8 +412,10 @@ func (l *LedgerForge) finalizeCommitment(ctx context.Context, transaction *model
 	defer span.End()
 
 	transaction.Status = StatusCommit
+	transaction.QueueAction = StatusCommit
 	transaction.Inflight = false
 	transaction.ParentTransaction = transaction.TransactionID
+	transaction.ParentKind = "economic"
 	transaction.CreatedAt = time.Now()
 	if transaction.EffectiveDate == nil {
 		transaction.EffectiveDate = &transaction.CreatedAt
@@ -630,6 +631,7 @@ func (l *LedgerForge) finalizeVoidTransaction(ctx context.Context, transaction *
 		transaction.EffectiveDate = &transaction.CreatedAt
 	}
 	transaction.ParentTransaction = transaction.TransactionID
+	transaction.ParentKind = "economic"
 	transaction.TransactionID = model.GenerateUUIDWithSuffix("txn")
 	if reference != "" {
 		transaction.Reference = reference

@@ -39,6 +39,7 @@ func AssignQueueLane(ctx context.Context, manager *Manager, counter PairLaneCoun
 		txn.MetaData[QueuePairMetaKey] = pairKey
 	}
 
+	txn.QueueLane = lane
 	txn.MetaData[QueueLaneMetaKey] = lane
 	return nil
 }

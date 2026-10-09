@@ -18,7 +18,6 @@ package database
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/devaccuracy/ledgerforge/internal/apierror"
 	"github.com/devaccuracy/ledgerforge/model"
@@ -32,9 +31,9 @@ func (d Datasource) GetTransactionsByShadowFor(ctx context.Context, parentTransa
 	defer span.End()
 
 	rows, err := d.Conn.QueryContext(ctx, `
-		SELECT transaction_id, source, reference, amount, precise_amount, "precision", currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date
+		SELECT transaction_id, source, reference, amount, precise_amount, "precision", currency, destination, description, status, created_at, ledgerforge.transaction_metadata(transaction_id, meta_data) AS meta_data, scheduled_for, hash, effective_date
 		FROM ledgerforge.transactions
-		WHERE meta_data->>'_shadow_for' = $1
+		WHERE ledgerforge.transaction_execution_controls(transaction_id, execution_controls)->>'shadow_for' = $1
 		ORDER BY created_at ASC
 	`, parentTransactionID)
 	if err != nil {
@@ -71,7 +70,7 @@ func (d Datasource) GetTransactionsByShadowFor(ctx context.Context, parentTransa
 			return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to scan shadow transaction", err)
 		}
 
-		if err := json.Unmarshal(metaDataJSON, &transaction.MetaData); err != nil {
+		if err := model.DecodeTransactionMetadata(metaDataJSON, &transaction); err != nil {
 			span.RecordError(err)
 			return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to unmarshal metadata", err)
 		}

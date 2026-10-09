@@ -325,7 +325,6 @@ func (l *LedgerForge) buildQueuedCoalescingBatchForScope(ctx context.Context, le
 
 	batch := []*model.Transaction{leader}
 	for _, sibling := range siblings {
-		restoreTransactionFlagsFromMetadata(sibling)
 		if eligible, reason := l.canCoalesceQueuedOriginal(sibling); !eligible {
 			logrus.WithFields(logrus.Fields{
 				"transaction_id": sibling.TransactionID,
@@ -607,20 +606,4 @@ func (l *LedgerForge) canCoalesceQueuedOriginal(transaction *model.Transaction) 
 		return false, "missing_pair_or_currency"
 	}
 	return true, ""
-}
-
-func restoreTransactionFlagsFromMetadata(transaction *model.Transaction) {
-	if transaction == nil || transaction.MetaData == nil {
-		return
-	}
-
-	if v, ok := transaction.MetaData["inflight"].(bool); ok {
-		transaction.Inflight = v
-	}
-	if v, ok := transaction.MetaData["atomic"].(bool); ok {
-		transaction.Atomic = v
-	}
-	if v, ok := transaction.MetaData["allow_overdraft"].(bool); ok {
-		transaction.AllowOverdraft = v
-	}
 }

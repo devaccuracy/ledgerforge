@@ -425,6 +425,7 @@ func TestEnqueue_HotLaneRoutingAndLookup(t *testing.T) {
 
 	txn := getTransactionMock(99, false)
 	txn.Source = "bln_hot_source"
+	txn.QueueLane = hotpairs.LaneHot
 	txn.MetaData = map[string]interface{}{hotpairs.QueueLaneMetaKey: hotpairs.LaneHot}
 
 	require.NoError(t, q.Enqueue(context.Background(), &txn))

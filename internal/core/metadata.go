@@ -188,17 +188,6 @@ func (l *LedgerForge) queueTransactionMetadataIndexRefresh(scopeID string) {
 	}()
 }
 
-// prepareTransactionForSearchIndex hydrates top-level Typesense fields from
-// meta_data before upsert. DB reads leave allow_overdraft and inflight on the
-// struct at false even when meta_data carries the flags; upserting that stub
-// would overwrite indexed inflight documents with allow_overdraft=false and
-// inflight=false. inflight_expiry_date is not persisted in Postgres today, so
-// metadata reindex cannot restore it from a row read (same limitation as full
-// reindex from GetAllTransactions).
-func prepareTransactionForSearchIndex(txn *model.Transaction) {
-	restoreTransactionFlagsFromMetadata(txn)
-}
-
 // ledgerMetadataSnapshot copies ledger with the committed metadata for this update.
 func ledgerMetadataSnapshot(ledger *model.Ledger, committedMeta map[string]interface{}) model.Ledger {
 	snap := *ledger
@@ -260,6 +249,12 @@ func (l *LedgerForge) UpdateMetadata(ctx context.Context, entityID string, newMe
 	entityType, err := getEntityTypeFromID(entityID)
 	if err != nil {
 		return nil, err
+	}
+
+	if entityType == "transactions" {
+		if err := model.ValidateCustomerTransactionMetadata(newMetadata); err != nil {
+			return nil, err
+		}
 	}
 
 	switch entityType {

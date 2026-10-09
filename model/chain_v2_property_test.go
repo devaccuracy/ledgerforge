@@ -32,10 +32,10 @@ func TestChainV1Golden(t *testing.T) {
 	}
 }
 
-func TestChainV2CoversEveryField(t *testing.T) {
+func TestChainV3CoversEveryField(t *testing.T) {
 	at := time.Date(2026, 1, 2, 3, 4, 5, 123456000, time.UTC)
 	row := ChainRow{ID: "123", TransactionID: "txn", Source: "a", Destination: "b", Amount: "1.00000000000000000001", PreciseAmount: "100000000000000000001", Precision: "100000000000000000000", Rate: "1", Currency: "USD", Status: "APPLIED", Reference: "ref", ParentTransaction: "parent", EffectiveDate: &at, CreatedAt: at}
-	base, _ := ComputeChainHashVersion(2, ChainGenesisHash, row)
+	base, _ := ComputeChainHashVersion(3, ChainGenesisHash, row)
 	for i := 0; i < reflect.TypeOf(row).NumField(); i++ {
 		changed := row
 		f := reflect.ValueOf(&changed).Elem().Field(i)
@@ -50,7 +50,7 @@ func TestChainV2CoversEveryField(t *testing.T) {
 		default:
 			t.Fatalf("untested field %s", reflect.TypeOf(row).Field(i).Name)
 		}
-		hash, err := ComputeChainHashVersion(2, ChainGenesisHash, changed)
+		hash, err := ComputeChainHashVersion(3, ChainGenesisHash, changed)
 		if err != nil || hash == base {
 			t.Fatalf("field %s not committed", reflect.TypeOf(row).Field(i).Name)
 		}
@@ -60,7 +60,7 @@ func TestChainV2CoversEveryField(t *testing.T) {
 	local.CreatedAt = at.In(zone)
 	effective := at.In(zone)
 	local.EffectiveDate = &effective
-	hash, _ := ComputeChainHashVersion(2, ChainGenesisHash, local)
+	hash, _ := ComputeChainHashVersion(3, ChainGenesisHash, local)
 	if hash != base {
 		t.Fatal("timezone changed commitment")
 	}
@@ -97,4 +97,21 @@ func FuzzChainV2Encoding(f *testing.F) {
 			t.Fatal("unstable encoding")
 		}
 	})
+}
+
+func TestChainV2GoldenRemainsVerifiable(t *testing.T) {
+	at := time.Date(2026, 1, 2, 3, 4, 5, 123456000, time.UTC)
+	row := ChainRow{ID: "123", TransactionID: "txn", Source: "a", Destination: "b", Amount: "1.00000000000000000001", PreciseAmount: "100000000000000000001", Precision: "100000000000000000000", Rate: "1", Currency: "USD", Status: "APPLIED", Reference: "ref", ParentTransaction: "parent", EffectiveDate: &at, CreatedAt: at}
+	hash, err := ComputeChainHashVersion(2, ChainGenesisHash, row)
+	if err != nil || hash != "d2f09c7c672f103995ad972dda4e61ed901bc1b220c1ebcfe5e5f04c74f590fe" {
+		t.Fatalf("v2 changed: %s %v", hash, err)
+	}
+	row.OverdraftLimit = "5"
+	row.QueueAction = "COMMIT"
+	row.ExecutionControls = `{"allow_overdraft":true}`
+	row.ScheduledFor = &at
+	withControls, err := ComputeChainHashVersion(2, ChainGenesisHash, row)
+	if err != nil || hash != withControls {
+		t.Fatal("new fields changed historic v2 commitment")
+	}
 }

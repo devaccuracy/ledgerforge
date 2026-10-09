@@ -18,6 +18,7 @@ package integrity
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"sort"
@@ -124,6 +125,7 @@ func Check(snapshot Snapshot) Report {
 		}
 	}
 	rows := make(map[string]model.ChainRow, len(snapshot.Transactions))
+	controls := make(map[string]model.ExecutionControls)
 	amounts := make(map[string]*big.Int, len(snapshot.Transactions))
 	children := make(map[string][]model.ChainRow)
 	for _, r := range snapshot.Transactions {
@@ -131,6 +133,17 @@ func Check(snapshot Snapshot) Report {
 			add("duplicate_transaction", "", r.TransactionID, "duplicate transaction identifier")
 		}
 		rows[r.TransactionID] = r
+		var control model.ExecutionControls
+		if r.ExecutionControls != "" {
+			if err := json.Unmarshal([]byte(r.ExecutionControls), &control); err != nil {
+				add("unsupported_legacy", "", r.TransactionID, "invalid execution schema evidence")
+			}
+		}
+		controls[r.TransactionID] = control
+		if control.EconomicVersion > 1 || control.EconomicVersion < 0 {
+			add("unsupported_legacy", "", r.TransactionID, "unsupported economic schema version")
+		}
+
 		switch r.Status {
 		case "QUEUED", "SCHEDULED", "REJECTED":
 			// Intents have no economic legs. Their amounts are considered only for
@@ -158,10 +171,14 @@ func Check(snapshot Snapshot) Report {
 		if !ok || scale.Sign() <= 0 {
 			add("invalid_scale", "", r.TransactionID, "precision must be a positive integer scale")
 		}
-		rate, ok := new(big.Rat).SetString(r.Rate)
+		rateText := r.Rate
+		if r.HistoricalRate != "" {
+			rateText = r.HistoricalRate
+		}
+		rate, ok := new(big.Rat).SetString(rateText)
 		if !ok || rate.Sign() < 0 {
 			add("invalid_rate", "", r.TransactionID, "rate must be finite and non-negative")
-		} else if rate.Sign() != 0 && rate.Cmp(big.NewRat(1, 1)) != 0 {
+		} else if control.EconomicVersion != 1 && rate.Sign() != 0 && rate.Cmp(big.NewRat(1, 1)) != 0 {
 			add("unsupported_legacy", "", r.TransactionID, "non-unit legacy rate has ambiguous historic credit semantics")
 			uncertain[r.Source], uncertain[r.Destination] = true, true
 		}
@@ -171,8 +188,12 @@ func Check(snapshot Snapshot) Report {
 	// parent. Resolve that persisted lineage without replaying the intent itself.
 	effectiveParents := make(map[string]model.ChainRow)
 	completedIntents := make(map[string]bool)
+	terminalCompletions := make(map[string]map[string]bool)
 	for _, r := range snapshot.Transactions {
 		parent, exists := rows[r.ParentTransaction]
+		if controls[r.TransactionID].ParentKind == "group" {
+			exists = false
+		}
 		seen := map[string]bool{r.TransactionID: true}
 		terminal := r.Status == "APPLIED" || r.Status == "INFLIGHT" || r.Status == "VOID" || r.Status == "REJECTED"
 		for exists && (parent.Status == "QUEUED" || parent.Status == "SCHEDULED") {
@@ -183,11 +204,27 @@ func Check(snapshot Snapshot) Report {
 			seen[parent.TransactionID] = true
 			if terminal {
 				completedIntents[parent.TransactionID] = true
+				if terminalCompletions[parent.TransactionID] == nil {
+					terminalCompletions[parent.TransactionID] = make(map[string]bool)
+				}
+				terminalCompletions[parent.TransactionID][r.TransactionID] = true
 			}
-			if r.Status != "REJECTED" && (parent.Source != r.Source || parent.Destination != r.Destination || parent.Currency != r.Currency || parent.Precision != r.Precision) {
+			if r.Status != "REJECTED" && (parent.Source != r.Source || parent.Destination != r.Destination || parent.Currency != r.Currency || !equalNumber(parent.Precision, r.Precision) || !equalNumber(parent.Amount, r.Amount) || !equalNumber(parent.PreciseAmount, r.PreciseAmount)) {
 				add("inconsistent_child", "", r.TransactionID, "terminal row differs from its persisted intent")
 			}
+			if terminal && r.Status != "REJECTED" && controls[parent.TransactionID].EconomicVersion == 1 {
+				expected := "APPLIED"
+				if controls[parent.TransactionID].Inflight && parent.QueueAction != "COMMIT" {
+					expected = "INFLIGHT"
+				}
+				if r.Status != expected {
+					add("inconsistent_child", "", r.TransactionID, "terminal status differs from immutable execution intent")
+				}
+			}
 			next, found := rows[parent.ParentTransaction]
+			if controls[parent.TransactionID].ParentKind == "group" {
+				found = false
+			}
 			if !found {
 				break
 			}
@@ -198,6 +235,12 @@ func Check(snapshot Snapshot) Report {
 			children[parent.TransactionID] = append(children[parent.TransactionID], r)
 		}
 	}
+	for intent, completions := range terminalCompletions {
+		if len(completions) > 1 {
+			add("inconsistent_child", "", intent, "economic intent has multiple terminal completions")
+		}
+	}
+
 	for _, r := range snapshot.Transactions {
 		a := amounts[r.TransactionID]
 		if a == nil {
@@ -220,7 +263,7 @@ func Check(snapshot Snapshot) Report {
 			continue
 		}
 		parent, hasParent := effectiveParents[r.TransactionID]
-		if r.ParentTransaction != "" && !hasParent {
+		if r.ParentTransaction != "" && !hasParent && controls[r.TransactionID].ParentKind != "group" {
 			add("unsupported_legacy", "", r.TransactionID, "parent record is missing; lifecycle cannot be established")
 		}
 		if hasParent && parent.TransactionID == r.TransactionID {
@@ -228,7 +271,7 @@ func Check(snapshot Snapshot) Report {
 		}
 		same := hasParent && r.Source == parent.Source && r.Destination == parent.Destination
 		reverse := hasParent && r.Source == parent.Destination && r.Destination == parent.Source
-		if hasParent && (parent.Currency != r.Currency || parent.Precision != r.Precision) {
+		if hasParent && (parent.Currency != r.Currency || !equalNumber(parent.Precision, r.Precision)) {
 			add("inconsistent_child", "", r.TransactionID, "child currency or precision differs from parent")
 		}
 		if hasParent && !same && !reverse {
@@ -280,7 +323,7 @@ func Check(snapshot Snapshot) Report {
 				if amounts[c.TransactionID] == nil {
 					add("unsupported_legacy", "", c.TransactionID, "pending inflight child has no positive precise request amount")
 				}
-				if c.Source != p.Source || c.Destination != p.Destination || c.Currency != p.Currency || c.Precision != p.Precision {
+				if c.Source != p.Source || c.Destination != p.Destination || c.Currency != p.Currency || !equalNumber(c.Precision, p.Precision) {
 					add("inconsistent_child", "", c.TransactionID, "pending inflight child must retain endpoints, currency and precision")
 				}
 			}
@@ -316,7 +359,7 @@ func Check(snapshot Snapshot) Report {
 			if voids > 1 {
 				add("duplicate_void", "", p.TransactionID, "multiple VOID children")
 			}
-			if voids > 0 && (released.Cmp(amounts[p.TransactionID]) != 0 || pending.Sign() != 0) {
+			if voids > 0 && total.Cmp(amounts[p.TransactionID]) != 0 {
 				add("lifecycle_bound", "", p.TransactionID, "VOID does not release exactly the remaining reservation")
 			}
 		}
@@ -415,4 +458,13 @@ func Check(snapshot Snapshot) Report {
 	})
 	report.Verified = len(report.Issues) == 0
 	return report
+}
+
+func equalNumber(a, b string) bool {
+	left, ok := new(big.Rat).SetString(a)
+	if !ok {
+		return false
+	}
+	right, ok := new(big.Rat).SetString(b)
+	return ok && left.Cmp(right) == 0
 }

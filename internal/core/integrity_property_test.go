@@ -388,12 +388,28 @@ func TestAuditMixedCanonicalVersions(t *testing.T) {
 	_, err = ds.Conn.ExecContext(ctx, `UPDATE ledgerforge.chain_state SET last_seq=1,head_hash=$1`, oldHash)
 	require.NoError(t, err)
 	second := recordAppliedTxn(t, b, src.BalanceID, dst.BalanceID, 2)
+	snapshot, err = ds.ReadIntegritySnapshot(ctx)
+	require.NoError(t, err)
+	var secondRow model.ChainRow
+	for _, row := range snapshot.Transactions {
+		if row.TransactionID == second.TransactionID {
+			secondRow = row
+		}
+	}
+	v2hash, err := model.ComputeChainHashVersion(2, oldHash, secondRow)
+	require.NoError(t, err)
+	_, err = ds.Conn.ExecContext(ctx, `UPDATE ledgerforge.transactions SET chain_seq=2,chain_prev_hash=$1,chain_hash=$2,chain_version=2 WHERE transaction_id=$3`, oldHash, v2hash, second.TransactionID)
+	require.NoError(t, err)
+	_, err = ds.Conn.ExecContext(ctx, `UPDATE ledgerforge.chain_state SET last_seq=2,head_hash=$1`, v2hash)
+	require.NoError(t, err)
+	third := recordAppliedTxn(t, b, src.BalanceID, dst.BalanceID, 3)
 	chainAll(t, ds)
+	assertSealed(t, ds, third.TransactionID)
 	assertSealed(t, ds, second.TransactionID)
 	result, err := ds.VerifyChainSnapshot(ctx, nil)
 	require.NoError(t, err)
 	require.True(t, result.Verified, "%+v", result.Tampering)
-	require.Equal(t, int64(2), result.LastSeq)
+	require.Equal(t, int64(3), result.LastSeq)
 }
 
 func TestAuditSnapshotWhileChainAdvances(t *testing.T) {

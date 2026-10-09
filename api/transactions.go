@@ -66,22 +66,7 @@ func transformTransaction(txn *model.Transaction) *model.Transaction {
 		}
 	}
 
-	// Check for inflight flag in metadata and move it to the main field
-	if result.MetaData != nil {
-		if inflightVal, exists := result.MetaData["inflight"]; exists {
-			if inflight, ok := inflightVal.(bool); ok && inflight {
-				result.Inflight = true
-				// Remove from metadata to avoid duplication
-				delete(result.MetaData, "inflight")
-			}
-		}
-
-		// If metadata is now empty, set it to nil
-		if len(result.MetaData) == 0 {
-			result.MetaData = nil
-		}
-	}
-
+	delete(result.MetaData, "inflight")
 	return &result
 }
 
