@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/devaccuracy/ledgerforge/internal/policy"
 	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/lib/pq"
 	"github.com/sirupsen/logrus"
@@ -25,7 +26,7 @@ const maxLegacyAPIKeyVerifications = 2
 
 var legacyAPIKeyVerificationSlots = make(chan struct{}, maxLegacyAPIKeyVerifications)
 
-const apiKeyLookupColumns = `api_key_id, key, name, owner_id, scopes, expires_at, created_at, last_used_at, is_revoked, revoked_at, key_prefix`
+const apiKeyLookupColumns = `api_key_id, key, name, owner_id, scopes, expires_at, created_at, last_used_at, is_revoked, revoked_at, key_prefix, COALESCE(parent_api_key_id,'')`
 const prefixedAPIKeyQuery = `SELECT ` + apiKeyLookupColumns + ` FROM ledgerforge.api_keys WHERE key_prefix = $1`
 const legacyAPIKeyQuery = `SELECT ` + apiKeyLookupColumns + ` FROM ledgerforge.api_keys WHERE (key_prefix IS NULL OR key_prefix = '') AND is_revoked = false AND expires_at > CURRENT_TIMESTAMP`
 
@@ -74,6 +75,11 @@ func (s *Datasource) CreateAPIKey(ctx context.Context, name, ownerID string, sco
 		return nil, err
 	}
 
+	principal := policy.FromContext(ctx)
+	if !principal.Master {
+		apiKey.ParentAPIKeyID = principal.APIKeyID
+	}
+
 	// Store the plain text key to return to the user
 	plainTextKey := apiKey.Key
 
@@ -88,8 +94,8 @@ func (s *Datasource) CreateAPIKey(ctx context.Context, name, ownerID string, sco
 	apiKey.Key = hashedKey
 
 	query := `
-		INSERT INTO ledgerforge.api_keys (api_key_id, key, key_prefix, name, owner_id, scopes, expires_at, created_at, last_used_at, is_revoked)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		INSERT INTO ledgerforge.api_keys (api_key_id, key, key_prefix, name, owner_id, scopes, expires_at, created_at, last_used_at, is_revoked, parent_api_key_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULLIF($11,''))
 	`
 
 	_, err = s.Conn.ExecContext(ctx, query,
@@ -103,6 +109,7 @@ func (s *Datasource) CreateAPIKey(ctx context.Context, name, ownerID string, sco
 		apiKey.CreatedAt,
 		apiKey.LastUsedAt,
 		apiKey.IsRevoked,
+		apiKey.ParentAPIKeyID,
 	)
 	if err != nil {
 		return nil, err
@@ -169,7 +176,7 @@ func (s *Datasource) findAPIKey(ctx context.Context, key string, legacy bool) (*
 		var scopes pq.StringArray
 		var storedPrefix sql.NullString
 		if err := rows.Scan(&candidate.APIKeyID, &candidate.Key, &candidate.Name, &candidate.OwnerID, &scopes,
-			&candidate.ExpiresAt, &candidate.CreatedAt, &candidate.LastUsedAt, &candidate.IsRevoked, &candidate.RevokedAt, &storedPrefix); err != nil {
+			&candidate.ExpiresAt, &candidate.CreatedAt, &candidate.LastUsedAt, &candidate.IsRevoked, &candidate.RevokedAt, &storedPrefix, &candidate.ParentAPIKeyID); err != nil {
 			return nil, found, err
 		}
 		candidate.Scopes = []string(scopes)
@@ -288,7 +295,7 @@ func (s *Datasource) UpdateLastUsed(ctx context.Context, id string) error {
 // - error: An error if the database query fails or if there are issues scanning the results.
 func (s *Datasource) ListAPIKeys(ctx context.Context, ownerID string) ([]*model.APIKey, error) {
 	query := `
-		SELECT api_key_id, key, name, owner_id, scopes, expires_at, created_at, last_used_at, is_revoked, revoked_at
+		SELECT api_key_id, key, name, owner_id, scopes, expires_at, created_at, last_used_at, is_revoked, revoked_at, COALESCE(parent_api_key_id,'')
 		FROM ledgerforge.api_keys
 		WHERE owner_id = $1
 		ORDER BY created_at DESC
@@ -315,6 +322,7 @@ func (s *Datasource) ListAPIKeys(ctx context.Context, ownerID string) ([]*model.
 			&apiKey.LastUsedAt,
 			&apiKey.IsRevoked,
 			&apiKey.RevokedAt,
+			&apiKey.ParentAPIKeyID,
 		)
 		apiKey.Scopes = []string(scopes)
 		if err != nil {

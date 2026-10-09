@@ -33,22 +33,15 @@ import (
 )
 
 func (d *Datasource) GetKeyPolicy(ctx context.Context, id string) (*model.KeyPolicy, error) {
-	var raw []byte
-	var version int64
-	err := d.Conn.QueryRowContext(ctx, `SELECT document,version FROM ledgerforge.key_policies WHERE api_key_id=$1 AND enabled`, id).Scan(&raw, &version)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
+	ids, err := keyAncestry(ctx, d.Conn, id)
 	if err != nil {
 		return nil, err
 	}
-	var p model.KeyPolicy
-	if err = json.Unmarshal(raw, &p); err != nil {
+	policies, err := ancestorPolicies(ctx, d.Conn, ids)
+	if err != nil {
 		return nil, err
 	}
-	p.APIKeyID = id
-	p.Version = version
-	return &p, nil
+	return policy.Intersect(id, policies), nil
 }
 
 func (d *Datasource) PutKeyPolicy(ctx context.Context, p model.KeyPolicy) (*model.KeyPolicy, error) {
@@ -63,6 +56,21 @@ func (d *Datasource) PutKeyPolicy(ctx context.Context, p model.KeyPolicy) (*mode
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	ids, err := lockPolicyAncestry(ctx, tx, p.APIKeyID)
+	if err != nil {
+		return nil, err
+	}
+	if err = checkPolicyManagementTarget(ctx, tx, p.APIKeyID); err != nil {
+		return nil, err
+	}
+	ancestors, err := ancestorPolicies(ctx, tx, ids[1:])
+	if err != nil {
+		return nil, err
+	}
+	if err = policy.ValidateNarrowing(p, policy.Intersect(p.APIKeyID, ancestors)); err != nil {
+		return nil, err
+	}
+	p.InheritedFrom = nil
 	raw, err := json.Marshal(p)
 	if err != nil {
 		return nil, err
@@ -88,9 +96,22 @@ func (d *Datasource) PutKeyPolicy(ctx context.Context, p model.KeyPolicy) (*mode
 }
 
 func (d *Datasource) DeleteKeyPolicy(ctx context.Context, id string) error {
-	// Retain the version and durable admissions when disabling a policy.
-	_, err := d.Conn.ExecContext(ctx, `UPDATE ledgerforge.key_policies SET enabled=FALSE,version=version+1 WHERE api_key_id=$1`, id)
-	return err
+	tx, err := d.Conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = lockPolicyAncestry(ctx, tx, id); err != nil {
+		return err
+	}
+	if err = checkPolicyManagementTarget(ctx, tx, id); err != nil {
+		return err
+	}
+	// Disabling a local policy never disables any inherited restriction.
+	if _, err = tx.ExecContext(ctx, `UPDATE ledgerforge.key_policies SET enabled=FALSE,version=version+1 WHERE api_key_id=$1`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func policyFingerprint(legs []model.PolicyLeg) (string, []byte, error) {
@@ -126,14 +147,11 @@ func (d *Datasource) AdmitPolicy(ctx context.Context, key, identity string, legs
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	// Policy updates/deletion and admissions serialize on the same key row.
-	var raw []byte
-	var version int64
-	var enabled bool
-	err = tx.QueryRowContext(ctx, `SELECT document,version,enabled FROM ledgerforge.key_policies WHERE api_key_id=$1 FOR UPDATE`, key).Scan(&raw, &version, &enabled)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
+	ids, err := lockPolicyAncestry(ctx, tx, key)
+	if err != nil {
+		return nil, err
 	}
+	policies, err := ancestorPolicies(ctx, tx, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -167,13 +185,14 @@ func (d *Datasource) AdmitPolicy(ctx context.Context, key, identity string, legs
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	if !enabled {
+	p := policy.Intersect(key, policies)
+	if p == nil {
 		return nil, nil
 	}
-	var p model.KeyPolicy
-	if err = json.Unmarshal(raw, &p); err != nil {
-		return nil, err
+	if p.DenyAll {
+		return nil, policy.ErrDenied
 	}
+	version := p.Version
 	rules := map[string]model.SpendingRule{}
 	for _, r := range p.Rules {
 		rules[policy.RuleKey(r.Currency, r.Precision)] = r
@@ -220,32 +239,51 @@ func (d *Datasource) AdmitPolicy(ctx context.Context, key, identity string, legs
 				decision = "pending"
 			}
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO ledgerforge.policy_usage(api_key_id,currency,precision,day) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, key, r.Currency, r.Precision, day)
-		if err != nil {
-			return nil, err
+	}
+	sort.Slice(policies, func(i, j int) bool { return policies[i].APIKeyID < policies[j].APIKeyID })
+	for _, ancestor := range policies {
+		ancestorRules := map[string]model.SpendingRule{}
+		for _, r := range ancestor.Rules {
+			ancestorRules[policy.RuleKey(r.Currency, r.Precision)] = r
 		}
-		var used string
-		err = tx.QueryRowContext(ctx, `SELECT used::text FROM ledgerforge.policy_usage WHERE api_key_id=$1 AND currency=$2 AND precision=$3 AND day=$4 FOR UPDATE`, key, r.Currency, r.Precision, day).Scan(&used)
-		if err != nil {
-			return nil, err
-		}
-		current, _ := policy.Integer(used)
-		current.Add(current, n)
-		if r.DailyLimit != "" {
-			limit, _ := policy.Integer(r.DailyLimit)
-			if current.Cmp(limit) > 0 {
-				return nil, fmt.Errorf("%w: daily_limit exhausted", policy.ErrDenied)
+		for _, k := range keys {
+			r, n := ancestorRules[k], totals[k]
+			_, err = tx.ExecContext(ctx, `INSERT INTO ledgerforge.policy_usage(api_key_id,currency,precision,day) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, ancestor.APIKeyID, r.Currency, r.Precision, day)
+			if err != nil {
+				return nil, err
 			}
-		}
-		_, err = tx.ExecContext(ctx, `UPDATE ledgerforge.policy_usage SET used=$5 WHERE api_key_id=$1 AND currency=$2 AND precision=$3 AND day=$4`, key, r.Currency, r.Precision, day, current.String())
-		if err != nil {
-			return nil, err
+			var used string
+			err = tx.QueryRowContext(ctx, `SELECT used::text FROM ledgerforge.policy_usage WHERE api_key_id=$1 AND currency=$2 AND precision=$3 AND day=$4 FOR UPDATE`, ancestor.APIKeyID, r.Currency, r.Precision, day).Scan(&used)
+			if err != nil {
+				return nil, err
+			}
+			current, _ := policy.Integer(used)
+			current.Add(current, n)
+			if r.DailyLimit != "" {
+				limit, _ := policy.Integer(r.DailyLimit)
+				if current.Cmp(limit) > 0 {
+					return nil, fmt.Errorf("%w: shared ancestor daily_limit exhausted", policy.ErrDenied)
+				}
+			}
+			_, err = tx.ExecContext(ctx, `UPDATE ledgerforge.policy_usage SET used=$5 WHERE api_key_id=$1 AND currency=$2 AND precision=$3 AND day=$4`, ancestor.APIKeyID, r.Currency, r.Precision, day, current.String())
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	a := &model.PolicyAdmission{ID: model.GenerateUUIDWithSuffix("adm"), APIKeyID: key, Identity: identity, Version: version, Day: day, Decision: decision, Legs: legs}
 	_, err = tx.ExecContext(ctx, `INSERT INTO ledgerforge.policy_admissions(admission_id,api_key_id,identity,version,day,fingerprint,decision,legs) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, a.ID, key, identity, version, day, fingerprint, decision, string(stored))
 	if err != nil {
 		return nil, err
+	}
+	for _, ancestor := range policies {
+		for _, k := range keys {
+			r := rules[k]
+			_, err = tx.ExecContext(ctx, `INSERT INTO ledgerforge.policy_admission_budgets(admission_id,api_key_id,currency,precision,day,amount) VALUES($1,$2,$3,$4,$5,$6)`, a.ID, ancestor.APIKeyID, r.Currency, r.Precision, day, totals[k].String())
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 	for _, leg := range legs {
 		_, err = tx.ExecContext(ctx, `INSERT INTO ledgerforge.policy_bindings(reference,transaction_id,admission_id,source,destination,currency,precision,amount) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, leg.Reference, leg.TransactionID, a.ID, leg.Source, leg.Destination, leg.Currency, leg.Precision, leg.Amount)
@@ -340,8 +378,8 @@ func (d *Datasource) DecidePolicyApproval(ctx context.Context, id string, p poli
 	if err != nil {
 		return nil, err
 	}
-	if a.APIKeyID == p.APIKeyID {
-		return nil, fmt.Errorf("%w: initiating key cannot approve or reject its own request", policy.ErrDenied)
+	if err = independentApprover(ctx, tx, a.APIKeyID, p); err != nil {
+		return nil, err
 	}
 	decision := "rejected"
 	if approve {
@@ -393,10 +431,9 @@ func (d *Datasource) ReleasePolicyLeg(ctx context.Context, id string) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	var key, currency, released, admission string
+	var currency, released, admission string
 	var precision float64
-	var day time.Time
-	err = tx.QueryRowContext(ctx, `SELECT b.admission_id,a.api_key_id,b.currency,b.precision,a.day,b.released::text FROM ledgerforge.policy_bindings b JOIN ledgerforge.policy_admissions a USING(admission_id) WHERE b.reference=$1 FOR UPDATE OF b`, ref).Scan(&admission, &key, &currency, &precision, &day, &released)
+	err = tx.QueryRowContext(ctx, `SELECT b.admission_id,b.currency,b.precision,b.released::text FROM ledgerforge.policy_bindings b JOIN ledgerforge.policy_admissions a USING(admission_id) WHERE b.reference=$1 FOR UPDATE OF b`, ref).Scan(&admission, &currency, &precision, &released)
 	if err != nil {
 		return err
 	}
@@ -416,7 +453,7 @@ func (d *Datasource) ReleasePolicyLeg(ctx context.Context, id string) error {
 	if delta.Sign() <= 0 {
 		return nil
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE ledgerforge.policy_usage SET used=used-$5::numeric WHERE api_key_id=$1 AND currency=$2 AND precision=$3 AND day=$4`, key, currency, precision, day, delta.String())
+	_, err = tx.ExecContext(ctx, `SELECT ledgerforge.release_policy_budgets($1,$2,$3,$4::numeric)`, admission, currency, precision, delta.String())
 	if err != nil {
 		return err
 	}
@@ -432,28 +469,63 @@ func (d *Datasource) ReleasePolicyLeg(ctx context.Context, id string) error {
 }
 
 func (d *Datasource) PolicyCapacity(ctx context.Context, key string) ([]model.PolicyCapacity, error) {
-	p, err := d.GetKeyPolicy(ctx, key)
-	if err != nil || p == nil {
+	ids, err := keyAncestry(ctx, d.Conn, key)
+	if err != nil {
 		return nil, err
+	}
+	policies, err := ancestorPolicies(ctx, d.Conn, ids)
+	if err != nil {
+		return nil, err
+	}
+	p := policy.Intersect(key, policies)
+	if p == nil {
+		return nil, nil
 	}
 	day := time.Now().UTC().Truncate(24 * time.Hour)
 	out := []model.PolicyCapacity{}
-	for _, r := range p.Rules {
-		used := "0"
-		err = d.Conn.QueryRowContext(ctx, `SELECT used::text FROM ledgerforge.policy_usage WHERE api_key_id=$1 AND currency=$2 AND precision=$3 AND day=$4`, key, r.Currency, r.Precision, day).Scan(&used)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return nil, err
-		}
-		c := model.PolicyCapacity{Currency: r.Currency, Precision: r.Precision, Day: day, Used: used}
-		if r.DailyLimit != "" {
-			limit, _ := policy.Integer(r.DailyLimit)
+	for _, rule := range p.Rules {
+		c := model.PolicyCapacity{Currency: rule.Currency, Precision: rule.Precision, Day: day, Used: "0"}
+		var primaryLimit *big.Int
+		for _, ancestor := range policies {
+			var own model.SpendingRule
+			for _, r := range ancestor.Rules {
+				if policy.RuleKey(r.Currency, r.Precision) == policy.RuleKey(rule.Currency, rule.Precision) {
+					own = r
+					break
+				}
+			}
+			used := "0"
+			err = d.Conn.QueryRowContext(ctx, `SELECT used::text FROM ledgerforge.policy_usage WHERE api_key_id=$1 AND currency=$2 AND precision=$3 AND day=$4`, ancestor.APIKeyID, rule.Currency, rule.Precision, day).Scan(&used)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return nil, err
+			}
+			c.Budgets = append(c.Budgets, model.PolicyBudgetCapacity{APIKeyID: ancestor.APIKeyID, Used: used, Limit: own.DailyLimit})
+			if primaryLimit == nil {
+				c.Used = used
+			}
+			if own.DailyLimit == "" {
+				continue
+			}
+			limit, _ := policy.Integer(own.DailyLimit)
+			if primaryLimit == nil || limit.Cmp(primaryLimit) < 0 {
+				c.Used = used
+				primaryLimit = new(big.Int).Set(limit)
+			}
 			n, _ := policy.Integer(used)
 			limit.Sub(limit, n)
 			if limit.Sign() < 0 {
 				limit.SetInt64(0)
 			}
-			v := limit.String()
-			c.Remaining = &v
+			if c.Remaining == nil {
+				v := limit.String()
+				c.Remaining = &v
+			} else {
+				prior, _ := policy.Integer(*c.Remaining)
+				if limit.Cmp(prior) < 0 {
+					v := limit.String()
+					c.Remaining = &v
+				}
+			}
 		}
 		out = append(out, c)
 	}

@@ -421,3 +421,66 @@ func TestPolicyCoreValidatesBeforeAmountConversion(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, "0", policyUsed(t, l, agent))
 }
+
+func TestPolicyDelegatedReleaseUsesAdmissionBudgetSnapshot(t *testing.T) {
+	l, ds := newCoreTestLedgerForge(t)
+	d := ds.(*database.Datasource)
+	master := policy.WithPrincipal(context.Background(), policy.Principal{Master: true})
+	root, err := l.CreateAPIKey(master, "snapshot-root", model.GenerateUUIDWithSuffix("owner"), []string{"transactions:write"}, time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	rootCtx := policy.WithPrincipal(context.Background(), policy.Principal{APIKeyID: root.APIKeyID, Scopes: root.Scopes})
+	child, err := l.CreateAPIKey(rootCtx, "snapshot-child", root.OwnerID, root.Scopes, root.ExpiresAt)
+	require.NoError(t, err)
+	childCtx := policy.WithPrincipal(context.Background(), policy.Principal{APIKeyID: child.APIKeyID, Scopes: child.Scopes})
+	for _, key := range []string{root.APIKeyID, child.APIKeyID} {
+		_, err = l.PutKeyPolicy(master, model.KeyPolicy{APIKeyID: key, Rules: []model.SpendingRule{{Currency: "USD", Precision: 100, MaxTransaction: "100", DailyLimit: "100", ApprovalAbove: "40"}}})
+		require.NoError(t, err)
+	}
+	source, destination := newBalancePair(t, ds)
+	held, err := l.QueueTransaction(childCtx, policyDraft(source, destination, 60))
+	require.NoError(t, err)
+	for _, ctx := range []context.Context{rootCtx, childCtx} {
+		require.Equal(t, "60", policyUsed(t, l, ctx))
+	}
+	// Release the exact budgets reserved at admission, even after policies are
+	// disabled. Looking up today's effective policy here loses ancestor charges.
+	for _, key := range []string{root.APIKeyID, child.APIKeyID} {
+		require.NoError(t, l.DeleteKeyPolicy(master, key))
+	}
+	_, err = l.CommitInflightTransaction(childCtx, held.TransactionID, big.NewInt(0))
+	require.ErrorIs(t, err, policy.ErrApprovalRequired)
+	_, err = l.DecidePolicyApproval(master, held.MetaData["policy_admission_id"].(string), false)
+	require.NoError(t, err)
+	for _, key := range []string{root.APIKeyID, child.APIKeyID} {
+		var used string
+		require.NoError(t, d.Conn.QueryRowContext(master, `SELECT used::text FROM ledgerforge.policy_usage WHERE api_key_id=$1 AND currency='USD' AND precision=100`, key).Scan(&used))
+		require.Equal(t, "0", used)
+	}
+	require.NoError(t, d.ReleasePolicyLeg(master, held.TransactionID))
+	// Partial settlement and queued commitments retain the same amount in every
+	// ancestor budget; only the unspent voided remainder becomes available.
+	for _, key := range []string{root.APIKeyID, child.APIKeyID} {
+		_, err = l.PutKeyPolicy(master, model.KeyPolicy{APIKeyID: key, Rules: []model.SpendingRule{{Currency: "USD", Precision: 100, MaxTransaction: "100", DailyLimit: "100", ApprovalAbove: "40"}}})
+		require.NoError(t, err)
+	}
+	partial, err := l.QueueTransaction(childCtx, policyDraft(source, destination, 80))
+	require.NoError(t, err)
+	_, err = d.DecidePolicyApproval(master, partial.MetaData["policy_admission_id"].(string), policy.FromContext(master), true)
+	require.NoError(t, err)
+	_, err = l.CommitInflightTransaction(childCtx, partial.TransactionID, big.NewInt(20))
+	require.NoError(t, err)
+	intent, err := l.CommitInflightTransactionWithQueue(childCtx, partial.TransactionID, big.NewInt(40))
+	require.NoError(t, err)
+	_, err = l.VoidInflightTransaction(childCtx, partial.TransactionID)
+	require.NoError(t, err)
+	for _, ctx := range []context.Context{rootCtx, childCtx} {
+		require.Equal(t, "60", policyUsed(t, l, ctx))
+	}
+	_, err = l.ProcessQueuedTransaction(context.Background(), createQueueCopy(intent, intent.Reference), false)
+	require.NoError(t, err)
+
+	balance, err := ds.GetBalanceByIDLite(destination.BalanceID)
+	require.NoError(t, err)
+	require.Equal(t, "60", balance.Balance.String())
+	require.Zero(t, balance.InflightCreditBalance.Sign())
+}

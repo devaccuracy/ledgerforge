@@ -34,7 +34,7 @@ import (
 )
 
 func keyLookupRows() *sqlmock.Rows {
-	return sqlmock.NewRows([]string{"api_key_id", "key", "name", "owner_id", "scopes", "expires_at", "created_at", "last_used_at", "is_revoked", "revoked_at", "key_prefix"})
+	return sqlmock.NewRows([]string{"api_key_id", "key", "name", "owner_id", "scopes", "expires_at", "created_at", "last_used_at", "is_revoked", "revoked_at", "key_prefix", "parent_api_key_id"})
 }
 
 func TestAPIKeyLegacyLookupOnlyAfterMissingPrefix(t *testing.T) {
@@ -45,7 +45,7 @@ func TestAPIKeyLegacyLookupOnlyAfterMissingPrefix(t *testing.T) {
 			db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
 			require.NoError(t, err)
 			defer db.Close()
-			mock.ExpectQuery(prefixedAPIKeyQuery).WithArgs(getKeyPrefix(key)).WillReturnRows(keyLookupRows().AddRow("id", hash, "name", "owner", pq.StringArray{"ledgers:read"}, time.Now().Add(time.Hour), time.Now(), time.Now(), false, nil, getKeyPrefix(key)))
+			mock.ExpectQuery(prefixedAPIKeyQuery).WithArgs(getKeyPrefix(key)).WillReturnRows(keyLookupRows().AddRow("id", hash, "name", "owner", pq.StringArray{"ledgers:read"}, time.Now().Add(time.Hour), time.Now(), time.Now(), false, nil, getKeyPrefix(key), ""))
 			ds := Datasource{Conn: db}
 			got, err := ds.GetAPIKey(context.Background(), key)
 			if key == "0123456789abcdef-valid" {
@@ -135,7 +135,8 @@ func TestAPIKeyLegacyRejectsInactiveWithoutBackfill(t *testing.T) {
 				var revoked bool
 				var revokedAt interface{}
 				var prefix interface{}
-				require.NoError(t, rows.Scan(&id, &hash, &name, &owner, &scopes, &expiry, &created, &used, &revoked, &revokedAt, &prefix))
+				var parent string
+				require.NoError(t, rows.Scan(&id, &hash, &name, &owner, &scopes, &expiry, &created, &used, &revoked, &revokedAt, &prefix, &parent))
 				require.NotEqual(t, key.APIKeyID, id, "SQL must exclude inactive candidates before bcrypt")
 			}
 			require.NoError(t, rows.Err())

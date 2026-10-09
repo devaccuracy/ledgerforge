@@ -25,7 +25,7 @@ func TestCreateAPIKey_Success(t *testing.T) {
 	expiresAt := time.Now().Add(24 * time.Hour)
 
 	mock.ExpectExec("INSERT INTO ledgerforge.api_keys").
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), name, ownerID, pq.StringArray(scopes), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), false).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), name, ownerID, pq.StringArray(scopes), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), false, "").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	apiKey, err := ds.CreateAPIKey(context.Background(), name, ownerID, scopes, expiresAt)
@@ -55,7 +55,7 @@ func TestCreateAPIKey_DatabaseError(t *testing.T) {
 	expiresAt := time.Now().Add(24 * time.Hour)
 
 	mock.ExpectExec("INSERT INTO ledgerforge.api_keys").
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), name, ownerID, pq.StringArray(scopes), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), false).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), name, ownerID, pq.StringArray(scopes), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), false, "").
 		WillReturnError(sql.ErrConnDone)
 
 	apiKey, err := ds.CreateAPIKey(context.Background(), name, ownerID, scopes, expiresAt)
@@ -86,10 +86,10 @@ func TestGetAPIKey_Success(t *testing.T) {
 	createdAt := time.Now().Add(-1 * time.Hour)
 	lastUsedAt := time.Now().Add(-30 * time.Minute)
 
-	row := sqlmock.NewRows([]string{"api_key_id", "key", "name", "owner_id", "scopes", "expires_at", "created_at", "last_used_at", "is_revoked", "revoked_at", "key_prefix"}).
-		AddRow(apiKeyID, hashedKey, name, ownerID, pq.StringArray(scopes), expiresAt, createdAt, lastUsedAt, false, nil, keyPrefix)
+	row := sqlmock.NewRows([]string{"api_key_id", "key", "name", "owner_id", "scopes", "expires_at", "created_at", "last_used_at", "is_revoked", "revoked_at", "key_prefix", "parent_api_key_id"}).
+		AddRow(apiKeyID, hashedKey, name, ownerID, pq.StringArray(scopes), expiresAt, createdAt, lastUsedAt, false, nil, keyPrefix, "api_root")
 
-	expectedQuery := regexp.QuoteMeta("SELECT api_key_id, key, name, owner_id, scopes, expires_at, created_at, last_used_at, is_revoked, revoked_at, key_prefix FROM ledgerforge.api_keys WHERE key_prefix = $1")
+	expectedQuery := regexp.QuoteMeta("SELECT api_key_id, key, name, owner_id, scopes, expires_at, created_at, last_used_at, is_revoked, revoked_at, key_prefix, COALESCE(parent_api_key_id,'') FROM ledgerforge.api_keys WHERE key_prefix = $1")
 	mock.ExpectQuery(expectedQuery).
 		WithArgs(keyPrefix).
 		WillReturnRows(row)
@@ -98,6 +98,7 @@ func TestGetAPIKey_Success(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, apiKey)
 	assert.Equal(t, apiKeyID, apiKey.APIKeyID)
+	assert.Equal(t, "api_root", apiKey.ParentAPIKeyID)
 	assert.Empty(t, apiKey.Key)
 	assert.Equal(t, name, apiKey.Name)
 	assert.Equal(t, ownerID, apiKey.OwnerID)
@@ -117,11 +118,11 @@ func TestGetAPIKey_NotFound(t *testing.T) {
 
 	key := "non-existent-key"
 	keyPrefix := getKeyPrefix(key)
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT api_key_id, key, name, owner_id, scopes, expires_at, created_at, last_used_at, is_revoked, revoked_at, key_prefix FROM ledgerforge.api_keys WHERE key_prefix = $1")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT api_key_id, key, name, owner_id, scopes, expires_at, created_at, last_used_at, is_revoked, revoked_at, key_prefix, COALESCE(parent_api_key_id,'') FROM ledgerforge.api_keys WHERE key_prefix = $1")).
 		WithArgs(keyPrefix).
-		WillReturnRows(sqlmock.NewRows([]string{"api_key_id", "key", "name", "owner_id", "scopes", "expires_at", "created_at", "last_used_at", "is_revoked", "revoked_at", "key_prefix"}))
+		WillReturnRows(sqlmock.NewRows([]string{"api_key_id", "key", "name", "owner_id", "scopes", "expires_at", "created_at", "last_used_at", "is_revoked", "revoked_at", "key_prefix", "parent_api_key_id"}))
 
-	mock.ExpectQuery(regexp.QuoteMeta(legacyAPIKeyQuery)).WillReturnRows(sqlmock.NewRows([]string{"api_key_id", "key", "name", "owner_id", "scopes", "expires_at", "created_at", "last_used_at", "is_revoked", "revoked_at", "key_prefix"}))
+	mock.ExpectQuery(regexp.QuoteMeta(legacyAPIKeyQuery)).WillReturnRows(sqlmock.NewRows([]string{"api_key_id", "key", "name", "owner_id", "scopes", "expires_at", "created_at", "last_used_at", "is_revoked", "revoked_at", "key_prefix", "parent_api_key_id"}))
 
 	apiKey, err := ds.GetAPIKey(context.Background(), key)
 	assert.Error(t, err)
@@ -141,7 +142,7 @@ func TestGetAPIKey_DatabaseError(t *testing.T) {
 
 	key := "test-api-key"
 	keyPrefix := getKeyPrefix(key)
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT api_key_id, key, name, owner_id, scopes, expires_at, created_at, last_used_at, is_revoked, revoked_at, key_prefix FROM ledgerforge.api_keys WHERE key_prefix = $1")).
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT api_key_id, key, name, owner_id, scopes, expires_at, created_at, last_used_at, is_revoked, revoked_at, key_prefix, COALESCE(parent_api_key_id,'') FROM ledgerforge.api_keys WHERE key_prefix = $1")).
 		WithArgs(keyPrefix).
 		WillReturnError(sql.ErrConnDone)
 
@@ -233,11 +234,11 @@ func TestListAPIKeys_Success(t *testing.T) {
 	createdAt := time.Now().Add(-1 * time.Hour)
 	lastUsedAt := time.Now().Add(-30 * time.Minute)
 
-	rows := sqlmock.NewRows([]string{"api_key_id", "key", "name", "owner_id", "scopes", "expires_at", "created_at", "last_used_at", "is_revoked", "revoked_at"}).
-		AddRow("api_key_1", "key1", "API Key 1", ownerID, pq.StringArray([]string{"read"}), expiresAt, createdAt, lastUsedAt, false, nil).
-		AddRow("api_key_2", "key2", "API Key 2", ownerID, pq.StringArray([]string{"read", "write"}), expiresAt, createdAt, lastUsedAt, true, &createdAt)
+	rows := sqlmock.NewRows([]string{"api_key_id", "key", "name", "owner_id", "scopes", "expires_at", "created_at", "last_used_at", "is_revoked", "revoked_at", "parent_api_key_id"}).
+		AddRow("api_key_1", "key1", "API Key 1", ownerID, pq.StringArray([]string{"read"}), expiresAt, createdAt, lastUsedAt, false, nil, "").
+		AddRow("api_key_2", "key2", "API Key 2", ownerID, pq.StringArray([]string{"read", "write"}), expiresAt, createdAt, lastUsedAt, true, &createdAt, "api_key_1")
 
-	mock.ExpectQuery("SELECT api_key_id, key, name, owner_id, scopes, expires_at, created_at, last_used_at, is_revoked, revoked_at FROM ledgerforge.api_keys WHERE owner_id = \\$1 ORDER BY created_at DESC").
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT api_key_id, key, name, owner_id, scopes, expires_at, created_at, last_used_at, is_revoked, revoked_at, COALESCE(parent_api_key_id,'') FROM ledgerforge.api_keys WHERE owner_id = $1 ORDER BY created_at DESC")).
 		WithArgs(ownerID).
 		WillReturnRows(rows)
 
@@ -256,6 +257,7 @@ func TestListAPIKeys_Success(t *testing.T) {
 
 	// Check second API key
 	assert.Equal(t, "api_key_2", apiKeys[1].APIKeyID)
+	assert.Equal(t, "api_key_1", apiKeys[1].ParentAPIKeyID)
 	assert.Empty(t, apiKeys[1].Key)
 	assert.Equal(t, "API Key 2", apiKeys[1].Name)
 	assert.Equal(t, ownerID, apiKeys[1].OwnerID)
@@ -276,9 +278,9 @@ func TestListAPIKeys_EmptyResult(t *testing.T) {
 
 	ownerID := "owner123"
 
-	rows := sqlmock.NewRows([]string{"api_key_id", "key", "name", "owner_id", "scopes", "expires_at", "created_at", "last_used_at", "is_revoked", "revoked_at"})
+	rows := sqlmock.NewRows([]string{"api_key_id", "key", "name", "owner_id", "scopes", "expires_at", "created_at", "last_used_at", "is_revoked", "revoked_at", "parent_api_key_id"})
 
-	mock.ExpectQuery("SELECT api_key_id, key, name, owner_id, scopes, expires_at, created_at, last_used_at, is_revoked, revoked_at FROM ledgerforge.api_keys WHERE owner_id = \\$1 ORDER BY created_at DESC").
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT api_key_id, key, name, owner_id, scopes, expires_at, created_at, last_used_at, is_revoked, revoked_at, COALESCE(parent_api_key_id,'') FROM ledgerforge.api_keys WHERE owner_id = $1 ORDER BY created_at DESC")).
 		WithArgs(ownerID).
 		WillReturnRows(rows)
 
@@ -299,7 +301,7 @@ func TestListAPIKeys_DatabaseError(t *testing.T) {
 
 	ownerID := "owner123"
 
-	mock.ExpectQuery("SELECT api_key_id, key, name, owner_id, scopes, expires_at, created_at, last_used_at, is_revoked, revoked_at FROM ledgerforge.api_keys WHERE owner_id = \\$1 ORDER BY created_at DESC").
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT api_key_id, key, name, owner_id, scopes, expires_at, created_at, last_used_at, is_revoked, revoked_at, COALESCE(parent_api_key_id,'') FROM ledgerforge.api_keys WHERE owner_id = $1 ORDER BY created_at DESC")).
 		WithArgs(ownerID).
 		WillReturnError(sql.ErrConnDone)
 
@@ -322,10 +324,10 @@ func TestListAPIKeys_ScanError(t *testing.T) {
 	ownerID := "owner123"
 
 	// Create a row with invalid data type for scopes to trigger scan error
-	rows := sqlmock.NewRows([]string{"api_key_id", "key", "name", "owner_id", "scopes", "expires_at", "created_at", "last_used_at", "is_revoked", "revoked_at"}).
-		AddRow("api_key_1", "key1", "API Key 1", ownerID, "invalid_scopes_type", time.Now(), time.Now(), time.Now(), false, nil)
+	rows := sqlmock.NewRows([]string{"api_key_id", "key", "name", "owner_id", "scopes", "expires_at", "created_at", "last_used_at", "is_revoked", "revoked_at", "parent_api_key_id"}).
+		AddRow("api_key_1", "key1", "API Key 1", ownerID, "invalid_scopes_type", time.Now(), time.Now(), time.Now(), false, nil, "")
 
-	mock.ExpectQuery("SELECT api_key_id, key, name, owner_id, scopes, expires_at, created_at, last_used_at, is_revoked, revoked_at FROM ledgerforge.api_keys WHERE owner_id = \\$1 ORDER BY created_at DESC").
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT api_key_id, key, name, owner_id, scopes, expires_at, created_at, last_used_at, is_revoked, revoked_at, COALESCE(parent_api_key_id,'') FROM ledgerforge.api_keys WHERE owner_id = $1 ORDER BY created_at DESC")).
 		WithArgs(ownerID).
 		WillReturnRows(rows)
 
