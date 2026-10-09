@@ -31,35 +31,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// quiesceOutbox parks all unrelated pending outbox rows behind a future lock
-// so that claim assertions only see this test's fixtures. The shared database
-// persists rows between runs, so this keeps claims deterministic. It also
-// registers a cleanup that marks this test's fixtures terminal so they never
-// leak into later runs or get chewed by lineage processors started elsewhere.
-func quiesceOutbox(t *testing.T, ds Datasource, markerPrefix string) {
-	t.Helper()
-	_, err := ds.Conn.Exec(`
-		UPDATE ledgerforge.lineage_outbox
-		SET locked_until = NOW() + interval '1 hour'
-		WHERE status = 'pending'
-		  AND (locked_until IS NULL OR locked_until < NOW())
-		  AND transaction_id NOT LIKE $1
-	`, markerPrefix+"%")
-	require.NoError(t, err)
-
-	t.Cleanup(func() {
-		_, err := ds.Conn.Exec(`
-			UPDATE ledgerforge.lineage_outbox
-			SET status = 'completed', processed_at = NOW()
-			WHERE transaction_id LIKE $1
-			  AND status IN ('pending', 'processing')
-		`, markerPrefix+"%")
-		if err != nil {
-			t.Logf("failed to retire outbox fixtures: %v", err)
-		}
-	})
-}
-
 func newOutboxEntry(markerPrefix string) *model.LineageOutbox {
 	return &model.LineageOutbox{
 		TransactionID: markerPrefix + model.GenerateUUIDWithSuffix("txn"),
@@ -74,7 +45,7 @@ func newOutboxEntry(markerPrefix string) *model.LineageOutbox {
 // ---------------------------------------------------------------------------
 
 func TestDeleteLineageMapping_RealDB(t *testing.T) {
-	ds := openRealTestDB(t)
+	ds := openOutboxTestDB(t)
 	ctx := context.Background()
 
 	marker := gofakeit.UUID()
@@ -143,7 +114,7 @@ func TestDeleteLineageMapping_RealDB(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestInsertLineageOutbox_RealDB(t *testing.T) {
-	ds := openRealTestDB(t)
+	ds := openOutboxTestDB(t)
 	ctx := context.Background()
 	markerPrefix := "covob-" + gofakeit.UUID()[:8] + "-"
 
@@ -193,7 +164,7 @@ func TestInsertLineageOutbox_RealDB(t *testing.T) {
 }
 
 func TestInsertLineageOutboxInTx_RealDB(t *testing.T) {
-	ds := openRealTestDB(t)
+	ds := openOutboxTestDB(t)
 	ctx := context.Background()
 	markerPrefix := "covobtx-" + gofakeit.UUID()[:8] + "-"
 
@@ -237,10 +208,9 @@ func TestInsertLineageOutboxInTx_RealDB(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestClaimPendingOutboxEntries_RealDB(t *testing.T) {
-	ds := openRealTestDB(t)
+	ds := openOutboxTestDB(t)
 	ctx := context.Background()
 	markerPrefix := "covclaim-" + gofakeit.UUID()[:8] + "-"
-	quiesceOutbox(t, ds, markerPrefix)
 
 	mine := func(entries []model.LineageOutbox) []string {
 		ids := make([]string, 0)
@@ -412,10 +382,9 @@ func containsTxnID(entries []model.LineageOutbox, txnID string) bool {
 }
 
 func TestClaimPendingOutboxEntries_ConcurrentClaimsAreDisjoint_RealDB(t *testing.T) {
-	ds := openRealTestDB(t)
+	ds := openOutboxTestDB(t)
 	ctx := context.Background()
 	markerPrefix := "covconc-" + gofakeit.UUID()[:8] + "-"
-	quiesceOutbox(t, ds, markerPrefix)
 
 	const total = 20
 	insertedSet := make(map[string]bool, total)
