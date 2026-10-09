@@ -28,11 +28,13 @@ type SpendingRule struct {
 	ApprovalAbove  string  `json:"approval_above,omitempty"`
 }
 type KeyPolicy struct {
-	APIKeyID   string         `json:"api_key_id"`
-	Version    int64          `json:"version"`
-	Rules      []SpendingRule `json:"rules"`
-	LedgerIDs  []string       `json:"ledger_ids,omitempty"`
-	BalanceIDs []string       `json:"balance_ids,omitempty"`
+	DenyAll       bool           `json:"deny_all,omitempty"`
+	InheritedFrom []string       `json:"inherited_from,omitempty"`
+	APIKeyID      string         `json:"api_key_id"`
+	Version       int64          `json:"version"`
+	Rules         []SpendingRule `json:"rules"`
+	LedgerIDs     []string       `json:"ledger_ids,omitempty"`
+	BalanceIDs    []string       `json:"balance_ids,omitempty"`
 }
 type PolicyLeg struct {
 	TransactionID     string  `json:"transaction_id"`
@@ -55,10 +57,19 @@ type PolicyAdmission struct {
 	DecidedBy string      `json:"decided_by,omitempty"`
 	Legs      []PolicyLeg `json:"legs"`
 }
+type PolicyBudgetCapacity struct {
+	APIKeyID string `json:"api_key_id"`
+	Used     string `json:"used_minor"`
+	Limit    string `json:"daily_limit,omitempty"`
+}
+
+// Used reports the narrowest declared daily budget. Remaining is the minimum
+// available capacity across all charged budgets, whose usage is shown in Budgets.
 type PolicyCapacity struct {
-	Currency  string    `json:"currency"`
-	Precision float64   `json:"precision"`
-	Day       time.Time `json:"day"`
-	Used      string    `json:"used_minor"`
-	Remaining *string   `json:"remaining_minor,omitempty"`
+	Budgets   []PolicyBudgetCapacity `json:"budgets,omitempty"`
+	Currency  string                 `json:"currency"`
+	Precision float64                `json:"precision"`
+	Day       time.Time              `json:"day"`
+	Used      string                 `json:"used_minor"`
+	Remaining *string                `json:"remaining_minor,omitempty"`
 }

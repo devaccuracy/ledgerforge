@@ -17,6 +17,8 @@ type APIKey struct {
 	LastUsedAt time.Time  `json:"last_used_at" db:"last_used_at"`
 	IsRevoked  bool       `json:"is_revoked" db:"is_revoked"`
 	RevokedAt  *time.Time `json:"revoked_at,omitempty" db:"revoked_at"`
+
+	ParentAPIKeyID string `json:"parent_api_key_id,omitempty" db:"parent_api_key_id"`
 }
 
 // GenerateKey creates a new secure API key
