@@ -36,40 +36,35 @@ CREATE INDEX IF NOT EXISTS idx_journal_insert_transaction ON ledgerforge.transac
 WHERE action_type = 'INSERT' AND succeeded;
 
 -- +migrate StatementBegin
-CREATE FUNCTION ledgerforge.prevent_sealed_chain_update()
+CREATE OR REPLACE FUNCTION ledgerforge.prevent_transaction_update()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'Cannot delete transaction data';
+    END IF;
+    -- Protect every non-bookkeeping column, including future financial fields.
+    IF (to_jsonb(NEW) - ARRAY['meta_data', 'chain_seq', 'chain_prev_hash', 'chain_hash', 'chain_version'])
+        IS DISTINCT FROM (to_jsonb(OLD) - ARRAY['meta_data', 'chain_seq', 'chain_prev_hash', 'chain_hash', 'chain_version']) THEN
+        RAISE EXCEPTION 'Cannot modify transaction data. Only meta_data and unsealed chain fields can be updated.';
+    END IF;
     IF OLD.chain_seq IS NOT NULL AND (
-        NEW.id IS DISTINCT FROM OLD.id OR
-        NEW.transaction_id IS DISTINCT FROM OLD.transaction_id OR
-        NEW.source IS DISTINCT FROM OLD.source OR
-        NEW.destination IS DISTINCT FROM OLD.destination OR
-        NEW.reference IS DISTINCT FROM OLD.reference OR
-        NEW.amount IS DISTINCT FROM OLD.amount OR
-        NEW.precise_amount IS DISTINCT FROM OLD.precise_amount OR
-        NEW.precision IS DISTINCT FROM OLD.precision OR
-        NEW.rate IS DISTINCT FROM OLD.rate OR
-        NEW.parent_transaction IS DISTINCT FROM OLD.parent_transaction OR
-        NEW.effective_date IS DISTINCT FROM OLD.effective_date OR
-        NEW.currency IS DISTINCT FROM OLD.currency OR
-        NEW.status IS DISTINCT FROM OLD.status OR
-        NEW.created_at IS DISTINCT FROM OLD.created_at OR
         NEW.chain_seq IS DISTINCT FROM OLD.chain_seq OR
         NEW.chain_prev_hash IS DISTINCT FROM OLD.chain_prev_hash OR
         NEW.chain_hash IS DISTINCT FROM OLD.chain_hash OR
-        NEW.chain_version IS DISTINCT FROM OLD.chain_version) THEN
+        to_jsonb(NEW)->'chain_version' IS DISTINCT FROM to_jsonb(OLD)->'chain_version') THEN
         RAISE EXCEPTION 'Cannot modify a sealed transaction commitment.';
     END IF;
     RETURN NEW;
 END;
 $$;
-CREATE TRIGGER prevent_sealed_chain_update_trigger BEFORE UPDATE ON ledgerforge.transactions
-FOR EACH ROW EXECUTE FUNCTION ledgerforge.prevent_sealed_chain_update();
+DROP TRIGGER IF EXISTS prevent_transaction_update_trigger ON ledgerforge.transactions;
+CREATE TRIGGER prevent_transaction_update_trigger BEFORE UPDATE OR DELETE ON ledgerforge.transactions
+FOR EACH ROW EXECUTE FUNCTION ledgerforge.prevent_transaction_update();
 -- +migrate StatementEnd
 
 -- +migrate Down
-DROP TRIGGER prevent_sealed_chain_update_trigger ON ledgerforge.transactions;
-DROP FUNCTION ledgerforge.prevent_sealed_chain_update();
+-- Retain the financial/DELETE protection and sealed v1 bookkeeping policy.
+-- The optional JSON lookup above also works after chain_version is removed.
 DROP TABLE ledgerforge.chain_checkpoints;
 DROP INDEX IF EXISTS ledgerforge.idx_journal_insert_transaction;
 ALTER TABLE ledgerforge.transactions DROP CONSTRAINT transaction_chain_complete;

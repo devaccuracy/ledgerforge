@@ -13,7 +13,7 @@
 -- limitations under the License.
 
 -- +migrate Up
-ALTER TABLE ledgerforge.transactions ADD COLUMN rate NUMERIC NOT NULL DEFAULT 0;
+-- Rate and the transaction immutability policy are owned by 1781162340.sql.
 ALTER TABLE ledgerforge.transactions ADD COLUMN overdraft_limit NUMERIC NOT NULL DEFAULT 0;
 ALTER TABLE ledgerforge.transactions ADD COLUMN queue_action TEXT NOT NULL DEFAULT '';
 
@@ -115,47 +115,9 @@ CREATE TRIGGER claim_transaction_lifecycle_trigger BEFORE INSERT ON ledgerforge.
     FOR EACH ROW EXECUTE FUNCTION ledgerforge.claim_transaction_lifecycle();
 -- +migrate StatementEnd
 
--- +migrate StatementBegin
-CREATE OR REPLACE FUNCTION ledgerforge.prevent_transaction_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-BEGIN
-    IF TG_OP = 'DELETE' THEN
-        RAISE EXCEPTION 'Cannot delete transaction data';
-    END IF;
-    -- Metadata and the existing background chain fields remain writable.
-    IF (to_jsonb(NEW) - ARRAY['meta_data', 'chain_seq', 'chain_prev_hash', 'chain_hash'])
-        IS DISTINCT FROM (to_jsonb(OLD) - ARRAY['meta_data', 'chain_seq', 'chain_prev_hash', 'chain_hash']) THEN
-        RAISE EXCEPTION 'Cannot modify transaction data. Only meta_data and chain fields can be updated.';
-    END IF;
-    RETURN NEW;
-END;
-$$;
-DROP TRIGGER IF EXISTS prevent_transaction_update_trigger ON ledgerforge.transactions;
-CREATE TRIGGER prevent_transaction_update_trigger BEFORE UPDATE OR DELETE ON ledgerforge.transactions
-    FOR EACH ROW EXECUTE FUNCTION ledgerforge.prevent_transaction_update();
--- +migrate StatementEnd
-
 -- +migrate Down
 DROP TRIGGER claim_transaction_lifecycle_trigger ON ledgerforge.transactions;
 DROP FUNCTION ledgerforge.claim_transaction_lifecycle();
 DROP TABLE ledgerforge.refund_claims;
--- +migrate StatementBegin
-CREATE OR REPLACE FUNCTION ledgerforge.prevent_transaction_update() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-BEGIN
-    IF ROW(NEW.transaction_id, NEW.source, NEW.destination, NEW.description, NEW.reference,
-           NEW.amount, NEW.precise_amount, NEW.precision, NEW.currency, NEW.status, NEW.hash,
-           NEW.created_at, NEW.scheduled_for)
-       IS DISTINCT FROM ROW(OLD.transaction_id, OLD.source, OLD.destination, OLD.description, OLD.reference,
-           OLD.amount, OLD.precise_amount, OLD.precision, OLD.currency, OLD.status, OLD.hash,
-           OLD.created_at, OLD.scheduled_for) THEN
-        RAISE EXCEPTION 'Cannot modify transaction data. Only meta_data and chain fields can be updated.';
-    END IF;
-    RETURN NEW;
-END;
-$$;
-DROP TRIGGER prevent_transaction_update_trigger ON ledgerforge.transactions;
-CREATE TRIGGER prevent_transaction_update_trigger BEFORE UPDATE ON ledgerforge.transactions
-    FOR EACH ROW EXECUTE FUNCTION ledgerforge.prevent_transaction_update();
--- +migrate StatementEnd
 ALTER TABLE ledgerforge.transactions DROP COLUMN queue_action;
 ALTER TABLE ledgerforge.transactions DROP COLUMN overdraft_limit;
-ALTER TABLE ledgerforge.transactions DROP COLUMN rate;
