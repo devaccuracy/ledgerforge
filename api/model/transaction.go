@@ -24,6 +24,7 @@ import (
 
 type RecordTransaction struct {
 	amountDecimal string
+	controls      numericControlTokens
 	// Rate is retained for client compatibility; ledger arithmetic does not use it.
 	Rate float64 `json:"rate"`
 	// Amount rounds to the nearest minor unit, with halves away from zero.

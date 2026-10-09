@@ -226,6 +226,9 @@ func (b *CreateBalance) ValidateCreateBalance() error {
 	return validation.ValidateStruct(b,
 		validation.Field(&b.LedgerId, validation.Required),
 		validation.Field(&b.Currency, validation.Required),
+		validation.Field(&b.Precision, validation.By(validatePrecisionIsInteger), validation.By(validatePrecisionNotNegative), validation.By(func(value interface{}) error {
+			return validateExactControl(b.precisionDecimal, b.Precision, true)
+		})),
 		validation.Field(&b.IdentityId, validation.When(b.TrackFundLineage, validation.Required.Error("identity_id is required when track_fund_lineage is enabled"))),
 		validation.Field(&b.AllocationStrategy, validation.When(b.AllocationStrategy != "", validation.In("FIFO", "LIFO", "PROPORTIONAL").Error("allocation_strategy must be one of: FIFO, LIFO, PROPORTIONAL"))),
 		validation.Field(&b.Indicator,
@@ -261,7 +264,9 @@ func (c *MonitorCondition) ValidateMonitorCondition() error {
 	return validation.ValidateStruct(c,
 		validation.Field(&c.Field, validation.Required, validation.In("debit_balance", "credit_balance", "balance", "inflight_debit_balance", "inflight_credit_balance", "inflight_balance")),
 		validation.Field(&c.Operator, validation.Required),
-		validation.Field(&c.Precision, validation.Required, validation.By(validatePrecisionNotNegative)),
+		validation.Field(&c.Precision, validation.Required, validation.By(validatePrecisionIsInteger), validation.By(validatePrecisionNotNegative), validation.By(func(value interface{}) error {
+			return validateExactControl(c.precisionDecimal, c.Precision, true)
+		})),
 		validation.Field(&c.Value, validation.Required),
 	)
 }
@@ -301,7 +306,9 @@ func (t *RecordTransaction) ValidateRecordTransaction() error {
 
 			return nil
 		}), validation.By(validateAmountNotNegative(t))),
-		validation.Field(&t.Precision, validation.By(validatePrecisionIsInteger), validation.By(validatePrecisionNotNegative)),
+		validation.Field(&t.Precision, validation.By(validatePrecisionIsInteger), validation.By(validatePrecisionNotNegative), validation.By(func(value interface{}) error {
+			return validateExactControl(t.controls.precision, t.Precision, true)
+		})),
 		validation.Field(&t.Rate, validation.By(func(value interface{}) error {
 			if math.IsNaN(t.Rate) || math.IsInf(t.Rate, 0) || t.Rate < 0 {
 				return errors.New("rate must be finite and positive (or zero for the default)")
@@ -312,7 +319,7 @@ func (t *RecordTransaction) ValidateRecordTransaction() error {
 			if math.IsNaN(t.OverdraftLimit) || math.IsInf(t.OverdraftLimit, 0) || t.OverdraftLimit < 0 {
 				return errors.New("overdraft limit must be finite and non-negative")
 			}
-			return nil
+			return validateExactControl(t.controls.overdraftLimit, t.OverdraftLimit, false)
 		})),
 		validation.Field(&t.Currency, validation.Required),
 		validation.Field(&t.Reference, validation.Required),
