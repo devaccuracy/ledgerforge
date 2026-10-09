@@ -281,7 +281,7 @@ func TestAuditUpgradeValidationDoesNotBlockMetadataWriter(t *testing.T) {
 	require.NoError(t, err)
 	writer, err := ds.Conn.Begin()
 	require.NoError(t, err)
-	defer writer.Rollback()
+	defer func() { _ = writer.Rollback() }()
 	_, err = writer.Exec(`UPDATE ledgerforge.transactions SET meta_data='{"customer_note":"concurrent"}' WHERE transaction_id=$1`, intent.TransactionID)
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)

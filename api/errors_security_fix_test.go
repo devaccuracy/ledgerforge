@@ -26,13 +26,24 @@ import (
 )
 
 func TestPreciseAmountValidationMessageRemainsFieldSpecific(t *testing.T) {
-	for _, text := range []string{"precise_amount must be positive", "transaction precise amount must be positive", "precise_amount must be positive: pq: sensitive backend detail"} {
-		c, w := newTestContext()
-		respondError(c, errors.New(text))
-		require.Equal(t, http.StatusBadRequest, w.Code)
-		raw, detail := decodeDetail(t, w)
-		require.Equal(t, "precise_amount must be positive", raw["error"])
-		require.Equal(t, apierror.ErrTxnInvalidAmount, detail.Code)
-		require.NotContains(t, w.Body.String(), "sensitive backend detail")
+	for _, tc := range []struct {
+		text, want string
+	}{
+		{"precise_amount must be positive", "precise_amount must be positive"},
+		{"transaction precise amount must be positive", "precise_amount must be positive"},
+		{"precise_amount must be positive: pq: sensitive backend detail", "transaction amount must be positive"},
+		{"pq: sensitive backend detail: precise_amount must be positive", "transaction amount must be positive"},
+		{"transaction amount must be positive", "transaction amount must be positive"},
+	} {
+		t.Run(tc.text, func(t *testing.T) {
+			c, w := newTestContext()
+			respondError(c, errors.New(tc.text))
+			require.Equal(t, http.StatusBadRequest, w.Code)
+			raw, detail := decodeDetail(t, w)
+			require.Equal(t, tc.want, raw["error"])
+			require.Equal(t, tc.want, detail.Message)
+			require.Equal(t, apierror.ErrTxnInvalidAmount, detail.Code)
+			require.NotContains(t, w.Body.String(), "sensitive backend detail")
+		})
 	}
 }

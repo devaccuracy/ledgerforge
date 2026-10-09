@@ -158,7 +158,7 @@ func TestPolicyDelegationSecurityMatrixHTTPMCPWorkerRecoveryRetry(t *testing.T) 
 
 	conn, err := sql.Open("postgres", cfg.DataSource.Dns)
 	require.NoError(t, err)
-	defer conn.Close()
+	t.Cleanup(func() { require.NoError(t, conn.Close()) })
 	ds := &database.Datasource{Conn: conn}
 	matrix := []struct {
 		name     string
@@ -183,7 +183,8 @@ func TestPolicyDelegationSecurityMatrixHTTPMCPWorkerRecoveryRetry(t *testing.T) 
 			}
 			held, err := service.GetTransactionByRef(ctx, ref)
 			require.NoError(t, err)
-			if row.name == "worker" {
+			switch row.name {
+			case "worker":
 				worker := held
 				worker.ParentTransaction = held.TransactionID
 				worker.TransactionID = model.GenerateUUIDWithSuffix("txn")
@@ -194,14 +195,14 @@ func TestPolicyDelegationSecurityMatrixHTTPMCPWorkerRecoveryRetry(t *testing.T) 
 				result, err := service.ProcessQueuedTransaction(ctx, &worker, false)
 				require.NoError(t, err)
 				held = *result
-			} else if row.name == "recovery" {
+			case "recovery":
 				backdateTransaction(t, ds, held.TransactionID, 3*time.Minute)
 				recovered, err := service.RecoverQueuedTransactions(ctx, 2*time.Minute)
 				require.NoError(t, err)
 				require.Equal(t, 1, recovered)
 				held, err = service.GetTransactionByRef(ctx, ref+"_q")
 				require.NoError(t, err)
-			} else if row.name == "retry" {
+			case "retry":
 				before := send(http.MethodGet, "/policies/effective", row.key.Key, nil).Body.String()
 				response := post(row.key, ref, 45, true)
 				require.NotEqual(t, http.StatusCreated, response.Code, response.Body.String())

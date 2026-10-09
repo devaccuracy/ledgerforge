@@ -136,11 +136,6 @@ func clientErrorMessage(err error, code apierror.ErrorCode) string {
 	if apierror.StatusForCode(code) >= 500 {
 		return sanitizedInternalMessage
 	}
-	// Preserve field-specific validation without echoing wrapped backend text.
-	if code == apierror.ErrTxnInvalidAmount && err != nil &&
-		(strings.Contains(err.Error(), "precise_amount must be positive") || strings.Contains(err.Error(), "transaction precise amount must be positive")) {
-		return "precise_amount must be positive"
-	}
 	var apiErr apierror.APIError
 	if errors.As(err, &apiErr) {
 		return apiErr.Message
@@ -150,8 +145,11 @@ func clientErrorMessage(err error, code apierror.ErrorCode) string {
 		return apiErrPtr.Message
 	}
 	// Only exact, field-specific validation text is safe to preserve.
-	if code == apierror.ErrTxnInvalidAmount && err.Error() == "precise_amount must be positive" {
-		return "precise_amount must be positive"
+	if code == apierror.ErrTxnInvalidAmount && err != nil {
+		switch err.Error() {
+		case "precise_amount must be positive", "transaction precise amount must be positive":
+			return "precise_amount must be positive"
+		}
 	}
 	messages := map[apierror.ErrorCode]string{
 		apierror.ErrGenNotFound:              "resource not found",

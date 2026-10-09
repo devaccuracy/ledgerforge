@@ -40,7 +40,10 @@ func TestPrecisionLookupAuthoritative(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock, err := sqlmock.New()
 			require.NoError(t, err)
-			defer db.Close()
+			t.Cleanup(func() {
+				mock.ExpectClose()
+				require.NoError(t, db.Close())
+			})
 			query := mock.ExpectQuery("SELECT precision").WithArgs("txn_lookup")
 			if tc.lookupErr != nil {
 				query.WillReturnError(tc.lookupErr)

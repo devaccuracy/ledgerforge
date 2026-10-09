@@ -108,7 +108,7 @@ func TestWebhookRedirectAndResponseLimits(t *testing.T) {
 	targetCalled := false
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { targetCalled = true }))
 	defer target.Close()
-	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, target.URL, 302) }))
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, target.URL, http.StatusFound) }))
 	defer source.Close()
 	require.Error(t, m.ExecuteHook(context.Background(), &Hook{ID: "id", URL: source.URL, Type: PreTransaction}, HookPayload{}))
 	require.False(t, targetCalled)
