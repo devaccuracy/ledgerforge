@@ -128,6 +128,9 @@ func NewCLI() *LedgerForge {
 	rootCmd.AddCommand(migrateCommands(b))     // Command for database/schema migrations
 	rootCmd.AddCommand(verifyChainCommands(b)) // Command for verifying the transaction hash chain
 
+	rootCmd.AddCommand(verifyCommands(b))
+	rootCmd.AddCommand(auditCommands(b))
+
 	return &LedgerForge{cmd: rootCmd}
 }
 
