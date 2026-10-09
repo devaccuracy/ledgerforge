@@ -71,9 +71,14 @@ full-secret authentication can backfill the prefix so later requests use indexed
 lookup. A hash alone cannot reveal the original prefix, so operators cannot
 safely invent one from a stored hash. Rotate active legacy keys instead of
 keeping an unbounded legacy population. Expired and revoked credentials must
-not authenticate. The follow-up security fix bounds the legacy fallback's
-concurrency/rate and filters inactive candidates; deployments must include that
-fix before relying on its resource-exhaustion protection.
+not authenticate. Indexed lookup runs first; only active prefix-less candidates
+enter the fallback. At most two legacy scans run concurrently per process, and
+excess HTTP requests receive 429 instead of queuing unlimited bcrypt work.
+Startup logs count rows still lacking a prefix. Compatibility is enabled by
+default; after migrating clients, set `server.allow_legacy_api_keys: false`
+(`LEDGERFORGE_SERVER_ALLOW_LEGACY_API_KEYS`) on every API/MCP process. Indexed
+keys continue to authenticate. The concurrency cap does not make a large legacy
+population cheap to verify; use rotation and ingress rate limits.
 
 ## Input and error handling
 

@@ -175,8 +175,8 @@ payloads and [security](security.md) for key management.
 ## Verification and upgrade operations
 
 Run both accounting replay and audit verification as described in
-[verification](verification.md). Enable the hash-chain processor in the API server config explicitly and
-retain checkpoint exports outside the ledger database. Plan schema upgrades
+[verification](verification.md). Enable the hash-chain processor explicitly in
+the API server config and retain checkpoint exports outside the ledger database. Plan schema upgrades
 with a tested backup, a representative seeded upgrade and a maintenance window
 for migrations that backfill or validate transaction history. Measure lock time
 on production-sized data; a fresh-database test is insufficient evidence for a

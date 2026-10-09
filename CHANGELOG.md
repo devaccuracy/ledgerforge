@@ -34,6 +34,8 @@ semantic versions.
   `--anchor` comparison, and separate pending-coverage/tampering reports.
 - Generated PostgreSQL operation-sequence tests, concurrent snapshot/chainer
   tests, and property tests for mutation, deletion, truncation and retained roots.
+- Seeded historical-main migration fixtures and no-op rerun checks, with lifecycle
+  rollback tests targeting the intended migration by ID.
 - Per-key currency/precision spending rules, aggregate transaction caps, ledger
   and balance allowlists, UTC daily capacity, durable admissions and reservations.
 - Policy approval holds, independent approval/rejection endpoints, effective
@@ -81,8 +83,11 @@ semantic versions.
 - Queue acceptance persists intent and action before dispatch, recovery preserves
   lifecycle meaning, and enqueue/settlement failure releases claims safely.
 - Bulk saturation returns a controlled error without dereferencing a nil result.
-- Notification/notifier setup and resource ownership follow the originating
-  instance rather than closing borrowed datasource resources.
+- Notification/notifier setup and delivery use the originating instance's
+  configuration, receiver and signing secret; borrowed datasource resources
+  remain caller-owned.
+- Outbox tests use isolated databases and verify cleanup, avoiding changes to
+  pending lineage rows belonging to parallel package tests.
 - Published main-branch tags include `:main`, matching compose and Makefile.
 
 ### Security
@@ -92,12 +97,15 @@ semantic versions.
   listing/revocation derive ownership from the authenticated principal.
 - Authentication checks authoritative PostgreSQL state rather than cached key
   validity; list responses hide stored hashes and successful legacy-key use can
-  backfill its lookup prefix.
+  backfill its lookup prefix. Active-only legacy fallback is capped at two
+  concurrent scans per process, returns 429 under saturation and can be disabled
+  after rotation with `server.allow_legacy_api_keys`.
 - API errors sanitize backend details across compatible response shapes; explicit
   body/upload bounds and route-resource mappings cover operational endpoints.
 - Dedicated webhook signing secrets with legacy fallback, protected HMAC headers,
   validated URLs, configurable private-destination controls, redirect rejection,
-  delivery timeouts and bounded hook response bodies.
+  delivery timeouts and bounded hook response bodies. Public-only mode rejects
+  shared/internal special-purpose ranges at registration and connection time.
 - Non-2xx notification/hook responses remain retryable instead of being acknowledged
   as successful delivery; signing uses the timestamp and exact raw JSON bytes.
 - Upgraded `golang.org/x/net` to 0.60.0, OTel logging API/SDK/stdout exporter to
