@@ -38,7 +38,7 @@ func (d Datasource) GetTransaction(ctx context.Context, id string) (*model.Trans
 
 	// Execute the SQL query to retrieve the transaction by its ID
 	row := d.Conn.QueryRowContext(ctx, `
-		SELECT transaction_id, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, parent_transaction, hash, effective_date
+		SELECT transaction_id, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, parent_transaction, hash, effective_date, rate, overdraft_limit, queue_action
 		FROM ledgerforge.transactions
 		WHERE transaction_id = $1
 	`, id)
@@ -48,7 +48,7 @@ func (d Datasource) GetTransaction(ctx context.Context, id string) (*model.Trans
 	var metaDataJSON []byte
 	var preciseAmountStr string
 	var parentTransaction sql.NullString
-	err := row.Scan(&txn.TransactionID, &txn.Source, &txn.Reference, &txn.Amount, &preciseAmountStr, &txn.Precision, &txn.Currency, &txn.Destination, &txn.Description, &txn.Status, &txn.CreatedAt, &metaDataJSON, &parentTransaction, &txn.Hash, &txn.EffectiveDate)
+	err := row.Scan(&txn.TransactionID, &txn.Source, &txn.Reference, &txn.Amount, &preciseAmountStr, &txn.Precision, &txn.Currency, &txn.Destination, &txn.Description, &txn.Status, &txn.CreatedAt, &metaDataJSON, &parentTransaction, &txn.Hash, &txn.EffectiveDate, &txn.Rate, &txn.OverdraftLimit, &txn.QueueAction)
 	// Handle errors, including no rows found
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -218,7 +218,7 @@ func (d Datasource) GetTransactionByRef(ctx context.Context, reference string) (
 
 	// Query the transaction by reference
 	row := d.Conn.QueryRowContext(ctx, `
-		SELECT transaction_id, source, reference, amount, precise_amount, currency, destination, description, status, created_at, meta_data, parent_transaction, effective_date
+		SELECT transaction_id, source, reference, amount, precise_amount, currency, destination, description, status, created_at, meta_data, parent_transaction, effective_date, precision, rate, overdraft_limit, queue_action
 		FROM ledgerforge.transactions
 		WHERE reference = $1
 	`, reference)
@@ -228,7 +228,7 @@ func (d Datasource) GetTransactionByRef(ctx context.Context, reference string) (
 	var metaDataJSON []byte
 	var preciseAmountStr string
 	var parentTransaction sql.NullString
-	err := row.Scan(&txn.TransactionID, &txn.Source, &txn.Reference, &txn.Amount, &preciseAmountStr, &txn.Currency, &txn.Destination, &txn.Description, &txn.Status, &txn.CreatedAt, &metaDataJSON, &parentTransaction, &txn.EffectiveDate)
+	err := row.Scan(&txn.TransactionID, &txn.Source, &txn.Reference, &txn.Amount, &preciseAmountStr, &txn.Currency, &txn.Destination, &txn.Description, &txn.Status, &txn.CreatedAt, &metaDataJSON, &parentTransaction, &txn.EffectiveDate, &txn.Precision, &txn.Rate, &txn.OverdraftLimit, &txn.QueueAction)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			span.RecordError(err)

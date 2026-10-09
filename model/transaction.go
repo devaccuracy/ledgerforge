@@ -72,6 +72,7 @@ type Transaction struct {
 	Currency           string                 `json:"currency"`
 	Description        string                 `json:"description,omitempty"`
 	Status             string                 `json:"status"`
+	QueueAction        string                 `json:"queue_action,omitempty"`
 	Hash               string                 `json:"hash"`
 	AllowOverdraft     bool                   `json:"allow_overdraft"`
 	Inflight           bool                   `json:"inflight"`

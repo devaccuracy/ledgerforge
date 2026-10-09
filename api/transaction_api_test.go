@@ -286,6 +286,9 @@ func TestRecordTransaction(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.expectedCode == http.StatusCreated {
+				tt.payload.Reference = gofakeit.UUID()
+			}
 			payloadBytes, _ := request.ToJsonReq(&tt.payload)
 			var response model.Transaction
 			testRequest := TestRequest{

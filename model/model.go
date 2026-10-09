@@ -207,6 +207,9 @@ func canProcessTransaction(transaction *Transaction, sourceBalance *Balance) err
 // checkSufficientInflightDebit returns an error when the inflight debit balance
 // cannot cover amount.
 func (balance *Balance) checkSufficientInflightDebit(amount *big.Int) error {
+	if amount == nil || amount.Sign() <= 0 {
+		return fmt.Errorf("inflight amount must be positive")
+	}
 	if balance.InflightDebitBalance.Cmp(amount) < 0 {
 		return fmt.Errorf("insufficient inflight debit balance: have %s, need %s",
 			balance.InflightDebitBalance.String(), amount.String())
@@ -216,6 +219,9 @@ func (balance *Balance) checkSufficientInflightDebit(amount *big.Int) error {
 
 // checkSufficientInflightCredit mirrors checkSufficientInflightDebit for the credit side.
 func (balance *Balance) checkSufficientInflightCredit(amount *big.Int) error {
+	if amount == nil || amount.Sign() <= 0 {
+		return fmt.Errorf("inflight amount must be positive")
+	}
 	if balance.InflightCreditBalance.Cmp(amount) < 0 {
 		return fmt.Errorf("insufficient inflight credit balance: have %s, need %s",
 			balance.InflightCreditBalance.String(), amount.String())

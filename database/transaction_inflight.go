@@ -37,7 +37,13 @@ func (d Datasource) GetTotalCommittedTransactions(ctx context.Context, parentID 
 	query := `
 		SELECT SUM(precise_amount) AS total_amount
 		FROM ledgerforge.transactions
-		WHERE parent_transaction = $1 AND status = 'APPLIED'
+		WHERE parent_transaction = $1 AND (
+            status IN ('APPLIED', 'VOID') OR
+            (status = 'QUEUED' AND queue_action = 'COMMIT' AND NOT EXISTS (
+                SELECT 1 FROM ledgerforge.transactions child
+                WHERE child.parent_transaction = ledgerforge.transactions.transaction_id AND child.status = 'REJECTED'
+            ))
+        )
 		GROUP BY parent_transaction;
 	`
 

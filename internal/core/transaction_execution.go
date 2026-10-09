@@ -323,6 +323,19 @@ func (l *LedgerForge) applyTransactionToBalances(ctx context.Context, balances [
 
 	span.AddEvent("Calculating new balances")
 
+	// Check both reservations before mutating either leg.
+	if transaction.Status == StatusCommit || transaction.Status == StatusVoid {
+		amount := transaction.PreciseAmount
+		if amount == nil || amount.Sign() <= 0 {
+			return fmt.Errorf("inflight transition amount must be positive")
+		}
+		balances[0].InitializeBalanceFields()
+		balances[1].InitializeBalanceFields()
+		if balances[0].InflightDebitBalance.Cmp(amount) < 0 || balances[1].InflightCreditBalance.Cmp(amount) < 0 {
+			return fmt.Errorf("insufficient inflight reservation")
+		}
+	}
+
 	// Handle committed inflight transactions.
 	if transaction.Status == StatusCommit {
 		if err := balances[0].CommitInflightDebit(transaction); err != nil {
