@@ -18,7 +18,6 @@ package database
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/devaccuracy/ledgerforge/internal/apierror"
@@ -34,7 +33,7 @@ func refundableTransactionsByParentIDSQL() string {
 		SELECT
 			t.transaction_id, t.parent_transaction, t.source, t.reference, t.amount, t.precise_amount,
 			t.precision, t.currency, t.destination, t.description, t.status, t.created_at,
-			t.meta_data, t.scheduled_for, t.hash
+			ledgerforge.transaction_metadata(t.transaction_id, t.meta_data) AS meta_data, t.scheduled_for, t.hash
 		FROM
 			ledgerforge.transactions t
 		WHERE
@@ -49,8 +48,8 @@ func refundableTransactionsByParentIDSQL() string {
 
 			-- Case 3: APPLIED rows linked via QUEUED_PARENT_TRANSACTION, same refund exclusion
 			OR (t.status = 'APPLIED'
-				AND t.meta_data->>'QUEUED_PARENT_TRANSACTION' = $1
-				AND t.reference IS DISTINCT FROM t.meta_data->>'QUEUED_PARENT_TRANSACTION' || '%[1]s')
+				AND ledgerforge.transaction_execution_controls(transaction_id, execution_controls)->>'queued_parent' = $1
+				AND t.reference IS DISTINCT FROM ledgerforge.transaction_execution_controls(transaction_id, execution_controls)->>'queued_parent' || '%[1]s')
 
 		ORDER BY
 			t.created_at DESC
@@ -102,7 +101,7 @@ func (d Datasource) GetRefundableTransactionsByParentID(ctx context.Context, par
 			return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to scan transaction data", err)
 		}
 
-		err = json.Unmarshal(metaDataJSON, &transaction.MetaData)
+		err = model.DecodeTransactionMetadata(metaDataJSON, &transaction)
 		if err != nil {
 			span.RecordError(err)
 			return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to unmarshal metadata", err)

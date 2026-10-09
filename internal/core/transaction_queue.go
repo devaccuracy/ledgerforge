@@ -137,10 +137,12 @@ func (l *LedgerForge) QueueTransaction(ctx context.Context, transaction *model.T
 		}
 	} else {
 		if transaction.MetaData != nil && !transaction.SkipQueue {
+			transaction.QueuedParent = originalTxnID
 			transaction.MetaData["QUEUED_PARENT_TRANSACTION"] = originalTxnID
 		}
 
 		if strings.Contains(transaction.ParentTransaction, "bulk") {
+			transaction.QueuedParent = transaction.ParentTransaction
 			transaction.MetaData["QUEUED_PARENT_TRANSACTION"] = transaction.ParentTransaction
 		}
 		// Persist acceptance after admission and before handing work to the queue.
@@ -226,6 +228,9 @@ func (l *LedgerForge) handleSplitTransactions(ctx context.Context, transaction *
 	transactions, err := transaction.SplitTransactionPrecise(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to split transaction: %w", err)
+	}
+	for _, leg := range transactions {
+		leg.ParentKind = "group"
 	}
 	return transactions, nil
 }
@@ -398,6 +403,7 @@ func createQueueCopy(persistedTxn *model.Transaction, originalRef string) *model
 	queueTxn := *persistedTxn
 	queueTxn.TransactionID = model.GenerateUUIDWithSuffix("txn")
 	queueTxn.ParentTransaction = persistedTxn.TransactionID
+	queueTxn.ParentKind = "economic"
 	queueTxn.Reference = fmt.Sprintf("%s_q", originalRef)
 	if persistedTxn.QueueAction == StatusCommit {
 		queueTxn.Status = StatusCommit
@@ -416,6 +422,7 @@ func createQueueCopy(persistedTxn *model.Transaction, originalRef string) *model
 func updateSplitTransactions(transactions []*model.Transaction, parentID, originalRef string) {
 	for i, txn := range transactions {
 		txn.ParentTransaction = parentID
+		txn.ParentKind = "group"
 		txn.Reference = fmt.Sprintf("%s_%d", originalRef, i+1)
 	}
 }

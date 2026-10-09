@@ -77,6 +77,7 @@ func TestProcessIndexRefresh_TransactionScopeHydratesFlags(t *testing.T) {
 
 	effectiveDate := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
 	txn := &model.Transaction{
+		Inflight: true, AllowOverdraft: true,
 		TransactionID: "txn_scope",
 		Amount:        100,
 		Currency:      "USD",

@@ -211,7 +211,7 @@ func TestCanCoalesceQueuedOriginal_Coverage(t *testing.T) {
 		// rejected even though the column-level flag was false.
 		txn := eligibleQueuedTxn()
 		txn.MetaData = map[string]interface{}{"atomic": true}
-		restoreTransactionFlagsFromMetadata(txn)
+		require.NoError(t, model.DecodeTransactionMetadata([]byte(`{"__execution_controls":{"inflight":true,"atomic":true,"allow_overdraft":true}}`), txn))
 		ok, reason := l.canCoalesceQueuedOriginal(txn)
 		assert.False(t, ok)
 		assert.Equal(t, "atomic_transaction", reason)

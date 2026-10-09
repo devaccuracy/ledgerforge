@@ -18,7 +18,6 @@ package database
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -36,7 +35,7 @@ func (d Datasource) GetTransactionsByCriteria(ctx context.Context, minAmount, ma
 
 	query := `
 		SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision,
-			   currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date
+			   currency, destination, description, status, created_at, ledgerforge.transaction_metadata(transaction_id, meta_data) AS meta_data, scheduled_for, hash, effective_date
 		FROM ledgerforge.transactions
 		WHERE 1=1
 	`
@@ -117,7 +116,7 @@ func (d Datasource) GetTransactionsByCriteria(ctx context.Context, minAmount, ma
 			return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to scan transaction data", err)
 		}
 
-		if err := json.Unmarshal(metaDataJSON, &transaction.MetaData); err != nil {
+		if err := model.DecodeTransactionMetadata(metaDataJSON, transaction); err != nil {
 			span.RecordError(err)
 			return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to unmarshal metadata", err)
 		}

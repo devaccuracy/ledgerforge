@@ -152,7 +152,7 @@ func TestListTransactionsByMetadataScope(t *testing.T) {
 	)
 
 	mock.ExpectQuery(`SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision,
-			   currency, destination, description, status, created_at, effective_date, meta_data, scheduled_for, hash
+			   currency, destination, description, status, created_at, effective_date, ledgerforge\.transaction_metadata\(transaction_id, meta_data\) AS meta_data, scheduled_for, hash
 		FROM ledgerforge.transactions
 		WHERE transaction_id = \$1 OR parent_transaction = \$1
 		ORDER BY transaction_id
@@ -193,7 +193,7 @@ func TestListTransactionsByMetadataScope_NullParentAndScheduledFor(t *testing.T)
 	)
 
 	mock.ExpectQuery(`SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision,
-			   currency, destination, description, status, created_at, effective_date, meta_data, scheduled_for, hash
+			   currency, destination, description, status, created_at, effective_date, ledgerforge\.transaction_metadata\(transaction_id, meta_data\) AS meta_data, scheduled_for, hash
 		FROM ledgerforge.transactions
 		WHERE transaction_id = \$1 OR parent_transaction = \$1
 		ORDER BY transaction_id
@@ -232,7 +232,7 @@ func TestListTransactionsByMetadataScope_EffectiveDate(t *testing.T) {
 	)
 
 	mock.ExpectQuery(`SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision,
-			   currency, destination, description, status, created_at, effective_date, meta_data, scheduled_for, hash
+			   currency, destination, description, status, created_at, effective_date, ledgerforge\.transaction_metadata\(transaction_id, meta_data\) AS meta_data, scheduled_for, hash
 		FROM ledgerforge.transactions
 		WHERE transaction_id = \$1 OR parent_transaction = \$1
 		ORDER BY transaction_id

@@ -66,6 +66,7 @@ func TestProcessStuckTransaction_UsesHotLaneCoalescingWhenMarkedHot(t *testing.T
 	processor := NewQueuedTransactionRecoveryProcessor(ledgerforge)
 
 	stuckTxn := positiveStuckTxn()
+	stuckTxn.QueueLane = hotpairs.LaneHot
 	stuckTxn.MetaData = map[string]interface{}{
 		hotpairs.QueueLaneMetaKey: hotpairs.LaneHot,
 	}

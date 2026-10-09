@@ -82,7 +82,7 @@ func (d Datasource) ChainPendingTransactions(ctx context.Context, cutoff time.Ti
 			return 0, fmt.Errorf("read unchained transaction: %w", err)
 		}
 		prev := head
-		head, err = model.ComputeChainHashVersion(2, prev, r)
+		head, err = model.ComputeChainHashVersion(3, prev, r)
 		if err != nil {
 			_ = rows.Close()
 			return 0, err
@@ -106,7 +106,7 @@ func (d Datasource) ChainPendingTransactions(ctx context.Context, cutoff time.Ti
 	}
 
 	stmt, err := tx.PrepareContext(ctx,
-		`UPDATE ledgerforge.transactions SET chain_seq = $1, chain_prev_hash = $2, chain_hash = $3, chain_version = 2 WHERE id = $4 AND chain_seq IS NULL`)
+		`UPDATE ledgerforge.transactions SET chain_seq = $1, chain_prev_hash = $2, chain_hash = $3, chain_version = 3 WHERE id = $4 AND chain_seq IS NULL`)
 	if err != nil {
 		return 0, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to prepare chain update", err)
 	}
@@ -154,7 +154,7 @@ func (d Datasource) GetChainState(ctx context.Context) (*model.ChainState, error
 // GetChainedTransactionsAfter returns chained transactions in chain order with
 // chain_seq > afterSeq, for the verifier to page through from genesis.
 func (d Datasource) GetChainedTransactionsAfter(ctx context.Context, afterSeq int64, limit int) ([]model.ChainedTransaction, error) {
-	rows, err := d.Conn.QueryContext(ctx, `SELECT chain_seq, COALESCE(chain_prev_hash, ''), COALESCE(chain_hash, ''), chain_version, `+chainRowColumns+`
+	rows, err := d.Conn.QueryContext(ctx, `SELECT chain_seq, COALESCE(chain_prev_hash, ''), COALESCE(chain_hash, ''), COALESCE(chain_version, 1), `+chainRowColumns+`
  FROM ledgerforge.transactions WHERE chain_seq IS NOT NULL AND chain_seq > $1
  ORDER BY chain_seq ASC LIMIT $2`, afterSeq, limit)
 	if err != nil {
@@ -193,14 +193,20 @@ func (d Datasource) CountUnchainedTransactions(ctx context.Context, cutoff time.
 const chainRowColumns = `id::text, transaction_id, COALESCE(source, ''), COALESCE(destination, ''),
  COALESCE(amount::text, ''), COALESCE(precise_amount::text, ''),
  COALESCE(currency, ''), COALESCE(status, ''), COALESCE(reference, ''), created_at,
- COALESCE(precision::text, ''), COALESCE(rate::text, ''), COALESCE(parent_transaction, ''), effective_date`
+ COALESCE(precision::text, ''), COALESCE(rate::text, ''), COALESCE(parent_transaction, ''), effective_date, COALESCE(overdraft_limit::text, ''), COALESCE(queue_action, ''),
+ ledgerforge.transaction_execution_controls(transaction_id, execution_controls)::text, scheduled_for,
+ COALESCE((SELECT j.new_data->>'rate' FROM ledgerforge.transaction_journal j
+ JOIN ledgerforge.chain_schema_transitions transition ON transition.column_name = 'rate'
+ WHERE j.transaction_id = transactions.transaction_id AND j.action_type = 'INSERT' AND j.succeeded
+ AND j.id <= transition.last_legacy_journal_id AND transactions.execution_controls IS NULL
+ ORDER BY j.id LIMIT 1), '')`
 
 type chainScanner interface{ Scan(...interface{}) error }
 
 func chainRowTargets(r *model.ChainRow) []interface{} {
 	return []interface{}{&r.ID, &r.TransactionID, &r.Source, &r.Destination, &r.Amount,
 		&r.PreciseAmount, &r.Currency, &r.Status, &r.Reference, &r.CreatedAt,
-		&r.Precision, &r.Rate, &r.ParentTransaction, &r.EffectiveDate}
+		&r.Precision, &r.Rate, &r.ParentTransaction, &r.EffectiveDate, &r.OverdraftLimit, &r.QueueAction, &r.ExecutionControls, &r.ScheduledFor, &r.HistoricalRate}
 }
 func scanChainRow(s chainScanner) (model.ChainRow, error) {
 	var r model.ChainRow
@@ -260,7 +266,7 @@ func (d Datasource) VerifyChainSnapshotWithAnchors(ctx context.Context, progress
 		add(0, "", "unexpected genesis hash")
 	}
 	head := state.GenesisHash
-	rows, err := tx.QueryContext(ctx, `SELECT chain_seq, COALESCE(chain_prev_hash, ''), COALESCE(chain_hash, ''), chain_version, `+chainRowColumns+` FROM ledgerforge.transactions WHERE chain_seq IS NOT NULL ORDER BY chain_seq`)
+	rows, err := tx.QueryContext(ctx, `SELECT chain_seq, COALESCE(chain_prev_hash, ''), COALESCE(chain_hash, ''), COALESCE(chain_version, 1), `+chainRowColumns+` FROM ledgerforge.transactions WHERE chain_seq IS NOT NULL ORDER BY chain_seq`)
 	if err != nil {
 		return result, err
 	}
@@ -323,8 +329,12 @@ func (d Datasource) VerifyChainSnapshotWithAnchors(ctx context.Context, progress
  FROM ledgerforge.transaction_journal j LEFT JOIN ledgerforge.transactions t ON t.transaction_id = j.transaction_id
  WHERE j.action_type = 'INSERT' AND j.succeeded AND (t.id IS NULL OR EXISTS (
  SELECT 1 FROM jsonb_each(j.new_data) e
- WHERE e.key IN ('id','transaction_id','source','destination','amount','precise_amount','precision','rate','currency','status','reference','parent_transaction','effective_date','created_at')
- AND e.value IS DISTINCT FROM to_jsonb(t)->e.key)) ORDER BY j.transaction_id`)
+ WHERE e.key NOT IN ('meta_data','chain_seq','chain_prev_hash','chain_hash','chain_version')
+ AND e.value IS DISTINCT FROM to_jsonb(t)->e.key
+ AND NOT (e.key = 'rate' AND t.execution_controls IS NULL AND EXISTS (
+ SELECT 1 FROM ledgerforge.chain_schema_transitions transition
+ WHERE transition.column_name = e.key AND j.id <= transition.last_legacy_journal_id
+ AND to_jsonb(t)->e.key = transition.restored_default)))) ORDER BY j.transaction_id`)
 	if err != nil {
 		return result, err
 	}

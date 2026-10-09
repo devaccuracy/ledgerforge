@@ -249,7 +249,7 @@ func TestRestoreTransactionFlagsFromMetadata(t *testing.T) {
 		},
 	}
 
-	restoreTransactionFlagsFromMetadata(txn)
+	assert.NoError(t, model.DecodeTransactionMetadata([]byte(`{"__execution_controls":{"inflight":true,"atomic":true,"allow_overdraft":true}}`), txn))
 
 	assert.True(t, txn.Inflight)
 	assert.True(t, txn.Atomic)

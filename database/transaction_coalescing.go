@@ -19,7 +19,6 @@ package database
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -36,7 +35,7 @@ func (d Datasource) GetQueuedTransactionsForCoalescing(ctx context.Context, sour
 	defer span.End()
 
 	rows, err := d.Conn.QueryContext(ctx, `
-		SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date, rate, overdraft_limit, queue_action
+		SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, ledgerforge.transaction_metadata(transaction_id, meta_data) AS meta_data, scheduled_for, hash, effective_date, rate, overdraft_limit, queue_action
 		FROM ledgerforge.transactions t
 		WHERE t.status = 'QUEUED'
 		  AND t.source = $1
@@ -75,7 +74,7 @@ func (d Datasource) GetQueuedTransactionsForSourceCoalescing(ctx context.Context
 	defer span.End()
 
 	rows, err := d.Conn.QueryContext(ctx, `
-		SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date, rate, overdraft_limit, queue_action
+		SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, ledgerforge.transaction_metadata(transaction_id, meta_data) AS meta_data, scheduled_for, hash, effective_date, rate, overdraft_limit, queue_action
 		FROM ledgerforge.transactions t
 		WHERE t.status = 'QUEUED'
 		  AND t.source = $1
@@ -113,7 +112,7 @@ func (d Datasource) GetQueuedTransactionsForDestinationCoalescing(ctx context.Co
 	defer span.End()
 
 	rows, err := d.Conn.QueryContext(ctx, `
-		SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date, rate, overdraft_limit, queue_action
+		SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, ledgerforge.transaction_metadata(transaction_id, meta_data) AS meta_data, scheduled_for, hash, effective_date, rate, overdraft_limit, queue_action
 		FROM ledgerforge.transactions t
 		WHERE t.status = 'QUEUED'
 		  AND t.destination = $1
@@ -167,7 +166,7 @@ func scanQueuedTransactionsForCoalescing(rows *sql.Rows) ([]*model.Transaction, 
 			return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to scan queued transaction for coalescing", err)
 		}
 
-		if err := json.Unmarshal(metaDataJSON, &txn.MetaData); err != nil {
+		if err := model.DecodeTransactionMetadata(metaDataJSON, txn); err != nil {
 			return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to unmarshal metadata", err)
 		}
 
@@ -200,7 +199,7 @@ func (d Datasource) CountQueuedTransactionsForPairLane(ctx context.Context, sour
 		  AND t.source = $1
 		  AND t.destination = $2
 		  AND t.currency = $3
-		  AND COALESCE(t.meta_data->>'queue_lane', 'normal') = $4
+		  AND COALESCE(ledgerforge.transaction_execution_controls(t.transaction_id, t.execution_controls)->>'queue_lane', 'normal') = $4
 		  AND NOT EXISTS (
 		      SELECT 1 FROM ledgerforge.transactions child
 		      WHERE child.parent_transaction = t.transaction_id

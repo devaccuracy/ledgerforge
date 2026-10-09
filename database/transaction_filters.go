@@ -18,7 +18,6 @@ package database
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -71,7 +70,7 @@ func (d Datasource) GetAllTransactionsWithFilterAndOptions(ctx context.Context, 
 	}
 
 	// Determine select fields based on whether count is requested
-	selectFields := "transaction_id, source, reference, amount, precise_amount, precision, currency, destination, description, status, hash, created_at, effective_date, meta_data, COALESCE(parent_transaction, '') AS parent_transaction"
+	selectFields := "transaction_id, source, reference, amount, precise_amount, precision, currency, destination, description, status, hash, created_at, effective_date, ledgerforge.transaction_metadata(transaction_id, meta_data) AS meta_data, COALESCE(parent_transaction, '') AS parent_transaction"
 	if opts != nil && opts.IncludeCount {
 		selectFields += ", COUNT(*) OVER() AS total_count"
 	}
@@ -169,7 +168,7 @@ func (d Datasource) GetAllTransactionsWithFilterAndOptions(ctx context.Context, 
 			return nil, nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to scan transaction data", err)
 		}
 
-		err = json.Unmarshal(metaDataJSON, &transaction.MetaData)
+		err = model.DecodeTransactionMetadata(metaDataJSON, &transaction)
 		if err != nil {
 			span.RecordError(err)
 			return nil, nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to unmarshal metadata", err)

@@ -289,6 +289,7 @@ func (l *LedgerForge) queueReleaseTransaction(ctx context.Context, txn *model.Tr
 		Precision:     txn.Precision,
 		Reference:     releaseReference(txn.Reference, mapping.Provider),
 		Description:   fmt.Sprintf("Release %s funds", mapping.Provider),
+		ShadowFor:     txn.TransactionID,
 		MetaData: map[string]interface{}{
 			"_shadow_for":   txn.TransactionID,
 			"_provider":     mapping.Provider,
@@ -414,6 +415,7 @@ func (l *LedgerForge) queueReceiveTransaction(ctx context.Context, txn *model.Tr
 		Precision:     txn.Precision,
 		Reference:     receiveReference(txn.Reference, mapping.Provider),
 		Description:   fmt.Sprintf("Receive %s funds", mapping.Provider),
+		ShadowFor:     txn.TransactionID,
 		MetaData: map[string]interface{}{
 			"_shadow_for":   txn.TransactionID,
 			"_provider":     mapping.Provider,

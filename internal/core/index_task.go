@@ -96,7 +96,6 @@ func (l *LedgerForge) fetchEntityForIndex(ctx context.Context, collection, docum
 		if err != nil {
 			return nil, err
 		}
-		prepareTransactionForSearchIndex(txn)
 		return txn, nil
 	default:
 		return nil, fmt.Errorf("unsupported refresh collection: %s", collection)
@@ -115,7 +114,6 @@ func (l *LedgerForge) refreshTransactionMetadataScope(ctx context.Context, scope
 			return nil
 		}
 		for _, txn := range txns {
-			prepareTransactionForSearchIndex(txn)
 			if err := upsert(ctx, "transactions", txn); err != nil {
 				return err
 			}

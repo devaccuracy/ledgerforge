@@ -2,8 +2,10 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/devaccuracy/ledgerforge/internal/apierror"
+	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/gin-gonic/gin"
 )
 
@@ -36,6 +38,13 @@ func (a Api) UpdateMetadata(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondCode(c, apierror.ErrGenMalformedRequest, err.Error(), nil)
 		return
+	}
+
+	if strings.HasPrefix(entityID, "txn_") || strings.HasPrefix(entityID, "bulk_") {
+		if err := model.ValidateCustomerTransactionMetadata(req.Metadata); err != nil {
+			respondCode(c, apierror.ErrGenValidation, err.Error(), nil)
+			return
+		}
 	}
 
 	// Known conditions (entity not found, unsupported entity type, invalid

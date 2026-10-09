@@ -18,7 +18,6 @@ package database
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math/big"
 	"time"
@@ -137,7 +136,7 @@ func (d Datasource) GetTransactionsByParent(ctx context.Context, parentID string
 	// If not in cache, query the database
 	rows, err := d.Conn.QueryContext(ctx, `
 		SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision,
-			   currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date
+			   currency, destination, description, status, created_at, ledgerforge.transaction_metadata(transaction_id, meta_data) AS meta_data, scheduled_for, hash, effective_date
 		FROM ledgerforge.transactions
 		WHERE parent_transaction = $1
 		ORDER BY created_at DESC
@@ -183,7 +182,7 @@ func (d Datasource) GetTransactionsByParent(ctx context.Context, parentID string
 			return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to scan transaction data", err)
 		}
 
-		err = json.Unmarshal(metaDataJSON, &transaction.MetaData)
+		err = model.DecodeTransactionMetadata(metaDataJSON, transaction)
 		if err != nil {
 			span.RecordError(err)
 			return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to unmarshal metadata", err)

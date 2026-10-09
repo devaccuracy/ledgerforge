@@ -61,10 +61,12 @@ func assertSealed(t *testing.T, ds database.IDataSource, txnID string) (int64, s
 		       transaction_id, COALESCE(source, ''), COALESCE(destination, ''),
 		       COALESCE(amount::text, ''), COALESCE(precise_amount::text, ''),
 		       COALESCE(currency, ''), COALESCE(status, ''), COALESCE(reference, ''),
-		       created_at, id::text, precision::text, rate::text, COALESCE(parent_transaction, ''), effective_date, chain_version
+		       created_at, id::text, precision::text, rate::text, COALESCE(parent_transaction, ''), effective_date, COALESCE(chain_version,1), overdraft_limit::text, queue_action, ledgerforge.transaction_execution_controls(transaction_id,execution_controls)::text, scheduled_for,
+ COALESCE((SELECT j.new_data->>'rate' FROM ledgerforge.transaction_journal j JOIN ledgerforge.chain_schema_transitions transition ON transition.column_name='rate'
+ WHERE j.transaction_id=transactions.transaction_id AND j.action_type='INSERT' AND j.succeeded AND j.id<=transition.last_legacy_journal_id AND transactions.execution_controls IS NULL ORDER BY j.id LIMIT 1),'')
 		FROM ledgerforge.transactions WHERE transaction_id = $1`, txnID).
 		Scan(&seq, &prev, &stored, &r.TransactionID, &r.Source, &r.Destination,
-			&r.Amount, &r.PreciseAmount, &r.Currency, &r.Status, &r.Reference, &r.CreatedAt, &r.ID, &r.Precision, &r.Rate, &r.ParentTransaction, &r.EffectiveDate, &version)
+			&r.Amount, &r.PreciseAmount, &r.Currency, &r.Status, &r.Reference, &r.CreatedAt, &r.ID, &r.Precision, &r.Rate, &r.ParentTransaction, &r.EffectiveDate, &version, &r.OverdraftLimit, &r.QueueAction, &r.ExecutionControls, &r.ScheduledFor, &r.HistoricalRate)
 	require.NoError(t, err)
 	require.Greater(t, seq, int64(0), "txn %s must be chained", txnID)
 	require.NotEmpty(t, stored)

@@ -79,10 +79,10 @@ func (l *LedgerForge) processLineage(ctx context.Context, txn *model.Transaction
 // Returns:
 // - string: The provider identifier, or empty string if not set.
 func (l *LedgerForge) getLineageProvider(txn *model.Transaction) string {
-	if txn.MetaData == nil {
+	if txn.ExecutionMetadata() == nil {
 		return ""
 	}
-	provider, ok := txn.MetaData[LineageProviderKey].(string)
+	provider, ok := txn.ExecutionMetadata()[LineageProviderKey].(string)
 	if !ok {
 		return ""
 	}

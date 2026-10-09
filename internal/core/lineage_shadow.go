@@ -127,8 +127,8 @@ func (l *LedgerForge) inflightTransactionNeedsShadowWork(ctx context.Context, tx
 	if txn == nil {
 		return false
 	}
-	if txn.MetaData != nil {
-		if _, isShadow := txn.MetaData["_lineage_type"]; isShadow {
+	if txn.ExecutionMetadata() != nil {
+		if _, isShadow := txn.ExecutionMetadata()["_lineage_type"]; isShadow {
 			return false
 		}
 		if _, hasAlloc := txn.MetaData[LineageFundAllocation]; hasAlloc {

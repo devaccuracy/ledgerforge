@@ -54,14 +54,8 @@ func (l *LedgerForge) RefundWorker(ctx context.Context, jobs <-chan *model.Trans
 // job with an explicit skipQueue decision, rather than inheriting it
 // from the original transaction.
 //
-// This exists because skip_queue is a request-time routing flag and is
-// deliberately NOT persisted (see Transaction Lifecycle docs). The
-// original transaction fetched from storage for a refund therefore
-// always deserializes SkipQueue=false, so the plain RefundWorker can
-// never produce a synchronous refund. RefundWorkerWithOptions lets the
-// caller — e.g. the /refund-transaction API handler honoring a
-// "skip_queue" field in the request body — choose synchronous
-// processing for time-sensitive refunds.
+// The caller can choose synchronous processing for the reversal independently
+// of the immutable routing decision on the original transaction.
 //
 // RefundWorker is left unchanged; this is purely additive.
 // RefundWorkerWithRefundOptions returns a transactionWorker that refunds each
@@ -200,6 +194,7 @@ func prepareRefundTransaction(originalTxn *model.Transaction, opts RefundOptions
 	newTransaction.TransactionID = model.GenerateUUIDWithSuffix("txn")
 	newTransaction.Reference = model.RefundReference(originalTxn.TransactionID)
 	newTransaction.ParentTransaction = originalTxn.TransactionID
+	newTransaction.ParentKind = "economic"
 	newTransaction.Source = originalTxn.Destination // Swap source and destination
 	newTransaction.Destination = originalTxn.Source
 	newTransaction.AllowOverdraft = true

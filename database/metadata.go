@@ -75,7 +75,7 @@ func (d *Datasource) ListTransactionsByMetadataScope(ctx context.Context, scopeI
 
 	rows, err := d.Conn.QueryContext(ctx, `
 		SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision,
-			   currency, destination, description, status, created_at, effective_date, meta_data, scheduled_for, hash
+			   currency, destination, description, status, created_at, effective_date, ledgerforge.transaction_metadata(transaction_id, meta_data) AS meta_data, scheduled_for, hash
 		FROM ledgerforge.transactions
 		WHERE transaction_id = $1 OR parent_transaction = $1
 		ORDER BY transaction_id
@@ -127,7 +127,7 @@ func (d *Datasource) ListTransactionsByMetadataScope(ctx context.Context, scopeI
 		// After UpdateTransactionMetadata the column is an object, so this is
 		// only a guard for legacy/empty rows in the same scope.
 		if len(metaDataJSON) > 0 {
-			if err := json.Unmarshal(metaDataJSON, &transaction.MetaData); err != nil {
+			if err := model.DecodeTransactionMetadata(metaDataJSON, transaction); err != nil {
 				return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to unmarshal metadata", err)
 			}
 		}

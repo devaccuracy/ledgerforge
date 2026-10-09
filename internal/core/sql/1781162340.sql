@@ -13,17 +13,26 @@
 -- limitations under the License.
 
 -- +migrate Up
--- The current engine has unit-rate legs. Persist that effective rate as audit
--- evidence; the compatibility request field remains ignored by arithmetic.
+-- Retain rate as historical audit evidence. Current arithmetic ignores this
+-- compatibility request field; execution controls identify that schema.
+CREATE TABLE ledgerforge.chain_schema_transitions (
+ column_name TEXT PRIMARY KEY,
+ restored_default JSONB NOT NULL,
+ last_legacy_journal_id BIGINT NOT NULL
+);
+INSERT INTO ledgerforge.chain_schema_transitions
+SELECT 'rate', '1'::jsonb, COALESCE(max(id),0) FROM ledgerforge.transaction_journal
+WHERE action_type = 'INSERT' AND succeeded
+HAVING NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'ledgerforge' AND table_name = 'transactions' AND column_name = 'rate');
 ALTER TABLE ledgerforge.transactions ADD COLUMN IF NOT EXISTS rate NUMERIC NOT NULL DEFAULT 1;
 ALTER TABLE ledgerforge.transactions ADD COLUMN chain_version SMALLINT;
-UPDATE ledgerforge.transactions SET chain_version = 1 WHERE chain_seq IS NOT NULL;
+-- NULL version on an existing sealed row denotes v1; no whole-table backfill.
 ALTER TABLE ledgerforge.transactions ADD CONSTRAINT transaction_chain_complete CHECK (
     (chain_seq IS NULL AND chain_prev_hash IS NULL AND chain_hash IS NULL AND chain_version IS NULL)
-    OR (chain_seq IS NOT NULL AND chain_seq > 0 AND chain_version IS NOT NULL AND chain_version IN (1, 2)
+    OR (chain_seq IS NOT NULL AND chain_seq > 0 AND COALESCE(chain_version, 1) IN (1, 2, 3)
         AND chain_prev_hash IS NOT NULL AND chain_prev_hash ~ '^[0-9a-f]{64}$'
         AND chain_hash IS NOT NULL AND chain_hash ~ '^[0-9a-f]{64}$')
-);
+) NOT VALID;
 CREATE TABLE ledgerforge.chain_checkpoints (
     sequence BIGINT PRIMARY KEY CHECK (sequence > 0),
     entry_count BIGINT NOT NULL CHECK (entry_count = sequence),
@@ -32,9 +41,6 @@ CREATE TABLE ledgerforge.chain_checkpoints (
 );
 INSERT INTO ledgerforge.chain_checkpoints (sequence, entry_count, head_hash)
 SELECT last_seq, last_seq, head_hash FROM ledgerforge.chain_state WHERE last_seq > 0;
-CREATE INDEX IF NOT EXISTS idx_journal_insert_transaction ON ledgerforge.transaction_journal (transaction_id)
-WHERE action_type = 'INSERT' AND succeeded;
-
 -- +migrate StatementBegin
 CREATE OR REPLACE FUNCTION ledgerforge.prevent_transaction_update()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
@@ -66,7 +72,8 @@ FOR EACH ROW EXECUTE FUNCTION ledgerforge.prevent_transaction_update();
 -- Retain the financial/DELETE protection and sealed v1 bookkeeping policy.
 -- The optional JSON lookup above also works after chain_version is removed.
 DROP TABLE ledgerforge.chain_checkpoints;
+DROP TABLE ledgerforge.chain_schema_transitions;
 DROP INDEX IF EXISTS ledgerforge.idx_journal_insert_transaction;
 ALTER TABLE ledgerforge.transactions DROP CONSTRAINT transaction_chain_complete;
 ALTER TABLE ledgerforge.transactions DROP COLUMN chain_version;
-ALTER TABLE ledgerforge.transactions DROP COLUMN rate;
+-- Historical rate belongs to the base schema and must survive rollback.

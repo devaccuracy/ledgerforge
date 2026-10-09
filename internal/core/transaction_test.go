@@ -224,7 +224,7 @@ func TestRecordTransaction(t *testing.T) {
 	// Expect transaction insertion within the same atomic transaction.
 	// RecordTransaction applies precision before persist, so amount is the
 	// materialised AmountString ("10"), not the empty value on the input txn.
-	expectedSQL := `INSERT INTO ledgerforge.transactions(transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date, rate, overdraft_limit, queue_action) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`
+	expectedSQL := `INSERT INTO ledgerforge.transactions(transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date, rate, overdraft_limit, queue_action, execution_controls) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`
 	mock.ExpectExec(regexp.QuoteMeta(expectedSQL)).WithArgs(
 		sqlmock.AnyArg(), // transaction_id
 		sqlmock.AnyArg(), // parent_transaction
@@ -243,6 +243,7 @@ func TestRecordTransaction(t *testing.T) {
 		sqlmock.AnyArg(), // hash
 		sqlmock.AnyArg(), // effective_date
 		sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+		sqlmock.AnyArg(), // execution_controls
 	).WillReturnResult(sqlmock.NewResult(1, 1))
 
 	// Commit atomic transaction (balance updates + transaction insert)
@@ -345,13 +346,14 @@ func TestRecordTransaction_AtomicRollback_InsertFails(t *testing.T) {
 		sqlmock.AnyArg(), sqlmock.AnyArg(),
 	).WillReturnResult(sqlmock.NewResult(1, 1))
 
-	expectedSQL := `INSERT INTO ledgerforge.transactions(transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date, rate, overdraft_limit, queue_action) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`
+	expectedSQL := `INSERT INTO ledgerforge.transactions(transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date, rate, overdraft_limit, queue_action, execution_controls) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`
 	mock.ExpectExec(regexp.QuoteMeta(expectedSQL)).WithArgs(
 		sqlmock.AnyArg(), sqlmock.AnyArg(), source, reference,
 		sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
 		destination, sqlmock.AnyArg(), sqlmock.AnyArg(),
 		sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
 		sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+		sqlmock.AnyArg(), // execution_controls
 	).WillReturnError(fmt.Errorf("database connection lost - simulated failure"))
 
 	mock.ExpectRollback()
@@ -556,7 +558,7 @@ func TestVoidInflightTransaction_Negative(t *testing.T) {
 	t.Run("Transaction not in INFLIGHT status", func(t *testing.T) {
 		transactionID := gofakeit.UUID()
 
-		mock.ExpectQuery(regexp.QuoteMeta(`SELECT transaction_id, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, parent_transaction, hash, effective_date, rate, overdraft_limit, queue_action FROM ledgerforge.transactions WHERE transaction_id = $1`)).
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT transaction_id, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, ledgerforge.transaction_metadata(transaction_id, meta_data) AS meta_data, parent_transaction, hash, effective_date, rate, overdraft_limit, queue_action FROM ledgerforge.transactions WHERE transaction_id = $1`)).
 			WithArgs(transactionID).
 			WillReturnRows(sqlmock.NewRows([]string{"transaction_id", "source", "reference", "amount", "precise_amount", "precision", "currency", "destination", "description", "status", "created_at", "meta_data", "parent_transaction", "hash", "effective_date", "rate", "overdraft_limit", "queue_action"}).
 				AddRow(transactionID, source, gofakeit.UUID(), 100.0, 10000, 100, "USD", destination, gofakeit.UUID(), "APPLIED", time.Now(), metaDataJSON, "", "", nil, 0, 0, ""))
@@ -569,7 +571,7 @@ func TestVoidInflightTransaction_Negative(t *testing.T) {
 	t.Run("Transaction already voided", func(t *testing.T) {
 		transactionID := gofakeit.UUID()
 
-		mock.ExpectQuery(regexp.QuoteMeta(`SELECT transaction_id, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, parent_transaction, hash, effective_date, rate, overdraft_limit, queue_action FROM ledgerforge.transactions WHERE transaction_id = $1`)).
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT transaction_id, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, ledgerforge.transaction_metadata(transaction_id, meta_data) AS meta_data, parent_transaction, hash, effective_date, rate, overdraft_limit, queue_action FROM ledgerforge.transactions WHERE transaction_id = $1`)).
 			WithArgs(transactionID).
 			WillReturnRows(sqlmock.NewRows([]string{"transaction_id", "source", "reference", "amount", "precise_amount", "precision", "currency", "destination", "description", "status", "created_at", "meta_data", "parent_transaction", "hash", "effective_date", "rate", "overdraft_limit", "queue_action"}).
 				AddRow(transactionID, source, gofakeit.UUID(), 100.0, 10000, 100, "USD", destination, gofakeit.UUID(), "INFLIGHT", time.Now(), metaDataJSON, "", "", nil, 0, 0, ""))
@@ -6780,13 +6782,8 @@ func TestGetBalanceAtTime_Mock(t *testing.T) {
 // honors an explicit skipQueue decision regardless of the SkipQueue
 // value on the queued job.
 //
-// This is the regression guard for the /refund-transaction API gap:
-// skip_queue is a request-time routing flag and is not persisted, so a
-// transaction fetched from storage for a refund always has
-// SkipQueue=false. The plain RefundWorker therefore can never produce a
-// synchronous refund. RefundWorkerWithOptions(true) must apply the
-// refund immediately (APPLIED) even though the job's own SkipQueue is
-// false.
+// The persisted original routing decision survives database reads. Explicit
+// reversal options still override it for this new operation.
 func TestRefundWorkerWithOptions(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping refund worker test in short mode")
@@ -6847,14 +6844,11 @@ func TestRefundWorkerWithOptions(t *testing.T) {
 	appliedEntry, err := ds.GetTransactionByRef(ctx, txnRef)
 	require.NoError(t, err, "Failed to get transaction by reference")
 
-	// Fetch the transaction object the way the API path does. As
-	// documented, SkipQueue is NOT persisted, so this is false here —
-	// that is precisely the condition under which the plain
-	// RefundWorker cannot produce a synchronous refund.
 	txnObj, err := ds.GetTransaction(ctx, appliedEntry.TransactionID)
-	require.NoError(t, err, "Failed to get transaction by ID")
-	require.False(t, txnObj.SkipQueue,
-		"DB-fetched transaction must have SkipQueue=false (skip_queue is not persisted)")
+	require.NoError(t, err)
+	require.True(t, txnObj.SkipQueue, "original routing decision must survive a DB read")
+	// Explicit worker options are independent of the original decision.
+	txnObj.SkipQueue = false
 
 	var wg sync.WaitGroup
 	wg.Add(1)

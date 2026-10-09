@@ -12,12 +12,9 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 
--- Drop unused columns: the per-transaction FX `rate`, and `currency_multiplier`
--- and `modification_ref` on balances. None was read by any computation; `rate`
--- additionally broke inflight commit (rated on hold, un-rated on commit), and
--- `modification_ref` was never referenced by any code or SQL object. The
--- get_balances_by_id function references currency_multiplier, so it is
--- recreated without the column first.
+-- Drop unused balance columns. Keep the per-transaction rate as historical
+-- audit evidence, although current arithmetic ignores it. The balance lookup
+-- function is recreated before removing currency_multiplier.
 
 -- +migrate Up
 DROP FUNCTION IF EXISTS ledgerforge.get_balances_by_id(TEXT, TEXT);
@@ -35,7 +32,7 @@ $$;
 -- +migrate StatementEnd
 
 -- +migrate Up
-ALTER TABLE ledgerforge.transactions DROP COLUMN IF EXISTS rate;
+-- Retain historical rate as financial audit evidence; arithmetic ignores it.
 ALTER TABLE ledgerforge.balances DROP COLUMN IF EXISTS currency_multiplier;
 ALTER TABLE ledgerforge.balances DROP COLUMN IF EXISTS modification_ref;
 

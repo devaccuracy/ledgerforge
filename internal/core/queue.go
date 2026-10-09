@@ -375,7 +375,7 @@ func (q *Queue) geTask(transaction *model.Transaction, payload []byte) *asynq.Ta
 
 func (q *Queue) transactionQueueName(transaction *model.Transaction) string {
 	if q.config.Queue.EnableHotLane && transaction != nil && transaction.MetaData != nil {
-		if hotpairs.QueueLaneFromMetadata(transaction.MetaData) == hotpairs.LaneHot {
+		if transaction.QueueLane == hotpairs.LaneHot {
 			metrics.HotpairsLaneRoutedTotal.Add(context.Background(), 1,
 				otelmetric.WithAttributes(attribute.String("lane", "hot")),
 			)

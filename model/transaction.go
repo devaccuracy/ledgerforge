@@ -55,6 +55,12 @@ type distributionState struct {
 
 // Transaction represents a financial transaction between source and destination balances.
 type Transaction struct {
+	ParentKind       string                 `json:"-"`
+	QueuedParent     string                 `json:"queued_parent,omitempty"`
+	QueueLane        string                 `json:"queue_lane,omitempty"`
+	ShadowFor        string                 `json:"-"`
+	ReservedMetadata map[string]interface{} `json:"-"`
+
 	// Rate is retained for client compatibility; ledger arithmetic does not use it.
 	Rate               float64                `json:"rate"`
 	ID                 int64                  `json:"-"`

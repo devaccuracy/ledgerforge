@@ -72,37 +72,45 @@ func TestAuditUnifiedImmutabilityPolicy(t *testing.T) {
 	require.Equal(t, 1, count, "an unsealed row must accept all chain bookkeeping, including chain_version")
 	assertSealed()
 
-	// Roll back through the lifecycle migration by ID, including any successors.
-	// The rate and chain policy belong to an earlier migration and must survive.
+	// Target lifecycle by ID while retaining later audit columns and their data.
+	// IgnoreUnknown is confined to this bounded test source: other migration
+	// records remain applied and are checked against the full source afterwards.
 	const lifecycleID = "1791500001.sql"
 	const lifecycleVersion int64 = 1791500001
 	migrations := migrate.EmbedFileSystemMigrationSource{FileSystem: SQLFiles, Root: "sql"}
-	migrationSet := migrate.MigrationSet{SchemaName: "ledgerforge"}
-	plan, _, err := migrationSet.PlanMigrationToVersion(ds.Conn, "postgres", migrations, migrate.Down, lifecycleVersion)
+	all, err := migrations.FindMigrations()
 	require.NoError(t, err)
-	require.NotEmpty(t, plan)
-	require.Equal(t, lifecycleID, plan[len(plan)-1].Id)
-	count, err = migrationSet.ExecVersion(ds.Conn, "postgres", migrations, migrate.Down, lifecycleVersion)
+	var lifecycle *migrate.Migration
+	for _, migration := range all {
+		if migration.Id == lifecycleID {
+			lifecycle = migration
+		}
+	}
+	require.NotNil(t, lifecycle)
+	bounded := migrate.MemoryMigrationSource{Migrations: []*migrate.Migration{lifecycle}}
+	set := migrate.MigrationSet{SchemaName: "ledgerforge", IgnoreUnknown: true}
+	plan, _, err := set.PlanMigrationToVersion(ds.Conn, "postgres", bounded, migrate.Down, lifecycleVersion)
 	require.NoError(t, err)
-	require.Equal(t, len(plan), count)
+	require.Len(t, plan, 1)
+	require.Equal(t, lifecycleID, plan[0].Id)
+	count, err = set.ExecVersion(ds.Conn, "postgres", bounded, migrate.Down, lifecycleVersion)
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
 	var lifecycleApplied, claimsExist bool
-	require.NoError(t, ds.Conn.QueryRow(`SELECT EXISTS (SELECT 1 FROM ledgerforge.gorp_migrations WHERE id = $1),
-        to_regclass('ledgerforge.refund_claims') IS NOT NULL`, lifecycleID).Scan(&lifecycleApplied, &claimsExist))
-	require.False(t, lifecycleApplied, "the lifecycle migration itself must have been rolled back")
-	require.False(t, claimsExist, "rolling back a successor alone does not exercise lifecycle Down")
+	require.NoError(t, ds.Conn.QueryRow(`SELECT EXISTS (SELECT 1 FROM ledgerforge.gorp_migrations WHERE id=$1), to_regclass('ledgerforge.refund_claims') IS NOT NULL`, lifecycleID).Scan(&lifecycleApplied, &claimsExist))
+	require.False(t, lifecycleApplied)
+	require.False(t, claimsExist)
 	assertPolicy()
 	assertSealed()
-	count, err = migrationSet.ExecVersion(ds.Conn, "postgres", migrations, migrate.Up, lifecycleVersion)
+	count, err = set.Exec(ds.Conn, "postgres", bounded, migrate.Up)
 	require.NoError(t, err)
 	require.Equal(t, 1, count)
 	assertPolicy()
 	assertSealed()
-	count, err = migrationSet.Exec(ds.Conn, "postgres", migrations, migrate.Up)
+	count, err = (migrate.MigrationSet{SchemaName: "ledgerforge"}).Exec(ds.Conn, "postgres", migrations, migrate.Up)
 	require.NoError(t, err)
-	require.Equal(t, len(plan)-1, count, "reapply exactly the rolled-back successors")
-	count, err = migrationSet.Exec(ds.Conn, "postgres", migrations, migrate.Up)
-	require.NoError(t, err)
-	require.Zero(t, count, "migrate up remains idempotent")
+	require.Zero(t, count, "full migration set remains idempotent")
+
 	result, err := ds.VerifyChainSnapshot(ctx, nil)
 	require.NoError(t, err)
 	require.True(t, result.Verified, "%+v", result.Tampering)

@@ -18,7 +18,6 @@ package database
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -49,7 +48,7 @@ func (d Datasource) GetTransactionsPaginated(ctx context.Context, _ string, batc
 
 	// If not found in cache, fetch from the database
 	rows, err := d.Conn.QueryContext(ctx, `
-        SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date
+        SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, ledgerforge.transaction_metadata(transaction_id, meta_data) AS meta_data, scheduled_for, hash, effective_date
         FROM ledgerforge.transactions
         ORDER BY created_at ASC
         LIMIT $1 OFFSET $2
@@ -94,7 +93,7 @@ func (d Datasource) GetTransactionsPaginated(ctx context.Context, _ string, batc
 			return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to scan transaction data", err)
 		}
 
-		err = json.Unmarshal(metaDataJSON, &transaction.MetaData)
+		err = model.DecodeTransactionMetadata(metaDataJSON, transaction)
 		if err != nil {
 			span.RecordError(err)
 			return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to unmarshal metadata", err)
@@ -205,7 +204,7 @@ func (d Datasource) GroupTransactions(ctx context.Context, groupCriteria string,
 			return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to scan transaction data", err)
 		}
 
-		if err := json.Unmarshal(metaDataJSON, &transaction.MetaData); err != nil {
+		if err := model.DecodeTransactionMetadata(metaDataJSON, transaction); err != nil {
 			span.RecordError(err)
 			return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to unmarshal metadata", err)
 		}
@@ -243,7 +242,7 @@ func groupedTransactionsQuery(groupCriteria string) (string, bool) {
 		return `
         SELECT transaction_id::text AS group_key, transaction_id, parent_transaction, source, reference,
                amount, precise_amount, precision, currency, destination,
-               description, status, created_at, meta_data, scheduled_for, hash, effective_date
+               description, status, created_at, ledgerforge.transaction_metadata(transaction_id, meta_data) AS meta_data, scheduled_for, hash, effective_date
         FROM ledgerforge.transactions
         WHERE transaction_id::text IS NOT NULL AND transaction_id::text != ''
         ORDER BY transaction_id::text
@@ -253,7 +252,7 @@ func groupedTransactionsQuery(groupCriteria string) (string, bool) {
 		return `
         SELECT parent_transaction::text AS group_key, transaction_id, parent_transaction, source, reference,
                amount, precise_amount, precision, currency, destination,
-               description, status, created_at, meta_data, scheduled_for, hash, effective_date
+               description, status, created_at, ledgerforge.transaction_metadata(transaction_id, meta_data) AS meta_data, scheduled_for, hash, effective_date
         FROM ledgerforge.transactions
         WHERE parent_transaction::text IS NOT NULL AND parent_transaction::text != ''
         ORDER BY parent_transaction::text
@@ -263,7 +262,7 @@ func groupedTransactionsQuery(groupCriteria string) (string, bool) {
 		return `
         SELECT source::text AS group_key, transaction_id, parent_transaction, source, reference,
                amount, precise_amount, precision, currency, destination,
-               description, status, created_at, meta_data, scheduled_for, hash, effective_date
+               description, status, created_at, ledgerforge.transaction_metadata(transaction_id, meta_data) AS meta_data, scheduled_for, hash, effective_date
         FROM ledgerforge.transactions
         WHERE source::text IS NOT NULL AND source::text != ''
         ORDER BY source::text
@@ -273,7 +272,7 @@ func groupedTransactionsQuery(groupCriteria string) (string, bool) {
 		return `
         SELECT reference::text AS group_key, transaction_id, parent_transaction, source, reference,
                amount, precise_amount, precision, currency, destination,
-               description, status, created_at, meta_data, scheduled_for, hash, effective_date
+               description, status, created_at, ledgerforge.transaction_metadata(transaction_id, meta_data) AS meta_data, scheduled_for, hash, effective_date
         FROM ledgerforge.transactions
         WHERE reference::text IS NOT NULL AND reference::text != ''
         ORDER BY reference::text
@@ -283,7 +282,7 @@ func groupedTransactionsQuery(groupCriteria string) (string, bool) {
 		return `
         SELECT currency::text AS group_key, transaction_id, parent_transaction, source, reference,
                amount, precise_amount, precision, currency, destination,
-               description, status, created_at, meta_data, scheduled_for, hash, effective_date
+               description, status, created_at, ledgerforge.transaction_metadata(transaction_id, meta_data) AS meta_data, scheduled_for, hash, effective_date
         FROM ledgerforge.transactions
         WHERE currency::text IS NOT NULL AND currency::text != ''
         ORDER BY currency::text
@@ -293,7 +292,7 @@ func groupedTransactionsQuery(groupCriteria string) (string, bool) {
 		return `
         SELECT destination::text AS group_key, transaction_id, parent_transaction, source, reference,
                amount, precise_amount, precision, currency, destination,
-               description, status, created_at, meta_data, scheduled_for, hash, effective_date
+               description, status, created_at, ledgerforge.transaction_metadata(transaction_id, meta_data) AS meta_data, scheduled_for, hash, effective_date
         FROM ledgerforge.transactions
         WHERE destination::text IS NOT NULL AND destination::text != ''
         ORDER BY destination::text
@@ -303,7 +302,7 @@ func groupedTransactionsQuery(groupCriteria string) (string, bool) {
 		return `
         SELECT status::text AS group_key, transaction_id, parent_transaction, source, reference,
                amount, precise_amount, precision, currency, destination,
-               description, status, created_at, meta_data, scheduled_for, hash, effective_date
+               description, status, created_at, ledgerforge.transaction_metadata(transaction_id, meta_data) AS meta_data, scheduled_for, hash, effective_date
         FROM ledgerforge.transactions
         WHERE status::text IS NOT NULL AND status::text != ''
         ORDER BY status::text
@@ -313,7 +312,7 @@ func groupedTransactionsQuery(groupCriteria string) (string, bool) {
 		return `
         SELECT created_at::text AS group_key, transaction_id, parent_transaction, source, reference,
                amount, precise_amount, precision, currency, destination,
-               description, status, created_at, meta_data, scheduled_for, hash, effective_date
+               description, status, created_at, ledgerforge.transaction_metadata(transaction_id, meta_data) AS meta_data, scheduled_for, hash, effective_date
         FROM ledgerforge.transactions
         WHERE created_at::text IS NOT NULL AND created_at::text != ''
         ORDER BY created_at::text
@@ -344,17 +343,17 @@ func (d Datasource) GetInflightTransactionsByParentID(ctx context.Context, paren
 	rows, err := d.Conn.QueryContext(ctx, `
 		WITH inflight_transactions AS (
 			SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision,
-				   currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date
+				   currency, destination, description, status, created_at, ledgerforge.transaction_metadata(transaction_id, meta_data) AS meta_data, scheduled_for, hash, effective_date
 			FROM ledgerforge.transactions
-			WHERE (transaction_id = $1 OR parent_transaction = $1 OR meta_data->>'QUEUED_PARENT_TRANSACTION' = $1)
+			WHERE (transaction_id = $1 OR parent_transaction = $1 OR ledgerforge.transaction_execution_controls(transaction_id, execution_controls)->>'queued_parent' = $1)
 			AND status = 'INFLIGHT'
 		),
 		queued_inflight_transactions AS (
 			SELECT t.transaction_id, t.parent_transaction, t.source, t.reference, t.amount, t.precise_amount, t.precision,
-				   t.currency, t.destination, t.description, t.status, t.created_at, t.meta_data, t.scheduled_for, t.hash, t.effective_date
+				   t.currency, t.destination, t.description, t.status, t.created_at, ledgerforge.transaction_metadata(t.transaction_id, t.meta_data) AS meta_data, t.scheduled_for, t.hash, t.effective_date
 			FROM ledgerforge.transactions t
 			WHERE (t.transaction_id = $1 OR t.parent_transaction = $1)
-			AND t.status = 'QUEUED' AND t.meta_data->>'inflight' = 'true'
+			AND t.status = 'QUEUED' AND ledgerforge.transaction_execution_controls(t.transaction_id, t.execution_controls)->>'inflight' = 'true'
 			-- Don't include transactions that have been rejected (check by reference with _q suffix)
 			AND NOT EXISTS (
 				SELECT 1
@@ -418,7 +417,7 @@ func (d Datasource) GetInflightTransactionsByParentID(ctx context.Context, paren
 			return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to scan transaction data", err)
 		}
 
-		err = json.Unmarshal(metaDataJSON, &transaction.MetaData)
+		err = model.DecodeTransactionMetadata(metaDataJSON, &transaction)
 		if err != nil {
 			span.RecordError(err)
 			return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to unmarshal metadata", err)
