@@ -62,7 +62,7 @@ func (a Api) resolveInflightAmount(ctx context.Context, id string, amount float6
 	transaction, err := a.ledgerforge.GetTransaction(ctx, id)
 	if err != nil {
 		var apiErr apierror.APIError
-		if !errors.Is(err, sql.ErrNoRows) && !(errors.As(err, &apiErr) && apierror.Normalize(apiErr.Code) == apierror.ErrGenNotFound) {
+		if !errors.Is(err, sql.ErrNoRows) && (!errors.As(err, &apiErr) || apierror.Normalize(apiErr.Code) != apierror.ErrGenNotFound) {
 			return nil, err
 		}
 		// Synchronous split and bulk parents may exist only as child rows.

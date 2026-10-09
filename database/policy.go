@@ -100,7 +100,7 @@ func (d *Datasource) DeleteKeyPolicy(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err = lockPolicyAncestry(ctx, tx, id); err != nil {
 		return err
 	}
@@ -353,7 +353,7 @@ func (d *Datasource) ListPolicyApprovals(ctx context.Context, key string) ([]mod
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []model.PolicyAdmission{}
 	for rows.Next() {
 		a, e := scanAdmission(rows)
@@ -409,7 +409,7 @@ func (d *Datasource) PolicyHoldIDs(ctx context.Context, id string) ([]string, er
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := []string{}
 	for rows.Next() {
 		var v string

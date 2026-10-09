@@ -67,7 +67,7 @@ func TestProcessorConcurrentCheckpointsPostgres(t *testing.T) {
 	}
 	db, err := sql.Open("postgres", "postgres://postgres:password@localhost:5432/ledgerforge?sslmode=disable")
 	require.NoError(t, err)
-	defer db.Close()
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	require.NoError(t, db.PingContext(ctx))

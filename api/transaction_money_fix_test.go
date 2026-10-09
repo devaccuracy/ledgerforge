@@ -39,6 +39,7 @@ func TestPreciseAmountSafeMessageAllowlist(t *testing.T) {
 		want          string
 	}{
 		{"exact field message", "precise_amount must be positive", apierror.ErrTxnInvalidAmount, "precise_amount must be positive"},
+		{"exact core field message", "transaction precise amount must be positive", apierror.ErrTxnInvalidAmount, "precise_amount must be positive"},
 		{"backend prefix remains hidden", "database password: precise_amount must be positive", apierror.ErrTxnInvalidAmount, "transaction amount must be positive"},
 		{"backend suffix remains hidden", "precise_amount must be positive: postgres password", apierror.ErrTxnInvalidAmount, "transaction amount must be positive"},
 		{"internal errors remain hidden", "precise_amount must be positive", apierror.ErrGenInternal, "internal server error"},

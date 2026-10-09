@@ -56,9 +56,14 @@ Redis must be isolated; many integration tests use fixed localhost addresses.
 ```sh
 make vuln
 make cover
+go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+golangci-lint run ./...
 python3 .github/scripts/test-readiness.py
 .github/scripts/fuzz-smoke.sh
 ```
+
+CI uses golangci-lint 2.12.2 built with Go 1.26.9. Run it over the full tree
+locally; keep cleanup errors and staticcheck findings explicit.
 
 `make vuln` installs a pinned govulncheck in a temporary directory, scans
 reachable vulnerabilities and fails on findings. Update dependencies or the Go

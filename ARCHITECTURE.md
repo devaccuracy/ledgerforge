@@ -49,6 +49,10 @@ updates. PostgreSQL is authoritative for financial records and unique references
 Application locks and Redis coordination help manage contention but do not
 replace database constraints.
 
+Accepted transaction controls are immutable persistence evidence separate from
+customer metadata. Workers and recovery restore those controls; public metadata
+updates cannot change execution, lineage, policy or recovery bookkeeping.
+
 A request may execute synchronously or persist/dispatch work for queue workers.
 An accepted or queued response is distinct from a settled posting. Workers handle
 scheduled execution, inflight expiry/commit and asynchronous notifications.
@@ -81,6 +85,9 @@ or `LEDGERFORGE_MCP_API_KEY`, tools resolve current key validity/scopes and carr
 that trusted principal into spending admission. Unbound MCP retains local
 deployment-level authority. Ordinary inflight holds reserve funds; policy-held
 transactions additionally require an independent persisted approval decision.
+Delegation ancestry constrains effective policies and shares ancestor capacity;
+approval decisions enforce the delegation-family rules in the
+[agent safety guide](docs/agent-safety.md).
 Keep database credentials and local MCP access within the operator's trust boundary.
 
 Webhook receivers and outbound hook destinations are separate trust decisions.
@@ -97,6 +104,11 @@ Import-graph tests protect the extracted domain packages from HTTP, facade and
 core dependencies. See [verification](docs/verification.md) and
 [agent safety](docs/agent-safety.md) for the independent evidence and approval
 trust boundaries.
+
+Audit sealing currently uses canonical v3 and retains v1/v2 verification. Replay
+checks economic consistency separately from chain/checkpoint evidence; neither
+authenticates real-world payment activity. Follow
+[upgrade maintenance](docs/upgrade-notes.md) for historical evidence and migrations.
 
 ## Validation
 

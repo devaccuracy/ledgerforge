@@ -29,7 +29,7 @@ semantic versions.
   fuzz tests with independent arithmetic oracles.
 - Read-only `ledgerforge verify` accounting replay with JSON issue reports and
   repeatable-read PostgreSQL snapshots of balances and lifecycle evidence.
-- Canonical hash chain v2, versioned verification of existing v1 seals, persistent
+- Canonical hash chains v2/v3, versioned verification of existing v1/v2 seals, persistent
   checkpoint roots, `ledgerforge audit verify`, `audit export`, external
   `--anchor` comparison, and separate pending-coverage/tampering reports.
 - Generated PostgreSQL operation-sequence tests, concurrent snapshot/chainer
@@ -40,6 +40,11 @@ semantic versions.
   and balance allowlists, UTC daily capacity, durable admissions and reservations.
 - Policy approval holds, independent approval/rejection endpoints, effective
   policy/capacity inspection and persistence checks for queued execution.
+- Immutable API-key delegation ancestry, intersected inherited policies, shared
+  ancestor budgets, per-budget capacity reports and approval-family checks.
+- Immutable transaction execution controls, economic schema and grouping evidence;
+  v3 audit commitments include those controls, overdraft caps, queue actions,
+  scheduling and original historical rate evidence.
 - MCP API-key identity binding through `--api-key` / `LEDGERFORGE_MCP_API_KEY`,
   policy/capacity/approval tools and resources, and identity-bound submission.
 - Import-graph architecture tests; private reconciliation and search services
@@ -64,6 +69,9 @@ semantic versions.
   callers retain ownership of injected datasource connections.
 - Audit migrations and lifecycle immutability protection share a compatible
   transaction-update policy; sealed commitments and deletes remain protected.
+- Audit/control migrations avoid transaction-table backfills, use a concurrent
+  journal index and validate constraints separately; upgrade maintenance is
+  documented for historical installations.
 - Example configuration explicitly enables authentication. Compose requires a
   config file, binds published ports to loopback and starts workers after readiness.
 - Go minimum is 1.26 with toolchain 1.26.9 selected. CI, Docker/release builds and
@@ -83,6 +91,17 @@ semantic versions.
 - Queue acceptance persists intent and action before dispatch, recovery preserves
   lifecycle meaning, and enqueue/settlement failure releases claims safely.
 - Bulk saturation returns a controlled error without dereferencing a nil result.
+- Bulk partial inflight commit reports missing/invalid items independently while
+  valid items proceed in synchronous, queued and dry-run modes.
+- Monetary JSON decoding preserves exact tokens across later `null` fields and
+  rejects underflowing positive requests and lossy precision/overdraft controls.
+- Replay compares intent and completion amounts and terminal cardinality,
+  distinguishes grouping parents, and includes accepted pending commitments when
+  validating remainder voids. New schema-marked ignored rates no longer cause
+  false legacy failures.
+- Audit upgrades retain historical rates and account for a recorded legacy
+  column transition without rewriting INSERT-journal evidence or permitting
+  later mutations.
 - Notification/notifier setup and delivery use the originating instance's
   configuration, receiver and signing secret; borrowed datasource resources
   remain caller-owned.
@@ -102,6 +121,15 @@ semantic versions.
   after rotation with `server.allow_legacy_api_keys`.
 - API errors sanitize backend details across compatible response shapes; explicit
   body/upload bounds and route-resource mappings cover operational endpoints.
+- Inflight commit/void preserves the exact safe `precise_amount must be positive`
+  validation message; unstructured backend prefixes/suffixes remain sanitized.
+- Delegation cannot remove inherited spending restrictions or multiply ancestor
+  allowances. Descendants, siblings and intermediate delegated ancestors cannot
+  manufacture approval authority within the initiator's family; explicit root
+  or independent-family reviewers and master authority retain their defined roles.
+- Public metadata updates reject reserved execution, lineage, policy and recovery
+  keys; worker/recovery execution reads immutable controls instead of customer
+  metadata.
 - Dedicated webhook signing secrets with legacy fallback, protected HMAC headers,
   validated URLs, configurable private-destination controls, redirect rejection,
   delivery timeouts and bounded hook response bodies. Public-only mode rejects

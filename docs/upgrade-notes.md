@@ -11,11 +11,14 @@ limitations under the License. -->
 
 # Integrity upgrade maintenance
 
-Back up the database and export existing audit checkpoint roots before upgrading.
-Run migrations before starting the new workers. Stop old workers during this
-transition: they do not persist immutable execution controls. DDL still needs a
-brief exclusive table lock; use a maintenance window and a bounded PostgreSQL
-`lock_timeout`, and retry if busy writers prevent acquiring it.
+Back up the database and retain available audit checkpoint roots under independent
+custody before upgrading. If the installed version has no checkpoint export,
+record its available chain head with the backup manifest; the first later export
+establishes an external anchor from that point, not retroactive external custody.
+Run migrations before starting new servers or workers. Stop old servers and
+workers during this transition: they do not persist immutable execution controls.
+DDL still needs a brief exclusive table lock; use a maintenance window and a
+bounded PostgreSQL `lock_timeout`, and retry if busy writers prevent acquiring it.
 
 Migration 1781162340 adds nullable chain versions without updating the transaction
 table. A sealed row with a NULL version retains canonical v1. Existing v1/v2

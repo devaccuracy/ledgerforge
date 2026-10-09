@@ -43,7 +43,7 @@ func keyAncestry(ctx context.Context, q policyQuerier, key string) ([]string, er
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	ids := []string{}
 	for rows.Next() {
 		var id string

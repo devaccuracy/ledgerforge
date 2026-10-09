@@ -55,7 +55,7 @@ func TestWebhookDialerBlocksLiteralCloudMetadataBeforeConnect(t *testing.T) {
 	defer cancel()
 	conn, err := publicWebhookTransport.DialContext(ctx, "tcp", "100.100.100.200:80")
 	if conn != nil {
-		conn.Close()
+		t.Cleanup(func() { require.NoError(t, conn.Close()) })
 	}
 	require.ErrorContains(t, err, "not public", "dial-time enforcement must reject the reviewer's metadata address")
 }
@@ -107,7 +107,11 @@ func TestWebhookDNSRebindingBlockedAtConnect(t *testing.T) {
 			_, _ = dns.WriteTo(response, peer)
 		}
 	}()
-	t.Cleanup(func() { dns.Close(); wg.Wait() })
+	t.Cleanup(func() {
+		err := dns.Close()
+		wg.Wait()
+		require.NoError(t, err)
+	})
 	resolver := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "udp", dns.LocalAddr().String())
 	}}
@@ -120,7 +124,7 @@ func TestWebhookDNSRebindingBlockedAtConnect(t *testing.T) {
 	dialer := net.Dialer{Resolver: resolver, ControlContext: publicWebhookControl}
 	conn, err := dialer.DialContext(ctx, "tcp", "rebind.test:80")
 	if conn != nil {
-		conn.Close()
+		t.Cleanup(func() { require.NoError(t, conn.Close()) })
 	}
 	require.ErrorContains(t, err, "not public")
 }

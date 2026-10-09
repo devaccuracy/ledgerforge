@@ -37,12 +37,22 @@ than its own. Listing and revocation derive the owner from the authenticated
 principal; a caller-supplied `owner` query cannot select another owner's keys.
 The master key may provision independent owners and scopes.
 
-Delegation ancestry is durable. Descendants inherit restrictions and may narrow
-policies; ancestor daily budgets are shared across the delegation tree. An
-approver delegated by the initiating key, including an indirect descendant, is
-not independent and cannot decide that initiator's hold. Give approver and policy
-manager credentials to a separately controlled service or operator. See
+Delegation ancestry is immutable and recorded when a scoped key creates another
+key. Descendants inherit intersected policies and may narrow them; ancestor
+daily budgets are shared across the delegation tree. Delegated members of the
+initiator's root cannot decide its hold, including siblings, descendants and
+intermediate ancestors. The non-delegated root may decide a descendant's hold
+with explicit `approvals:write`, but cannot decide its own. Another root can
+provide an approver, including a delegated approver in that independent family;
+the master key retains administrator authority. Wildcard scopes alone do not
+grant approval or policy-management authority. Give approver and policy-manager
+credentials to a separately controlled service or operator. See
 [agent safety](agent-safety.md) for policy units and admission semantics.
+
+Keys created before ancestry persistence are treated as roots; historical
+delegation cannot be inferred safely from caller metadata. Rotate old delegated
+credentials through the authenticated creation path to establish ancestry
+before relying on inherited policies or approval-family checks.
 
 Resource scopes govern HTTP/MCP operations, but scopes alone do not restrict
 transaction amounts or identify a human reviewer. Use spending policies and
@@ -56,7 +66,8 @@ PostgreSQL state instead of accepting cached pre-revocation state; a stale Redis
 cache entry cannot restore permission. A completed revocation prevents future
 authentication, but does not cancel operations already authenticated, settled
 postings or durable admissions accepted beforehand. Review pending activity
-when rotating or responding to compromise.
+when rotating or responding to compromise. Revocation applies to that key;
+revoke descendant credentials separately when retiring a delegation family.
 
 Provision a new scoped key, attach the required policy, deploy it through your
 secret manager, verify its access, then revoke the old key. Keep the overlap
@@ -92,8 +103,16 @@ API responses preserve their compatible error envelope and stable codes while
 sanitizing unstructured backend details. Internal failures return a generic
 message; deliberate validation messages remain client-visible. SQL text,
 connection strings, raw driver errors and backend detail values belong in
-operator logs, not client responses. Policy endpoints have their own public
-error shape; do not assume every endpoint wraps a failure identically.
+operator logs, not client responses. Inflight commit/void rejects a non-positive
+`precise_amount` with `TXN_INVALID_AMOUNT` and `precise_amount must be positive`.
+Only exact allowlisted validation messages are preserved from unstructured
+errors; messages containing extra backend text use a generic public message.
+Policy endpoints have their own public error shape; do not assume every endpoint wraps a failure identically.
+
+Public transaction metadata updates cannot change reserved execution, lineage,
+policy or recovery keys. Execution flags are persisted separately as immutable
+controls, so customer metadata cannot turn a queued bounded transfer into an
+unbounded overdraft or grant policy approval. Customer metadata remains mutable.
 
 Webhooks use a dedicated signing secret with a legacy master-secret fallback,
 protected signature headers and configurable outbound destination controls.

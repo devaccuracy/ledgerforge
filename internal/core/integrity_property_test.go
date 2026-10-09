@@ -330,11 +330,12 @@ func TestAuditDetectsMutationDeletionAndTruncation(t *testing.T) {
 				defer func() { _ = tx.Rollback() }()
 				_, err = tx.ExecContext(ctx, `SET LOCAL session_replication_role = replica`)
 				require.NoError(t, err)
-				if scenario == "amount" {
+				switch scenario {
+				case "amount":
 					_, err = tx.ExecContext(ctx, `UPDATE ledgerforge.transactions SET amount = amount + 1 WHERE transaction_id = $1`, first.TransactionID)
-				} else if scenario == "precise amount" {
+				case "precise amount":
 					_, err = tx.ExecContext(ctx, `UPDATE ledgerforge.transactions SET precise_amount = precise_amount + 1 WHERE transaction_id = $1`, first.TransactionID)
-				} else {
+				default:
 					_, err = tx.ExecContext(ctx, `UPDATE ledgerforge.transactions SET chain_version = 1 WHERE transaction_id = $1`, first.TransactionID)
 				}
 				require.NoError(t, err)

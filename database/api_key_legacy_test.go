@@ -44,7 +44,10 @@ func TestAPIKeyLegacyLookupOnlyAfterMissingPrefix(t *testing.T) {
 		t.Run(key, func(t *testing.T) {
 			db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
 			require.NoError(t, err)
-			defer db.Close()
+			t.Cleanup(func() {
+				mock.ExpectClose()
+				require.NoError(t, db.Close())
+			})
 			mock.ExpectQuery(prefixedAPIKeyQuery).WithArgs(getKeyPrefix(key)).WillReturnRows(keyLookupRows().AddRow("id", hash, "name", "owner", pq.StringArray{"ledgers:read"}, time.Now().Add(time.Hour), time.Now(), time.Now(), false, nil, getKeyPrefix(key), ""))
 			ds := Datasource{Conn: db}
 			got, err := ds.GetAPIKey(context.Background(), key)
@@ -62,7 +65,10 @@ func TestAPIKeyLegacyLookupOnlyAfterMissingPrefix(t *testing.T) {
 func TestAPIKeyLegacyDisabledSkipsFallback(t *testing.T) {
 	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
 	require.NoError(t, err)
-	defer db.Close()
+	t.Cleanup(func() {
+		mock.ExpectClose()
+		require.NoError(t, db.Close())
+	})
 	ds := Datasource{Conn: db, disableLegacyAPIKeys: true}
 	mock.ExpectQuery(prefixedAPIKeyQuery).WithArgs("missing").WillReturnRows(keyLookupRows())
 	_, err = ds.GetAPIKey(context.Background(), "missing")
@@ -127,7 +133,7 @@ func TestAPIKeyLegacyRejectsInactiveWithoutBackfill(t *testing.T) {
 			require.Equal(t, 1, count, "inactive keys must not be verified or backfilled")
 			rows, err := ds.Conn.QueryContext(context.Background(), legacyAPIKeyQuery)
 			require.NoError(t, err)
-			defer rows.Close()
+			t.Cleanup(func() { require.NoError(t, rows.Close()) })
 			for rows.Next() {
 				var id, hash, name, owner string
 				var scopes pq.StringArray

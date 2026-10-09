@@ -128,11 +128,12 @@ func (s *Server) registerPolicyTools() {
 func (s *Server) readPolicyResource(ctx context.Context, r *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 	var value map[string]any
 	var err error
-	if r.Params.URI == "ledgerforge://policy/capacity" {
+	switch r.Params.URI {
+	case "ledgerforge://policy/capacity":
 		value, err = s.remainingCapacity(ctx, nil, struct{}{})
-	} else if r.Params.URI == "ledgerforge://policy/effective" {
+	case "ledgerforge://policy/effective":
 		value, err = s.effectivePolicy(ctx, nil, struct{}{})
-	} else {
+	default:
 		value, err = s.pendingApprovals(ctx, nil, struct{}{})
 	}
 	if err != nil {
