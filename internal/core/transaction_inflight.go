@@ -29,6 +29,7 @@ import (
 
 	redlock "github.com/devaccuracy/ledgerforge/internal/lock"
 	"github.com/devaccuracy/ledgerforge/internal/metrics"
+	"github.com/devaccuracy/ledgerforge/internal/policy"
 	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel/attribute"
@@ -286,6 +287,9 @@ func (l *LedgerForge) CommitInflightTransactionWithQueue(ctx context.Context, tr
 // Returns:
 // - error: An error if the amount validation or update fails.
 func (l *LedgerForge) validateAndUpdateAmount(ctx context.Context, transaction *model.Transaction, amount *big.Int) error {
+	if err := l.checkPolicyCommit(ctx, transaction.TransactionID); err != nil {
+		return err
+	}
 	ctx, span := tracer.Start(ctx, "ValidateAndUpdateAmount")
 	defer span.End()
 
@@ -427,7 +431,7 @@ func (l *LedgerForge) finalizeCommitment(ctx context.Context, transaction *model
 			return nil, l.logAndRecordError(span, "failed to enqueue transaction", err)
 		}
 	} else {
-		transaction, err := l.RecordTransaction(ctx, transaction)
+		transaction, err := l.RecordTransaction(policy.Internal(ctx), transaction)
 		if err != nil {
 			span.RecordError(err)
 			return nil, l.logAndRecordError(span, "saving transaction to db error", err)
@@ -502,6 +506,7 @@ func (l *LedgerForge) VoidInflightTransactionWithRef(ctx context.Context, transa
 		logrus.WithError(err).WithField("transaction_id", transactionID).Error("failed to queue shadow void")
 	}
 
+	l.releasePolicyCapacity(ctx, transactionID)
 	return voidedTxn, nil
 }
 
@@ -623,7 +628,7 @@ func (l *LedgerForge) finalizeVoidTransaction(ctx context.Context, transaction *
 	transaction.Hash = transaction.HashTxn()
 	model.ApplyPrecision(transaction)
 
-	transaction, err := l.RecordTransaction(ctx, transaction)
+	transaction, err := l.RecordTransaction(policy.Internal(ctx), transaction)
 	if err != nil {
 		span.RecordError(err)
 		return nil, l.logAndRecordError(span, "saving transaction to db error", err)
@@ -787,6 +792,14 @@ func (l *LedgerForge) preValidateInflightAction(ctx context.Context, transaction
 		return nil, errors.New("cannot commit: transaction already committed")
 	}
 
+	if action == InflightActionCommit {
+		for _, leg := range legs {
+			if err := l.checkPolicyCommit(ctx, leg.TransactionID); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	// Response stand-in: first leg's fields, but the id the client committed
 	// against (parent / batch id) so the queued payload matches the request.
 	representative := *legs[0]
@@ -829,6 +842,11 @@ func (l *LedgerForge) anyInflightLegRemaining(ctx context.Context, legs []*model
 // validateInflightActionAmount runs the single-transaction amount checks used
 // when the commit/void target is itself an INFLIGHT row.
 func (l *LedgerForge) validateInflightActionAmount(ctx context.Context, transaction *model.Transaction, action string, amount *big.Int) (*model.Transaction, error) {
+	if action == InflightActionCommit {
+		if err := l.checkPolicyCommit(ctx, transaction.TransactionID); err != nil {
+			return nil, err
+		}
+	}
 	amountLeft, err := l.calculateRemainingAmount(ctx, transaction)
 	if err != nil {
 		return nil, err

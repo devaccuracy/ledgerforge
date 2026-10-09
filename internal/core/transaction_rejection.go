@@ -56,6 +56,10 @@ func (l *LedgerForge) RejectTransaction(ctx context.Context, transaction *model.
 		return nil, err
 	}
 
+	if policyMarked(transaction) {
+		l.releasePolicyCapacity(ctx, transaction.TransactionID)
+	}
+
 	span.AddEvent("Transaction rejected", trace.WithAttributes(attribute.String("transaction.id", transaction.TransactionID)))
 
 	// Record rejection metrics.

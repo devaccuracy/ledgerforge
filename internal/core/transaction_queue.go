@@ -24,6 +24,7 @@ import (
 
 	"github.com/devaccuracy/ledgerforge/internal/hotpairs"
 	"github.com/devaccuracy/ledgerforge/internal/notification"
+	"github.com/devaccuracy/ledgerforge/internal/policy"
 	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel/attribute"
@@ -70,6 +71,8 @@ func (l *LedgerForge) QueueTransaction(ctx context.Context, transaction *model.T
 	ctx, span := tracer.Start(ctx, "QueueTransaction")
 	defer span.End()
 
+	clearCallerPolicyMetadata(ctx, transaction)
+
 	// Initialize transaction metadata and status
 	originalRef := transaction.Reference
 	setTransactionMetadata(transaction)
@@ -104,11 +107,26 @@ func (l *LedgerForge) QueueTransaction(ctx context.Context, transaction *model.T
 		}
 	}
 
+	ctx, err = l.admitQueuedPolicy(ctx, transaction, transactions)
+	if err != nil {
+		return nil, err
+	}
+	if policyMarked(transaction) {
+		originalTxnID = transaction.TransactionID
+	}
+
 	// If SkipQueue is true, process synchronously
 	if transaction.SkipQueue {
 		_, err := l.processTxns(ctx, transaction, transactions, originalTxnID, originalRef)
 		if err != nil {
 			span.RecordError(err)
+			if policyMarked(transaction) {
+				legs := transactions
+				if len(legs) == 0 {
+					legs = []*model.Transaction{transaction}
+				}
+				l.failPolicyTransactions(ctx, legs)
+			}
 			return nil, err
 		}
 
@@ -127,7 +145,7 @@ func (l *LedgerForge) QueueTransaction(ctx context.Context, transaction *model.T
 			transaction.MetaData["QUEUED_PARENT_TRANSACTION"] = transaction.ParentTransaction
 		}
 		// For normal queue mode, process asynchronously
-		processTransactionAsync(context.Background(), l, transaction, originalRef, originalTxnID, transactions)
+		processTransactionAsync(policy.Internal(context.Background()), l, transaction, originalRef, originalTxnID, policyAsyncTransactions(transaction, transactions))
 	}
 
 	span.AddEvent("Transaction successfully queued", trace.WithAttributes(
