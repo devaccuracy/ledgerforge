@@ -105,7 +105,10 @@ core dependencies. See [verification](docs/verification.md) and
 [agent safety](docs/agent-safety.md) for the independent evidence and approval
 trust boundaries.
 
-Audit sealing currently uses canonical v3 and retains v1/v2 verification. Replay
+Audit sealing uses canonical v3, introduced directly on fresh installs and
+supported upgrades from main or earlier published releases. Retained v1/v2
+decoders verify explicitly supplied older-format records; they do not imply
+migration compatibility for unreleased development schemas. Replay
 checks economic consistency separately from chain/checkpoint evidence; neither
 authenticates real-world payment activity. Follow
 [upgrade maintenance](docs/upgrade-notes.md) for historical evidence and migrations.
