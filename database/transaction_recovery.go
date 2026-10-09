@@ -41,7 +41,7 @@ func (d Datasource) GetStuckQueuedTransactions(ctx context.Context, threshold ti
 	// a failed REJECTED write, and operators can still find it here or via
 	// POST /transactions/recover.
 	rows, err := d.Conn.QueryContext(ctx, `
-		SELECT transaction_id, parent_transaction, source, reference, amount, COALESCE(precise_amount::text, '0'), precision, currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date
+		SELECT transaction_id, parent_transaction, source, reference, amount, COALESCE(precise_amount::text, '0'), precision, currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date, rate, overdraft_limit, queue_action
 		FROM ledgerforge.transactions t
 		WHERE t.status = 'QUEUED'
 		  AND t.created_at < $1
@@ -71,7 +71,7 @@ func (d Datasource) GetStuckQueuedTransactions(ctx context.Context, threshold ti
 			&txn.TransactionID, &txn.ParentTransaction, &txn.Source, &txn.Reference,
 			&txn.Amount, &preciseAmountStr, &txn.Precision,
 			&txn.Currency, &txn.Destination, &txn.Description, &txn.Status,
-			&txn.CreatedAt, &metaDataJSON, &txn.ScheduledFor, &txn.Hash, &txn.EffectiveDate,
+			&txn.CreatedAt, &metaDataJSON, &txn.ScheduledFor, &txn.Hash, &txn.EffectiveDate, &txn.Rate, &txn.OverdraftLimit, &txn.QueueAction,
 		)
 		if err != nil {
 			span.RecordError(err)

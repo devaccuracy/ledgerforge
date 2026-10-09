@@ -24,9 +24,11 @@ import (
 	"math/big"
 	"strings"
 	"sync"
+	"time"
 
 	redlock "github.com/devaccuracy/ledgerforge/internal/lock"
 	"github.com/devaccuracy/ledgerforge/model"
+	"github.com/lib/pq"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -145,14 +147,12 @@ func (l *LedgerForge) validateTransactionForRefund(ctx context.Context, original
 	ctx, span := tracer.Start(ctx, "validateTransactionForRefund")
 	defer span.End()
 
-	// Only settled (APPLIED) or voided originals are refundable. Refunding a
-	// QUEUED/INFLIGHT/SCHEDULED original would reverse funds that were never
-	// settled.
+	// A refund reverses a committed transfer.
 	switch originalTxn.Status {
-	case StatusApplied, StatusVoid:
+	case StatusApplied:
 		// refundable
 	default:
-		err := fmt.Errorf("transaction %s cannot be refunded in status %s (only APPLIED or VOID)", originalTxn.TransactionID, originalTxn.Status)
+		err := fmt.Errorf("transaction %s cannot be refunded in status %s (only APPLIED)", originalTxn.TransactionID, originalTxn.Status)
 		span.RecordError(err)
 		return err
 	}
@@ -189,9 +189,8 @@ type RefundOptions struct {
 
 	// MetaData is merged onto the metadata inherited from the original
 	// transaction, with these keys winning on conflict. Merging rather than
-	// replacing keeps the keys the ledger itself sets on the original — such
-	// as inflight, atomic and allow_overdraft — which downstream processing
-	// reads.
+	// replacing preserves caller metadata. Reservation flags are cleared
+	// because a refund always reverses committed funds.
 	MetaData map[string]interface{}
 }
 
@@ -224,15 +223,15 @@ func prepareRefundTransaction(originalTxn *model.Transaction, opts RefundOptions
 		newTransaction.MetaData = merged
 	}
 
-	// Adjust status based on original status for proper processing
-	if originalTxn.Status == StatusVoid {
-		// If original was voided, the refund should process like an inflight reversal
-		newTransaction.Inflight = true
-		newTransaction.Status = "" // Reset status to let QueueTransaction handle it
-	} else {
-		newTransaction.Status = "" // Reset status for standard queuing
-		newTransaction.Inflight = false
-	}
+	newTransaction.Status = ""
+	newTransaction.Inflight = false
+	newTransaction.QueueAction = ""
+	newTransaction.OverdraftLimit = 0
+	newTransaction.ScheduledFor = time.Time{}
+	newTransaction.InflightExpiryDate = time.Time{}
+	newTransaction.InflightCommitDate = time.Time{}
+	newTransaction.MetaData = cloneTransactionForAsync(&newTransaction).MetaData
+	delete(newTransaction.MetaData, "inflight")
 
 	return &newTransaction
 }
@@ -290,6 +289,10 @@ func (l *LedgerForge) RefundTransactionWithOptions(ctx context.Context, transact
 	queuedRefundTxn, err := l.QueueTransaction(ctx, refundTxnObject)
 	if err != nil {
 		span.RecordError(err)
+		var claimErr *pq.Error
+		if errors.As(err, &claimErr) && claimErr.Code == "23505" && claimErr.Constraint == "refund_claims_pkey" {
+			return nil, &errTransactionAlreadyRefunded{transactionID: originalTxn.TransactionID}
+		}
 		return nil, fmt.Errorf("failed to queue refund transaction %s: %w", refundTxnObject.TransactionID, err)
 	}
 

@@ -77,9 +77,9 @@ func (d Datasource) RecordTransaction(ctx context.Context, txn *model.Transactio
 
 	// Execute the SQL insert statement to record the transaction
 	_, err = d.Conn.ExecContext(ctx,
-		`INSERT INTO ledgerforge.transactions(transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
-		txn.TransactionID, txn.ParentTransaction, txn.Source, txn.Reference, amount, preciseAmount, txn.Precision, txn.Currency, txn.Destination, txn.Description, txn.Status, txn.CreatedAt.UTC(), metaDataJSON, txn.ScheduledFor.UTC(), txn.Hash, utcOrNil(txn.EffectiveDate),
+		`INSERT INTO ledgerforge.transactions(transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date, rate, overdraft_limit, queue_action)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+		txn.TransactionID, txn.ParentTransaction, txn.Source, txn.Reference, amount, preciseAmount, txn.Precision, txn.Currency, txn.Destination, txn.Description, txn.Status, txn.CreatedAt.UTC(), metaDataJSON, txn.ScheduledFor.UTC(), txn.Hash, utcOrNil(txn.EffectiveDate), txn.Rate, txn.OverdraftLimit, txn.QueueAction,
 	)
 	// Handle errors that may occur during the execution of the query
 	if err != nil {
@@ -115,9 +115,9 @@ func recordTransactionInTx(ctx context.Context, tx *sql.Tx, txn *model.Transacti
 	}
 
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO ledgerforge.transactions(transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
-		txn.TransactionID, txn.ParentTransaction, txn.Source, txn.Reference, amount, preciseAmount, txn.Precision, txn.Currency, txn.Destination, txn.Description, txn.Status, txn.CreatedAt.UTC(), metaDataJSON, txn.ScheduledFor.UTC(), txn.Hash, utcOrNil(txn.EffectiveDate),
+		`INSERT INTO ledgerforge.transactions(transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date, rate, overdraft_limit, queue_action)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+		txn.TransactionID, txn.ParentTransaction, txn.Source, txn.Reference, amount, preciseAmount, txn.Precision, txn.Currency, txn.Destination, txn.Description, txn.Status, txn.CreatedAt.UTC(), metaDataJSON, txn.ScheduledFor.UTC(), txn.Hash, utcOrNil(txn.EffectiveDate), txn.Rate, txn.OverdraftLimit, txn.QueueAction,
 	)
 	if err != nil {
 		span.RecordError(err)
@@ -160,6 +160,9 @@ func recordTransactionsInTx(ctx context.Context, tx *sql.Tx, txns []*model.Trans
 		"scheduled_for",
 		"hash",
 		"effective_date",
+		"rate",
+		"overdraft_limit",
+		"queue_action",
 	))
 	if err != nil {
 		span.RecordError(err)
@@ -199,7 +202,7 @@ func recordTransactionsInTx(ctx context.Context, tx *sql.Tx, txns []*model.Trans
 			string(metaDataJSON),
 			txn.ScheduledFor.UTC(),
 			txn.Hash,
-			utcOrNil(txn.EffectiveDate),
+			utcOrNil(txn.EffectiveDate), txn.Rate, txn.OverdraftLimit, txn.QueueAction,
 		); err != nil {
 			span.RecordError(err)
 			return apierror.NewAPIError(apierror.ErrInternalServer, "Failed to stream transaction copy row", err)

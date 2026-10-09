@@ -320,7 +320,7 @@ func (l *LedgerForge) validateAndUpdateAmount(ctx context.Context, transaction *
 // Returns:
 // - error: An error if the transaction is already fully committed.
 func (l *LedgerForge) checkTransactionCommitStatus(amountLeft *big.Int) error {
-	if amountLeft.Cmp(big.NewInt(0)) == 0 {
+	if amountLeft.Sign() <= 0 {
 		return errors.New("cannot commit: transaction already committed")
 	}
 	return nil
@@ -336,6 +336,9 @@ func (l *LedgerForge) checkTransactionCommitStatus(amountLeft *big.Int) error {
 // Returns:
 // - error: An error if the requested amount exceeds allowed limits.
 func (l *LedgerForge) validateRequestedAmount(transaction *model.Transaction, amount *big.Int, amountLeft *big.Int) error {
+	if amount == nil {
+		return fmt.Errorf("commit amount is required")
+	}
 	if amount.Sign() < 0 {
 		return fmt.Errorf("commit amount cannot be negative")
 	}
@@ -421,7 +424,16 @@ func (l *LedgerForge) finalizeCommitment(ctx context.Context, transaction *model
 	transaction.Hash = transaction.HashTxn()
 
 	if withQueue {
-		err := enqueueTransactions(ctx, l.queue, transaction, nil)
+		transaction.Status = StatusQueued
+		transaction.QueueAction = StatusCommit
+		clearTerminalInflightMetadata(transaction)
+		model.ApplyPrecision(transaction)
+		persisted, err := l.datasource.RecordTransaction(ctx, transaction)
+		if err != nil {
+			return nil, l.logAndRecordError(span, "failed to reserve inflight commit", err)
+		}
+		queueCopy := createQueueCopy(persisted, persisted.Reference)
+		err = enqueueTransactions(ctx, l.queue, queueCopy, nil)
 		if err != nil {
 			span.RecordError(err)
 			return nil, l.logAndRecordError(span, "failed to enqueue transaction", err)
@@ -436,7 +448,6 @@ func (l *LedgerForge) finalizeCommitment(ctx context.Context, transaction *model
 	}
 
 	clearTerminalInflightMetadata(transaction)
-	transaction.Status = StatusApplied
 
 	span.AddEvent("Commitment finalized", trace.WithAttributes(attribute.String("transaction.id", transaction.TransactionID)))
 	return transaction, nil
@@ -485,7 +496,7 @@ func (l *LedgerForge) VoidInflightTransactionWithRef(ctx context.Context, transa
 		return nil, err
 	}
 
-	if amountLeft.Cmp(big.NewInt(0)) == 0 {
+	if amountLeft.Sign() <= 0 {
 		err := errors.New("cannot void: transaction already committed")
 		span.RecordError(err)
 		return transaction, err
