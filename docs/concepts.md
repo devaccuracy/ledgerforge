@@ -57,12 +57,15 @@ preserve large integers instead of decoding them through a floating-point
 number; JavaScript numbers cannot represent every integer above `2^53 - 1`.
 Do not quote `precise_amount` as a JSON string with the current API.
 
-For compatibility, `amount` accepts a floating-point number. Its decimal value
+For compatibility, `amount` accepts a JSON number. The HTTP API retains its
+original decimal token for exact conversion rather than multiplying a decoded
+floating-point value. Its decimal value
 is multiplied by precision and rounded to the nearest integer unit, with ties
 away from zero. For example, `amount: 1.005` at precision `100` becomes `101`
-units. Decimal arithmetic avoids binary multiplication errors, but cannot
-recover precision already lost while decoding a floating-point input. Prefer
-`precise_amount` for financial integrations.
+units. A positive amount that rounds to zero units is rejected. Go callers supplying
+only a float cannot recover input precision already lost before the call; use
+`model.ParseAmount` or an exact integer amount. Prefer `precise_amount` with an
+explicit precision for financial integrations.
 
 The compatibility fields `rate` and `currency_multiplier` do not perform ledger
 currency conversion. Calculate and account for currency exchange explicitly in
@@ -102,7 +105,8 @@ history retains the original operation and its reversal.
 Set `inflight: true` to reserve funds without applying a committed transfer.
 Both balances track inflight components, and the source's hold reduces its
 available funds. Update the reservation through
-`PUT /transactions/inflight/:txID` to commit or void it. Commits may be partial;
+`PUT /transactions/inflight/:txID` with `status: "commit"` or `status: "void"`
+to commit or release it. Commits may be partial;
 voiding releases the remaining hold. Optional expiry and commit dates schedule
 release or settlement through workers, so keep workers running.
 
@@ -113,15 +117,19 @@ human approved the transaction or give an agent a spending limit.
 
 `POST /refund-transaction/:id` creates a linked reversal with the original source
 and destination exchanged. It preserves the original posting and exact amount.
-The current implementation accepts originals in `APPLIED` or `VOID` state and
-rejects a repeated refund. The lifecycle behavior of voided transactions should
-be reviewed before using refunds as a business rule. Refunds queue by default;
+Refunds apply only to `APPLIED` transactions. `QUEUED`, `SCHEDULED`,
+`INFLIGHT`, `VOID` and `REJECTED` originals are not refundable. A durable claim
+prevents concurrent retries from producing multiple reversals. Refunds queue by default;
 request `skip_queue: true` for synchronous execution.
 
 Transaction, refund and inflight APIs support `dry_run: true`. A preview projects
 balance effects without persisting a posting, consuming its reference or
 sending a webhook. It is an observation of current state, not a reservation or
 a guarantee that a later request will succeed under concurrent activity.
+
+Policies apply to admitted transfers, including split and bulk legs and
+refunds; a refund is a new admitted operation, not a daily-budget credit. See
+[agent safety](agent-safety.md) for approval and capacity semantics.
 
 See the [balanced transfer example](../examples/quickstart/README.md) and
 [deployment guide](deployment.md).

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build-env
+FROM --platform=$BUILDPLATFORM golang:1.26.9-alpine AS build-env
 WORKDIR /go/src/ledgerforge
 
 COPY go.mod go.sum ./

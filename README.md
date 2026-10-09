@@ -60,23 +60,29 @@ use. Read the [deployment guide](docs/deployment.md) before exposing a service.
 
 ## Why LedgerForge
 
-- Model balances by ledger, identity and currency, with explicit overdraft
-  controls and historical balance snapshots.
-- Choose synchronous posting or queued execution. Reserve funds with inflight
-  transactions, then commit, partially commit or void the hold.
-- Use split and bulk transactions, scheduling and dry-run projections to build
-  application workflows around the same accounting model.
-- Reconcile external records, track fund lineage and receive transaction and
-  metadata events through webhooks.
-- Operate your own PostgreSQL and Redis deployment, with optional Typesense
-  search, Prometheus metrics and OpenTelemetry exports.
-- Connect a local MCP client. The MCP server registers write tools only with
-  explicit `--allow-write`; review its [authority model](docs/mcp.md) before
-  granting access.
-
-<!-- Integration placeholder: document the merged integrity verification capability and CLI here. -->
-<!-- Integration placeholder: document merged audit checkpoints and independent verification here. -->
-<!-- Integration placeholder: document merged server-enforced agent spending policies and approvals here. -->
+- **Exact money:** integer postings and balance counters, preserved decimal
+  request tokens, explicit precision and deterministic split allocation. Invalid
+  monetary inputs are rejected before posting.
+- **A verifiable ledger:** read-only `ledgerforge verify` replays accounting
+  evidence. Versioned audit chains and exportable checkpoints support
+  `audit verify --anchor` against independently retained roots. See the
+  [verification guide](docs/verification.md) for coverage and legacy limits.
+- **Agent guardrails:** per-key currency/precision limits, balance/ledger
+  allowlists, durable daily reservations and approval holds enforced by the
+  server. Bind MCP to an API key and keep independent approver credentials
+  outside the agent's authority. See [agent safety](docs/agent-safety.md) and the
+  [executable policy example](examples/agent-policy/README.md).
+- **A hardened API:** owner-bound key management, constrained delegation,
+  authoritative revocation checks, bounded input and sanitized backend errors.
+  Dedicated webhook signing secrets and destination controls protect outbound
+  integrations. See [security operations](docs/security.md).
+- **Tested invariants:** exact-amount and allocation fuzz targets, generated
+  PostgreSQL operation sequences, balance conservation checks and race tests for
+  financial lifecycle and spending-capacity transitions.
+- **Operational workflows:** inflight reservations, partial settlement, refunds,
+  split/bulk transfers, reconciliation, lineage, snapshots and optional search,
+  metrics and OpenTelemetry. PostgreSQL retains financial truth while workers
+  handle asynchronous execution and delivery.
 
 ## Run the published image locally
 
@@ -96,6 +102,9 @@ or digest in production with `LEDGERFORGE_IMAGE`.
 
 - [Concepts: amounts, balances and transaction states](docs/concepts.md)
 - [Deployment: secrets, TLS, limits and webhook verification](docs/deployment.md)
+- [Accounting verification and external audit anchoring](docs/verification.md)
+- [Agent spending policies and independent approval](docs/agent-safety.md)
+- [API security, delegation and rotation](docs/security.md)
 - [Architecture and trust boundaries](ARCHITECTURE.md)
 - [MCP server](docs/mcp.md)
 - [Metrics and monitoring](docs/metrics.md)

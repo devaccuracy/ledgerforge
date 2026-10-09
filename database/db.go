@@ -50,8 +50,10 @@ var (
 )
 
 type Datasource struct {
-	Conn  *sql.DB
-	Cache cache.Cache
+	Conn                 *sql.DB
+	Cache                cache.Cache
+	disableLegacyAPIKeys bool
+	legacyAPIKeyWarning  *sync.Once
 }
 
 // Close closes the underlying database connection pool.
@@ -73,6 +75,7 @@ func NewDataSource(configuration *config.Configuration) (IDataSource, error) {
 	if _, err := con.Conn.ExecContext(context.Background(), "SET search_path TO ledgerforge"); err != nil {
 		return nil, err
 	}
+	con.legacyAPIKeyWarning.Do(func() { con.warnLegacyAPIKeys(context.Background()) })
 	return con, nil
 }
 
@@ -107,7 +110,10 @@ func GetDBConnection(configuration *config.Configuration) (*Datasource, error) {
 		// Continue without cache instead of failing completely.
 	}
 
-	ds := &Datasource{Conn: con, Cache: cacheInstance}
+	ds := &Datasource{Conn: con, Cache: cacheInstance,
+		disableLegacyAPIKeys: configuration.Server.AllowLegacyAPIKeys != nil && !*configuration.Server.AllowLegacyAPIKeys,
+		legacyAPIKeyWarning:  &sync.Once{},
+	}
 	instance.Store(ds)
 	return ds, nil
 }

@@ -16,6 +16,7 @@ limitations under the License.
 package model
 
 type CreateBalance struct {
+	precisionDecimal   string
 	LedgerId           string                 `json:"ledger_id"`
 	IdentityId         string                 `json:"identity_id"`
 	Currency           string                 `json:"currency"`
@@ -34,10 +35,11 @@ type CreateBalanceMonitor struct {
 }
 
 type MonitorCondition struct {
-	Precision float64 `json:"precision"`
-	Field     string  `json:"field"`
-	Operator  string  `json:"operator"`
-	Value     float64 `json:"value"`
+	precisionDecimal string
+	Precision        float64 `json:"precision"`
+	Field            string  `json:"field"`
+	Operator         string  `json:"operator"`
+	Value            float64 `json:"value"`
 }
 
 // UpdateBalanceIdentity represents the payload required to update a balance's identity.

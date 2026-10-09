@@ -10,13 +10,25 @@ import (
 	"github.com/devaccuracy/ledgerforge/internal/policy"
 	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/lib/pq"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/crypto/bcrypt"
 )
 
 var (
-	ErrAPIKeyNotFound = errors.New("api key not found")
-	ErrInvalidAPIKey  = errors.New("invalid api key")
+	ErrAPIKeyNotFound               = errors.New("api key not found")
+	ErrInvalidAPIKey                = errors.New("invalid api key")
+	ErrLegacyAPIKeyVerificationBusy = errors.New("legacy API key verification is busy")
 )
+
+// Legacy scans are deliberately fail-fast: unauthenticated traffic cannot
+// queue unlimited bcrypt work or occupy every database connection.
+const maxLegacyAPIKeyVerifications = 2
+
+var legacyAPIKeyVerificationSlots = make(chan struct{}, maxLegacyAPIKeyVerifications)
+
+const apiKeyLookupColumns = `api_key_id, key, name, owner_id, scopes, expires_at, created_at, last_used_at, is_revoked, revoked_at, key_prefix, COALESCE(parent_api_key_id,'')`
+const prefixedAPIKeyQuery = `SELECT ` + apiKeyLookupColumns + ` FROM ledgerforge.api_keys WHERE key_prefix = $1`
+const legacyAPIKeyQuery = `SELECT ` + apiKeyLookupColumns + ` FROM ledgerforge.api_keys WHERE (key_prefix IS NULL OR key_prefix = '') AND is_revoked = false AND expires_at > CURRENT_TIMESTAMP`
 
 // hashAPIKey creates a bcrypt hash of the API key for secure storage.
 // bcrypt includes salt and is resistant to brute-force attacks.
@@ -123,68 +135,92 @@ func (s *Datasource) CreateAPIKey(ctx context.Context, name, ownerID string, sco
 // - *model.APIKey: The API key object if found, with an empty Key field.
 // - error: Returns ErrAPIKeyNotFound if the key doesn't exist, or other database errors if the query fails.
 func (s *Datasource) GetAPIKey(ctx context.Context, key string) (*model.APIKey, error) {
-	// Extract prefix for efficient lookup
-	keyPrefix := getKeyPrefix(key)
-	// Authentication always reads PostgreSQL. Cached state can be repopulated
-	// after revocation by an in-flight cache fill and must never authorize.
-	query := `
-		SELECT api_key_id, key, name, owner_id, scopes, expires_at, created_at, last_used_at, is_revoked, revoked_at, key_prefix, COALESCE(parent_api_key_id,'')
-		FROM ledgerforge.api_keys
-		WHERE key_prefix = $1 OR key_prefix IS NULL OR key_prefix = ''
-	`
-
-	rows, err := s.Conn.QueryContext(ctx, query, keyPrefix)
-	if err != nil {
+	// PostgreSQL remains authoritative; a stale cache must never authorize.
+	candidate, foundPrefix, err := s.findAPIKey(ctx, key, false)
+	if foundPrefix || (err != nil && !errors.Is(err, ErrAPIKeyNotFound)) {
+		return candidate, err
+	}
+	if s.disableLegacyAPIKeys {
+		return nil, ErrAPIKeyNotFound
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
+	select {
+	case legacyAPIKeyVerificationSlots <- struct{}{}:
+		defer func() { <-legacyAPIKeyVerificationSlots }()
+	default:
+		return nil, ErrLegacyAPIKeyVerificationBusy
+	}
+	candidate, _, err = s.findAPIKey(ctx, key, true)
+	return candidate, err
+}
 
-	// Check each matching key with bcrypt
+func (s *Datasource) findAPIKey(ctx context.Context, key string, legacy bool) (*model.APIKey, bool, error) {
+	query := prefixedAPIKeyQuery
+	var args []interface{}
+	if legacy {
+		query = legacyAPIKeyQuery
+	} else {
+		args = []interface{}{getKeyPrefix(key)}
+	}
+	rows, err := s.Conn.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, false, err
+	}
+	defer func() { _ = rows.Close() }()
+	found := false
 	for rows.Next() {
+		found = true
 		var candidate model.APIKey
 		var scopes pq.StringArray
 		var storedPrefix sql.NullString
-		err := rows.Scan(
-			&candidate.APIKeyID,
-			&candidate.Key,
-			&candidate.Name,
-			&candidate.OwnerID,
-			&scopes,
-			&candidate.ExpiresAt,
-			&candidate.CreatedAt,
-			&candidate.LastUsedAt,
-			&candidate.IsRevoked,
-			&candidate.RevokedAt,
-			&storedPrefix,
-			&candidate.ParentAPIKeyID,
-		)
-		if err != nil {
-			return nil, err
+		if err := rows.Scan(&candidate.APIKeyID, &candidate.Key, &candidate.Name, &candidate.OwnerID, &scopes,
+			&candidate.ExpiresAt, &candidate.CreatedAt, &candidate.LastUsedAt, &candidate.IsRevoked, &candidate.RevokedAt, &storedPrefix, &candidate.ParentAPIKeyID); err != nil {
+			return nil, found, err
 		}
 		candidate.Scopes = []string(scopes)
-
-		// Verify the key using bcrypt
-		if verifyAPIKey(candidate.Key, key) {
-			// Backfill only after verifying the full legacy key. Close the rows
-			// first so this also works with a single-connection database pool.
-			if !storedPrefix.Valid || storedPrefix.String == "" {
-				if err := rows.Close(); err != nil {
-					return nil, err
-				}
-				_, err := s.Conn.ExecContext(ctx, `UPDATE ledgerforge.api_keys SET key_prefix = $1 WHERE api_key_id = $2 AND key = $3 AND (key_prefix IS NULL OR key_prefix = '')`, keyPrefix, candidate.APIKeyID, candidate.Key)
-				if err != nil {
-					return nil, err
-				}
-			}
-			candidate.Key = ""
-			return &candidate, nil
+		// Also check the application clock before each verification: candidates
+		// can expire after the SQL statement's snapshot was taken.
+		if legacy && !candidate.IsValid() {
+			continue
 		}
+		if err := ctx.Err(); err != nil {
+			return nil, found, err
+		}
+		if !verifyAPIKey(candidate.Key, key) {
+			continue
+		}
+		if legacy {
+			if err := rows.Close(); err != nil {
+				return nil, found, err
+			}
+			_, err := s.Conn.ExecContext(ctx, `UPDATE ledgerforge.api_keys SET key_prefix = $1 WHERE api_key_id = $2 AND key = $3 AND (key_prefix IS NULL OR key_prefix = '')`, getKeyPrefix(key), candidate.APIKeyID, candidate.Key)
+			if err != nil {
+				return nil, found, err
+			}
+		}
+		candidate.Key = ""
+		return &candidate, found, nil
 	}
-
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, found, err
 	}
-	return nil, ErrAPIKeyNotFound
+	return nil, found, ErrAPIKeyNotFound
+}
+
+func (s *Datasource) warnLegacyAPIKeys(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	var count int64
+	err := s.Conn.QueryRowContext(ctx, `SELECT count(*) FROM ledgerforge.api_keys WHERE key_prefix IS NULL OR key_prefix = ''`).Scan(&count)
+	if err != nil {
+		logrus.WithError(err).Warn("could not count legacy API keys at startup")
+		return
+	}
+	if count > 0 {
+		logrus.WithFields(logrus.Fields{"legacy_api_key_count": count, "allow_legacy_api_keys": !s.disableLegacyAPIKeys}).Warn("rotate legacy API keys, revoke the old keys, then set server.allow_legacy_api_keys=false to disable compatibility verification")
+	}
 }
 
 // RevokeAPIKey marks an API key as revoked in the database, preventing its future use.

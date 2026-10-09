@@ -274,3 +274,48 @@ func TestPolicyDelegatedSharedBudgetsAndRetriesPostgres(t *testing.T) {
 	_, err = d.Conn.ExecContext(ctx, `UPDATE ledgerforge.api_keys SET parent_api_key_id=NULL WHERE api_key_id=$1`, child.APIKeyID)
 	require.Error(t, err)
 }
+
+func TestPolicyDelegatedAuthLookupPreservesAncestryPostgres(t *testing.T) {
+	d := openRealTestDB(t)
+	ctx := context.Background()
+	scopes := []string{"transactions:write"}
+	root, err := d.CreateAPIKey(ctx, "lookup-root", model.GenerateUUIDWithSuffix("owner"), scopes, time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	rootCtx := policy.WithPrincipal(ctx, policy.Principal{APIKeyID: root.APIKeyID, Scopes: scopes})
+	child, err := d.CreateAPIKey(rootCtx, "lookup-child", root.OwnerID, scopes, root.ExpiresAt)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = d.Conn.ExecContext(ctx, `DELETE FROM ledgerforge.api_keys WHERE api_key_id=$1`, child.APIKeyID)
+		_, _ = d.Conn.ExecContext(ctx, `DELETE FROM ledgerforge.api_keys WHERE api_key_id=$1`, root.APIKeyID)
+	})
+	_, err = d.PutKeyPolicy(ctx, model.KeyPolicy{APIKeyID: root.APIKeyID, Rules: []model.SpendingRule{{Currency: "USD", Precision: 100, MaxTransaction: "50", DailyLimit: "100", ApprovalAbove: "40"}}})
+	require.NoError(t, err)
+	for _, path := range []string{"indexed", "legacy"} {
+		t.Run(path, func(t *testing.T) {
+			if path == "legacy" {
+				_, err := d.Conn.ExecContext(ctx, `UPDATE ledgerforge.api_keys SET key_prefix=NULL WHERE api_key_id=$1`, child.APIKeyID)
+				require.NoError(t, err)
+			}
+			resolved, err := d.GetAPIKey(ctx, child.Key)
+			require.NoError(t, err)
+			require.Equal(t, root.APIKeyID, resolved.ParentAPIKeyID)
+			require.Equal(t, child.APIKeyID, resolved.APIKeyID)
+			require.Empty(t, resolved.Key)
+			inherited, err := d.GetKeyPolicy(ctx, resolved.APIKeyID)
+			require.NoError(t, err)
+			require.Equal(t, []string{root.APIKeyID}, inherited.InheritedFrom)
+			_, err = d.AdmitPolicy(ctx, resolved.APIKeyID, path+"-denied", []model.PolicyLeg{policyTestLeg(model.GenerateUUIDWithSuffix("ref"), "60")})
+			require.ErrorIs(t, err, policy.ErrDenied)
+			_, err = d.AdmitPolicy(ctx, resolved.APIKeyID, path+"-allowed", []model.PolicyLeg{policyTestLeg(model.GenerateUUIDWithSuffix("ref"), "10")})
+			require.NoError(t, err)
+			var prefix, parent string
+			require.NoError(t, d.Conn.QueryRowContext(ctx, `SELECT key_prefix,parent_api_key_id FROM ledgerforge.api_keys WHERE api_key_id=$1`, child.APIKeyID).Scan(&prefix, &parent))
+			require.Equal(t, getKeyPrefix(child.Key), prefix)
+			require.Equal(t, root.APIKeyID, parent, "backfilling the prefix must preserve ancestry")
+		})
+	}
+	capacity, err := d.PolicyCapacity(ctx, child.APIKeyID)
+	require.NoError(t, err)
+	require.Equal(t, "20", capacity[0].Used)
+	require.Equal(t, "80", *capacity[0].Remaining)
+}
