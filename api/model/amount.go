@@ -24,7 +24,7 @@ import (
 // fields remain available for existing Go clients.
 func exactJSONAmount(data []byte) (string, error) {
 	var payload struct {
-		Amount json.RawMessage `json:"amount"`
+		Amount numericJSONToken `json:"amount"`
 	}
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return "", err
@@ -45,9 +45,19 @@ func (t *RecordTransaction) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+	controls, err := readNumericControlTokens(data)
+	if err != nil {
+		return err
+	}
 	*t = RecordTransaction(decoded)
 	if amount != "" {
 		t.amountDecimal = amount
+	}
+	if controls.precision != "" {
+		t.controls.precision = controls.precision
+	}
+	if controls.overdraftLimit != "" {
+		t.controls.overdraftLimit = controls.overdraftLimit
 	}
 	return nil
 }
