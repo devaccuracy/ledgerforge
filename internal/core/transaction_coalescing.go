@@ -544,6 +544,12 @@ func (l *LedgerForge) canCoalesceQueuedTransaction(transaction *model.Transactio
 	if transaction.ParentTransaction == "" {
 		return false, "missing_parent_transaction"
 	}
+	if transaction.OverdraftLimit != 0 {
+		return false, "capped_overdraft"
+	}
+	if transaction.QueueAction != "" {
+		return false, "lifecycle_action"
+	}
 	if transaction.Status != StatusQueued {
 		return false, "status_not_queued"
 	}
@@ -573,6 +579,12 @@ func (l *LedgerForge) canCoalesceQueuedOriginal(transaction *model.Transaction) 
 	}
 	if transaction == nil {
 		return false, "nil_transaction"
+	}
+	if transaction.OverdraftLimit != 0 {
+		return false, "capped_overdraft"
+	}
+	if transaction.QueueAction != "" {
+		return false, "lifecycle_action"
 	}
 	if transaction.Status != StatusQueued {
 		return false, "status_not_queued"

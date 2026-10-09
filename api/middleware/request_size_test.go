@@ -36,14 +36,16 @@ func TestRequestSizeLimit(t *testing.T) {
 	newRouter := func() *gin.Engine {
 		r := gin.New()
 		r.Use(RequestSizeLimit(limit))
-		r.POST("/echo", func(c *gin.Context) {
+		handler := func(c *gin.Context) {
 			body, err := io.ReadAll(c.Request.Body)
 			if err != nil {
 				c.String(http.StatusRequestEntityTooLarge, "too large")
 				return
 			}
 			c.String(http.StatusOK, "read %d bytes", len(body))
-		})
+		}
+		r.POST("/echo", handler)
+		r.POST("/reconciliation/upload", handler)
 		return r
 	}
 
@@ -67,10 +69,19 @@ func TestRequestSizeLimit(t *testing.T) {
 	t.Run("multipart uploads are not capped by this middleware", func(t *testing.T) {
 		r := newRouter()
 		w := httptest.NewRecorder()
-		req, _ := http.NewRequest("POST", "/echo", strings.NewReader(strings.Repeat("a", limit*4)))
+		req, _ := http.NewRequest("POST", "/reconciliation/upload", strings.NewReader(strings.Repeat("a", limit*4)))
 		req.Header.Set("Content-Type", "multipart/form-data; boundary=x")
 		r.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusOK, w.Code, "uploads enforce their own larger limit")
+	})
+
+	t.Run("multipart header cannot bypass a JSON endpoint limit", func(t *testing.T) {
+		r := newRouter()
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", "/echo", strings.NewReader(strings.Repeat("a", limit*4)))
+		req.Header.Set("Content-Type", "multipart/form-data; boundary=x")
+		r.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusRequestEntityTooLarge, w.Code)
 	})
 
 	t.Run("non-positive limit disables the cap", func(t *testing.T) {

@@ -16,6 +16,7 @@ DECLARE
  binding ledgerforge.policy_bindings%ROWTYPE;
  admission ledgerforge.policy_admissions%ROWTYPE;
  parent_status TEXT;
+ parent_action TEXT;
  binding_reference TEXT;
  original_leg BOOLEAN;
 BEGIN
@@ -23,16 +24,16 @@ BEGIN
  WHERE b.reference=NEW.reference OR b.reference||'_q'=NEW.reference LIMIT 1;
  original_leg := FOUND;
  IF NOT original_leg AND COALESCE(NEW.parent_transaction,'')<>'' THEN
-  SELECT status INTO parent_status FROM ledgerforge.transactions WHERE transaction_id=NEW.parent_transaction;
+  SELECT status,queue_action INTO parent_status,parent_action FROM ledgerforge.transactions WHERE transaction_id=NEW.parent_transaction;
   -- A refund of an applied posting is a new admission, not a hold settlement.
-  IF parent_status='INFLIGHT' THEN
+  IF parent_status='INFLIGHT' OR (parent_status='QUEUED' AND parent_action='COMMIT') THEN
    WITH RECURSIVE ancestors AS (
     SELECT NEW.parent_transaction::text AS transaction_id,0 AS depth
     UNION ALL SELECT t.parent_transaction,a.depth+1 FROM ledgerforge.transactions t
      JOIN ancestors a ON t.transaction_id=a.transaction_id
      WHERE t.parent_transaction<>'' AND t.parent_transaction<>t.transaction_id AND a.depth<16
    ) SELECT b.reference INTO binding_reference FROM ledgerforge.policy_bindings b
-     JOIN ancestors a ON a.transaction_id=b.transaction_id LIMIT 1;
+     JOIN ancestors a ON a.transaction_id=b.transaction_id ORDER BY a.depth LIMIT 1;
   END IF;
  END IF;
  IF binding_reference IS NULL THEN RETURN NEW; END IF;
@@ -46,13 +47,15 @@ BEGIN
     OR (NOT original_leg AND NEW.precise_amount>binding.amount) THEN
   RAISE EXCEPTION 'policy admission transaction details do not match' USING ERRCODE='23514';
  END IF;
- IF binding.released>0 AND NEW.status NOT IN ('VOID','REJECTED') THEN
+ IF NEW.status NOT IN ('VOID','REJECTED') AND binding.released>0
+    AND (original_leg OR NEW.precise_amount>binding.amount-binding.released) THEN
   RAISE EXCEPTION 'policy reservation was released' USING ERRCODE='23514';
  END IF;
  IF NEW.status NOT IN ('VOID','REJECTED') AND admission.decision='rejected' THEN
   RAISE EXCEPTION 'policy approval was rejected' USING ERRCODE='23514';
  END IF;
- IF NEW.status='APPLIED' AND admission.decision NOT IN ('approved','not_required') THEN
+ IF NEW.status NOT IN ('VOID','REJECTED') AND (NEW.status='APPLIED' OR NEW.queue_action='COMMIT')
+    AND admission.decision NOT IN ('approved','not_required') THEN
   RAISE EXCEPTION 'policy transaction requires independent approval' USING ERRCODE='23514';
  END IF;
  IF NEW.status='APPLIED' AND original_leg AND admission.decision='approved' THEN

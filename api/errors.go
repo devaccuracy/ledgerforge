@@ -18,6 +18,7 @@ package api
 import (
 	"database/sql"
 	"errors"
+	"net/http"
 	"strings"
 
 	"github.com/devaccuracy/ledgerforge"
@@ -129,50 +130,89 @@ func respondCode(c *gin.Context, code apierror.ErrorCode, message string, detail
 	writeError(c, code, message, details, buildOptions(opts))
 }
 
-// respondError resolves err to a catalog code and writes the dual payload.
-// Resolution order: typed APIError → known sentinels → message patterns →
-// fallback (withDefault or GEN_INTERNAL with a sanitized message).
-func respondError(c *gin.Context, err error, opts ...respondOpt) {
-	o := buildOptions(opts)
-	if err == nil {
-		writeError(c, apierror.ErrGenInternal, sanitizedInternalMessage, nil, o)
-		return
+// clientErrorMessage never serializes an unstructured backend error. Typed
+// API errors carry deliberate public messages; their details stay server-side.
+func clientErrorMessage(err error, code apierror.ErrorCode) string {
+	if apierror.StatusForCode(code) >= 500 {
+		return sanitizedInternalMessage
 	}
-
 	var apiErr apierror.APIError
 	if errors.As(err, &apiErr) {
-		writeError(c, apiErr.Code, apiErr.Message, apiErr.Details, o)
+		return apiErr.Message
+	}
+	var apiErrPtr *apierror.APIError
+	if errors.As(err, &apiErrPtr) && apiErrPtr != nil {
+		return apiErrPtr.Message
+	}
+	messages := map[apierror.ErrorCode]string{
+		apierror.ErrGenNotFound:              "resource not found",
+		apierror.ErrAPIKeyNotFound:           "API key not found",
+		apierror.ErrAuthInvalidAPIKey:        "invalid API key",
+		apierror.ErrTxnNotFound:              "transaction not found",
+		apierror.ErrTxnNotInflight:           "transaction is not in inflight status",
+		apierror.ErrTxnAlreadyCommitted:      "transaction already committed",
+		apierror.ErrTxnAlreadyVoided:         "transaction has already been voided",
+		apierror.ErrTxnAlreadyRefunded:       "transaction has already been refunded",
+		apierror.ErrTxnDuplicateReference:    "reference has already been used",
+		apierror.ErrTxnCommitAmountExceeded:  "cannot commit more than the remaining amount",
+		apierror.ErrTxnInsufficientFunds:     "insufficient funds",
+		apierror.ErrTxnInvalidAmount:         "transaction amount must be positive",
+		apierror.ErrGenResourceLocked:        "resource is locked; retry the request",
+		apierror.ErrGenConflict:              "request conflicts with current state",
+		apierror.ErrBalHistoryNotFound:       "no balance data found for the requested time",
+		apierror.ErrBalInvalidTimestamp:      "invalid timestamp format",
+		apierror.ErrIdtTokenizationDisabled:  "tokenization is disabled",
+		apierror.ErrIdtFieldNotTokenizable:   "field is not tokenizable",
+		apierror.ErrIdtFieldAlreadyTokenized: "field is already tokenized",
+		apierror.ErrIdtFieldNotTokenized:     "field is not tokenized",
+		apierror.ErrIdtFieldNotFound:         "field not found",
+		apierror.ErrMetaEntityNotFound:       "entity not found",
+		apierror.ErrMetaUnsupportedEntity:    "unsupported entity type",
+		apierror.ErrMetaInvalidEntityID:      "invalid entity ID",
+		apierror.ErrQueueBackpressure:        "queue is busy; retry the request",
+		apierror.ErrGenRateLimited:           "too many requests; retry later",
+	}
+	if msg, ok := messages[code]; ok {
+		return msg
+	}
+	return "request could not be completed"
+}
+
+func respondError(c *gin.Context, err error, opts ...respondOpt) {
+	o := buildOptions(opts)
+	logrus.WithError(err).Error("API request failed")
+	var sizeErr *http.MaxBytesError
+	if errors.As(err, &sizeErr) {
+		writeError(c, apierror.ErrGenPayloadTooLarge, "request body too large", nil, o)
 		return
 	}
-
-	if code, ok := classifySentinel(err); ok {
-		writeError(c, code, err.Error(), nil, o)
-		return
-	}
-
-	if code, ok := classifyMessage(err.Error()); ok {
-		writeError(c, code, err.Error(), nil, o)
-		return
-	}
-
-	if o.defaultCode != "" {
-		msg := err.Error()
-		if o.fallbackMessage != "" {
-			msg = o.fallbackMessage
-			logrus.WithError(err).Error("API error masked by fallback message")
+	code, ok := resolveErrorCode(err)
+	if !ok {
+		code = o.defaultCode
+		if code == "" {
+			code = apierror.ErrGenInternal
 		}
-		writeError(c, o.defaultCode, msg, nil, o)
-		return
 	}
-
-	logrus.WithError(err).Error("unclassified error in API response")
-	writeError(c, apierror.ErrGenInternal, sanitizedInternalMessage, nil, o)
+	msg := clientErrorMessage(err, code)
+	if !ok && o.fallbackMessage != "" {
+		msg = o.fallbackMessage
+	}
+	var details interface{}
+	var typed apierror.APIError
+	if errors.As(err, &typed) {
+		details = typed.Details
+	}
+	writeError(c, code, msg, details, o)
 }
 
 func writeError(c *gin.Context, code apierror.ErrorCode, message string, details interface{}, o *respondOptions) {
 	code = apierror.Normalize(code)
 	if to, ok := o.upgrades[code]; ok {
 		code = to
+	}
+	if _, ok := details.(error); ok {
+		logrus.WithField("details", details).Error("API error details suppressed")
+		details = nil
 	}
 	legacyValue := o.legacyValue
 	if legacyValue == nil {
@@ -290,6 +330,10 @@ func resolveErrorCode(err error) (apierror.ErrorCode, bool) {
 	if errors.As(err, &apiErr) {
 		return apierror.Normalize(apiErr.Code), true
 	}
+	var apiErrPtr *apierror.APIError
+	if errors.As(err, &apiErrPtr) && apiErrPtr != nil {
+		return apierror.Normalize(apiErrPtr.Code), true
+	}
 	if code, ok := classifySentinel(err); ok {
 		return code, true
 	}
@@ -324,6 +368,10 @@ func classifyMessage(msg string) (apierror.ErrorCode, bool) {
 // respondBareAPIError preserves the hooks endpoints' historical body shape —
 // a top-level {code, message, details} object — while adding error_detail.
 func respondBareAPIError(c *gin.Context, legacy apierror.APIError, code apierror.ErrorCode) {
+	if _, ok := legacy.Details.(error); ok {
+		logrus.WithField("details", legacy.Details).Error("API error details suppressed")
+		legacy.Details = nil
+	}
 	code = apierror.Normalize(code)
 	c.JSON(apierror.StatusForCode(code), gin.H{
 		"code":         legacy.Code,
@@ -336,6 +384,10 @@ func respondBareAPIError(c *gin.Context, legacy apierror.APIError, code apierror
 // respondNestedAPIError preserves the admin endpoints' historical shape —
 // the APIError object under "error" — while adding error_detail.
 func respondNestedAPIError(c *gin.Context, legacy apierror.APIError, code apierror.ErrorCode) {
+	if _, ok := legacy.Details.(error); ok {
+		logrus.WithField("details", legacy.Details).Error("API error details suppressed")
+		legacy.Details = nil
+	}
 	code = apierror.Normalize(code)
 	c.JSON(apierror.StatusForCode(code), gin.H{
 		"error":        legacy,

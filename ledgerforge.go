@@ -31,6 +31,7 @@ import (
 	"github.com/devaccuracy/ledgerforge/config"
 	"github.com/devaccuracy/ledgerforge/database"
 	"github.com/devaccuracy/ledgerforge/internal/core"
+	"github.com/devaccuracy/ledgerforge/internal/search"
 	"github.com/devaccuracy/ledgerforge/model"
 )
 
@@ -60,6 +61,7 @@ const (
 )
 
 type (
+	ReindexProgress                    = search.ReindexProgress
 	RefundOptions                      = core.RefundOptions
 	BulkTransactionError               = core.BulkTransactionError
 	InflightActionPayload              = core.InflightActionPayload
@@ -145,3 +147,10 @@ func IsDuplicateReferenceError(err error) bool { return core.IsDuplicateReferenc
 func NewQueueWithRedisClient(conf *config.Configuration, client *asynq.Client, redisClient redis.UniversalClient) *Queue {
 	return core.NewQueue(conf, client, redisClient)
 }
+
+// Reindex errors preserve admission and progress semantics across transports.
+var (
+	ErrReindexInProgress = search.ErrReindexInProgress
+	ErrReindexNotStarted = search.ErrReindexNotStarted
+	ErrReindexClosed     = search.ErrReindexClosed
+)

@@ -224,7 +224,7 @@ func TestRecordTransaction(t *testing.T) {
 	// Expect transaction insertion within the same atomic transaction.
 	// RecordTransaction applies precision before persist, so amount is the
 	// materialised AmountString ("10"), not the empty value on the input txn.
-	expectedSQL := `INSERT INTO ledgerforge.transactions(transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`
+	expectedSQL := `INSERT INTO ledgerforge.transactions(transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date, rate, overdraft_limit, queue_action) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`
 	mock.ExpectExec(regexp.QuoteMeta(expectedSQL)).WithArgs(
 		sqlmock.AnyArg(), // transaction_id
 		sqlmock.AnyArg(), // parent_transaction
@@ -242,6 +242,7 @@ func TestRecordTransaction(t *testing.T) {
 		sqlmock.AnyArg(), // scheduled_for
 		sqlmock.AnyArg(), // hash
 		sqlmock.AnyArg(), // effective_date
+		sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
 	).WillReturnResult(sqlmock.NewResult(1, 1))
 
 	// Commit atomic transaction (balance updates + transaction insert)
@@ -344,12 +345,13 @@ func TestRecordTransaction_AtomicRollback_InsertFails(t *testing.T) {
 		sqlmock.AnyArg(), sqlmock.AnyArg(),
 	).WillReturnResult(sqlmock.NewResult(1, 1))
 
-	expectedSQL := `INSERT INTO ledgerforge.transactions(transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`
+	expectedSQL := `INSERT INTO ledgerforge.transactions(transaction_id, parent_transaction, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, scheduled_for, hash, effective_date, rate, overdraft_limit, queue_action) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`
 	mock.ExpectExec(regexp.QuoteMeta(expectedSQL)).WithArgs(
 		sqlmock.AnyArg(), sqlmock.AnyArg(), source, reference,
 		sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
 		destination, sqlmock.AnyArg(), sqlmock.AnyArg(),
 		sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+		sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
 	).WillReturnError(fmt.Errorf("database connection lost - simulated failure"))
 
 	mock.ExpectRollback()
@@ -554,10 +556,10 @@ func TestVoidInflightTransaction_Negative(t *testing.T) {
 	t.Run("Transaction not in INFLIGHT status", func(t *testing.T) {
 		transactionID := gofakeit.UUID()
 
-		mock.ExpectQuery(regexp.QuoteMeta(`SELECT transaction_id, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, parent_transaction, hash, effective_date FROM ledgerforge.transactions WHERE transaction_id = $1`)).
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT transaction_id, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, parent_transaction, hash, effective_date, rate, overdraft_limit, queue_action FROM ledgerforge.transactions WHERE transaction_id = $1`)).
 			WithArgs(transactionID).
-			WillReturnRows(sqlmock.NewRows([]string{"transaction_id", "source", "reference", "amount", "precise_amount", "precision", "currency", "destination", "description", "status", "created_at", "meta_data", "parent_transaction", "hash", "effective_date"}).
-				AddRow(transactionID, source, gofakeit.UUID(), 100.0, 10000, 100, "USD", destination, gofakeit.UUID(), "APPLIED", time.Now(), metaDataJSON, "", "", nil))
+			WillReturnRows(sqlmock.NewRows([]string{"transaction_id", "source", "reference", "amount", "precise_amount", "precision", "currency", "destination", "description", "status", "created_at", "meta_data", "parent_transaction", "hash", "effective_date", "rate", "overdraft_limit", "queue_action"}).
+				AddRow(transactionID, source, gofakeit.UUID(), 100.0, 10000, 100, "USD", destination, gofakeit.UUID(), "APPLIED", time.Now(), metaDataJSON, "", "", nil, 0, 0, ""))
 
 		_, err := d.VoidInflightTransaction(context.Background(), transactionID)
 		assert.Error(t, err)
@@ -567,10 +569,10 @@ func TestVoidInflightTransaction_Negative(t *testing.T) {
 	t.Run("Transaction already voided", func(t *testing.T) {
 		transactionID := gofakeit.UUID()
 
-		mock.ExpectQuery(regexp.QuoteMeta(`SELECT transaction_id, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, parent_transaction, hash, effective_date FROM ledgerforge.transactions WHERE transaction_id = $1`)).
+		mock.ExpectQuery(regexp.QuoteMeta(`SELECT transaction_id, source, reference, amount, precise_amount, precision, currency, destination, description, status, created_at, meta_data, parent_transaction, hash, effective_date, rate, overdraft_limit, queue_action FROM ledgerforge.transactions WHERE transaction_id = $1`)).
 			WithArgs(transactionID).
-			WillReturnRows(sqlmock.NewRows([]string{"transaction_id", "source", "reference", "amount", "precise_amount", "precision", "currency", "destination", "description", "status", "created_at", "meta_data", "parent_transaction", "hash", "effective_date"}).
-				AddRow(transactionID, source, gofakeit.UUID(), 100.0, 10000, 100, "USD", destination, gofakeit.UUID(), "INFLIGHT", time.Now(), metaDataJSON, "", "", nil))
+			WillReturnRows(sqlmock.NewRows([]string{"transaction_id", "source", "reference", "amount", "precise_amount", "precision", "currency", "destination", "description", "status", "created_at", "meta_data", "parent_transaction", "hash", "effective_date", "rate", "overdraft_limit", "queue_action"}).
+				AddRow(transactionID, source, gofakeit.UUID(), 100.0, 10000, 100, "USD", destination, gofakeit.UUID(), "INFLIGHT", time.Now(), metaDataJSON, "", "", nil, 0, 0, ""))
 
 		// Mock IsParentTransactionVoid
 		mock.ExpectQuery(regexp.QuoteMeta(`SELECT EXISTS ( SELECT 1 FROM ledgerforge.transactions WHERE parent_transaction = $1 AND status = 'VOID' )`)).
@@ -4803,14 +4805,14 @@ func TestInflightTransactionFlowAsyncPolled(t *testing.T) {
 	t.Logf("Submitting first partial commit (amount: %s) for inflightTxn ID: %s, original queuedTxn ID: %s", partialAmount1Precise.String(), inflightTxn.TransactionID, queuedTxn.TransactionID)
 	commitTxn1, err := ledgerforgeInstance.CommitInflightTransactionWithQueue(ctx, inflightTxn.TransactionID, partialAmount1Precise)
 	require.NoError(t, err, "Failed to submit first partial commit")
-	require.Equal(t, StatusApplied, commitTxn1.Status, "First partial commit submission should have status COMMIT")
+	require.Equal(t, StatusQueued, commitTxn1.Status, "First partial commit submission should have status COMMIT")
 
 	t.Logf("Polling for first APPLIED commit transaction (Ref: %s)", commitTxn1.Reference)
-	appliedCommitTxn1, err := pollForTransactionStatus(ctx, ds, commitTxn1.Reference, StatusApplied, pollInterval, timeoutDuration)
+	appliedCommitTxn1, err := pollForTransactionStatus(ctx, ds, commitTxn1.Reference+"_q", StatusApplied, pollInterval, timeoutDuration)
 	require.NoError(t, err, fmt.Sprintf("Polling failed for first applied commit (Ref: %s). Error: %v", commitTxn1.Reference, err))
 	require.NotNil(t, appliedCommitTxn1, "First applied commit transaction should not be nil")
 	require.Equal(t, StatusApplied, appliedCommitTxn1.Status, "First commit transaction status should be APPLIED")
-	require.Equal(t, inflightTxn.TransactionID, appliedCommitTxn1.ParentTransaction, "First applied commit parent ID mismatch")
+	require.Equal(t, commitTxn1.TransactionID, appliedCommitTxn1.ParentTransaction, "First applied commit parent ID mismatch")
 
 	// Verify balances after first partial commit
 	sourceAfterPartial1, _ := ds.GetBalanceByIDLite(source.BalanceID)
@@ -4831,14 +4833,14 @@ func TestInflightTransactionFlowAsyncPolled(t *testing.T) {
 	t.Logf("Submitting second partial commit (amount: %s) for inflightTxn ID: %s", partialAmount2Precise.String(), inflightTxn.TransactionID)
 	commitTxn2, err := ledgerforgeInstance.CommitInflightTransactionWithQueue(ctx, inflightTxn.TransactionID, partialAmount2Precise)
 	require.NoError(t, err, "Failed to submit second partial commit")
-	require.Equal(t, StatusApplied, commitTxn2.Status, "Second partial commit submission should have status COMMIT")
+	require.Equal(t, StatusQueued, commitTxn2.Status, "Second partial commit submission should have status COMMIT")
 
 	t.Logf("Polling for second APPLIED commit transaction (Ref: %s)", commitTxn2.Reference)
-	appliedCommitTxn2, err := pollForTransactionStatus(ctx, ds, commitTxn2.Reference, StatusApplied, pollInterval, timeoutDuration)
+	appliedCommitTxn2, err := pollForTransactionStatus(ctx, ds, commitTxn2.Reference+"_q", StatusApplied, pollInterval, timeoutDuration)
 	require.NoError(t, err, fmt.Sprintf("Polling failed for second applied commit (Ref: %s). Error: %v", commitTxn2.Reference, err))
 	require.NotNil(t, appliedCommitTxn2, "Second applied commit transaction should not be nil")
 	require.Equal(t, StatusApplied, appliedCommitTxn2.Status, "Second commit transaction status should be APPLIED")
-	require.Equal(t, inflightTxn.TransactionID, appliedCommitTxn2.ParentTransaction, "Second applied commit parent ID mismatch")
+	require.Equal(t, commitTxn2.TransactionID, appliedCommitTxn2.ParentTransaction, "Second applied commit parent ID mismatch")
 
 	// Verify balances after second partial commit
 	sourceAfterPartial2, _ := ds.GetBalanceByIDLite(source.BalanceID)
@@ -4861,14 +4863,14 @@ func TestInflightTransactionFlowAsyncPolled(t *testing.T) {
 	t.Logf("Submitting third partial commit (remaining amount) for inflightTxn ID: %s", inflightTxn.TransactionID)
 	commitTxn3, err := ledgerforgeInstance.CommitInflightTransactionWithQueue(ctx, inflightTxn.TransactionID, big.NewInt(0))
 	require.NoError(t, err, "Failed to submit third partial commit (remaining)")
-	require.Equal(t, StatusApplied, commitTxn3.Status, "Third partial commit submission should have status COMMIT")
+	require.Equal(t, StatusQueued, commitTxn3.Status, "Third partial commit submission should have status COMMIT")
 
 	t.Logf("Polling for third APPLIED commit transaction (Ref: %s)", commitTxn3.Reference)
-	appliedCommitTxn3, err := pollForTransactionStatus(ctx, ds, commitTxn3.Reference, StatusApplied, pollInterval, timeoutDuration)
+	appliedCommitTxn3, err := pollForTransactionStatus(ctx, ds, commitTxn3.Reference+"_q", StatusApplied, pollInterval, timeoutDuration)
 	require.NoError(t, err, fmt.Sprintf("Polling failed for third applied commit (Ref: %s). Error: %v", commitTxn3.Reference, err))
 	require.NotNil(t, appliedCommitTxn3, "Third applied commit transaction should not be nil")
 	require.Equal(t, StatusApplied, appliedCommitTxn3.Status, "Third commit transaction status should be APPLIED")
-	require.Equal(t, inflightTxn.TransactionID, appliedCommitTxn3.ParentTransaction, "Third applied commit parent ID mismatch")
+	require.Equal(t, commitTxn3.TransactionID, appliedCommitTxn3.ParentTransaction, "Third applied commit parent ID mismatch")
 
 	// Verify final balances after all commits
 	finalSource, _ := ds.GetBalanceByIDLite(source.BalanceID)

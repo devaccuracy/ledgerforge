@@ -142,10 +142,10 @@ func (l *LedgerForge) admitBulkPolicy(ctx context.Context, req *model.BulkTransa
 		if t == nil {
 			return ctx, fmt.Errorf("nil bulk transaction")
 		}
-		setTransactionMetadata(t)
 		if err = t.ValidateAmount(); err != nil {
 			return ctx, err
 		}
+		setTransactionMetadata(t)
 		refs = append(refs, t.Reference)
 		if len(t.Sources) > 0 || len(t.Destinations) > 0 {
 			split, e := l.handleSplitTransactions(ctx, t)
@@ -216,6 +216,9 @@ func (l *LedgerForge) admitDirectPolicy(ctx context.Context, t *model.Transactio
 	}
 	if p == nil {
 		return ctx, nil
+	}
+	if err := t.ValidateAmount(); err != nil {
+		return ctx, err
 	}
 	setTransactionMetadata(t)
 	setTransactionStatus(t)
@@ -347,6 +350,9 @@ func clearCallerPolicyMetadata(ctx context.Context, t *model.Transaction) {
 }
 
 func (l *LedgerForge) verifyQueuedPolicy(ctx context.Context, t *model.Transaction) error {
+	if t.Status == StatusCommit || t.QueueAction == StatusCommit {
+		return l.checkPolicyCommit(ctx, t.ParentTransaction)
+	}
 	store := l.policyStore()
 	if store == nil {
 		return nil
@@ -378,13 +384,6 @@ func (l *LedgerForge) failPolicyTransactions(ctx context.Context, txns []*model.
 		}
 		l.releasePolicyCapacity(ctx, t.TransactionID)
 	}
-}
-
-func policyAsyncTransactions(t *model.Transaction, txns []*model.Transaction) []*model.Transaction {
-	if policyMarked(t) {
-		return cloneTransactionsForAsync(txns)
-	}
-	return txns
 }
 
 func (l *LedgerForge) failPolicyBulk(ctx context.Context, txns []*model.Transaction) {

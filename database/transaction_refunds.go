@@ -41,10 +41,10 @@ func refundableTransactionsByParentIDSQL() string {
 			-- Case 1: The transaction is the parent itself and is APPLIED
 			(t.transaction_id = $1 AND t.status = 'APPLIED')
 
-			-- Case 2: APPLIED/VOID children, excluding auto-refunds (model.RefundReferenceSuffix).
+			-- Case 2: APPLIED children, excluding auto-refunds (model.RefundReferenceSuffix).
 			-- Split legs stay refundable; refund rows are excluded by reference, not parentage.
 			OR (t.parent_transaction = $1
-				AND t.status IN ('APPLIED', 'VOID')
+				AND t.status = 'APPLIED'
 				AND t.reference IS DISTINCT FROM t.parent_transaction || '%[1]s')
 
 			-- Case 3: APPLIED rows linked via QUEUED_PARENT_TRANSACTION, same refund exclusion

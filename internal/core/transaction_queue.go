@@ -24,7 +24,6 @@ import (
 
 	"github.com/devaccuracy/ledgerforge/internal/hotpairs"
 	"github.com/devaccuracy/ledgerforge/internal/notification"
-	"github.com/devaccuracy/ledgerforge/internal/policy"
 	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel/attribute"
@@ -75,11 +74,11 @@ func (l *LedgerForge) QueueTransaction(ctx context.Context, transaction *model.T
 
 	// Initialize transaction metadata and status
 	originalRef := transaction.Reference
-	setTransactionMetadata(transaction)
 	if err := transaction.ValidateAmount(); err != nil {
 		span.RecordError(err)
 		return nil, err
 	}
+	setTransactionMetadata(transaction)
 	setTransactionStatus(transaction)
 	originalTxnID := transaction.TransactionID
 
@@ -144,8 +143,17 @@ func (l *LedgerForge) QueueTransaction(ctx context.Context, transaction *model.T
 		if strings.Contains(transaction.ParentTransaction, "bulk") {
 			transaction.MetaData["QUEUED_PARENT_TRANSACTION"] = transaction.ParentTransaction
 		}
-		// For normal queue mode, process asynchronously
-		processTransactionAsync(policy.Internal(context.Background()), l, transaction, originalRef, originalTxnID, policyAsyncTransactions(transaction, transactions))
+		// Persist acceptance after admission and before handing work to the queue.
+		queueTransactions, err := l.processTxns(ctx, transaction, transactions, originalTxnID, originalRef)
+		if err != nil {
+			span.RecordError(err)
+			l.failPolicyBulk(ctx, []*model.Transaction{transaction})
+			return nil, err
+		}
+		if err := enqueueTransactions(ctx, l.queue, transaction, queueTransactions); err != nil {
+			span.RecordError(err)
+			return nil, err
+		}
 	}
 
 	span.AddEvent("Transaction successfully queued", trace.WithAttributes(
@@ -170,35 +178,6 @@ func (l *LedgerForge) QueueTransaction(ctx context.Context, transaction *model.T
 	}
 
 	return transaction, nil
-}
-
-func processTransactionAsync(ctx context.Context, l *LedgerForge, transaction *model.Transaction, originalRef string, originalTxnID string, transactions []*model.Transaction) {
-	// The background worker mutates the transaction (metadata, timestamps,
-	// precise amount) while the caller still holds the pointer returned from
-	// QueueTransaction. Snapshot it so the worker never races a caller that
-	// inspects the returned transaction.
-	asyncTxn := cloneTransactionForAsync(transaction)
-	go func() {
-		if err := asyncTxnSemaphore.Acquire(ctx, 1); err != nil {
-			logrus.WithError(err).Error("failed to acquire async txn semaphore")
-			return
-		}
-		defer asyncTxnSemaphore.Release(1)
-
-		ctx, span := tracer.Start(ctx, "ProcessTransactionAsync")
-		defer span.End()
-
-		queueTransactions, err := l.processTxns(ctx, asyncTxn, transactions, originalTxnID, originalRef)
-		if err != nil {
-			span.RecordError(err)
-		}
-
-		if !asyncTxn.SkipQueue {
-			if err := enqueueTransactions(ctx, l.queue, asyncTxn, queueTransactions); err != nil {
-				span.RecordError(err)
-			}
-		}
-	}()
 }
 
 // cloneTransactionForAsync returns a copy of the transaction safe to hand to the
@@ -420,6 +399,10 @@ func createQueueCopy(persistedTxn *model.Transaction, originalRef string) *model
 	queueTxn.TransactionID = model.GenerateUUIDWithSuffix("txn")
 	queueTxn.ParentTransaction = persistedTxn.TransactionID
 	queueTxn.Reference = fmt.Sprintf("%s_q", originalRef)
+	if persistedTxn.QueueAction == StatusCommit {
+		queueTxn.Status = StatusCommit
+		queueTxn.Inflight = false
+	}
 	return &queueTxn
 }
 
@@ -457,7 +440,11 @@ func enqueueTransactions(ctx context.Context, queue *Queue, originalTransaction 
 
 	for _, txn := range transactionsToEnqueue {
 		if err := queue.Enqueue(ctx, txn); err != nil {
-			notification.NotifyError(err)
+			if queue.notifyError != nil {
+				queue.notifyError(err)
+			} else {
+				notification.NotifyError(err)
+			}
 			logrus.WithError(err).Error("failed to queue transaction")
 			return err
 		}

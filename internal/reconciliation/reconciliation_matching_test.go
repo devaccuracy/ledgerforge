@@ -13,7 +13,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-package core
+package reconciliation
 
 import (
 	"context"
@@ -36,7 +36,7 @@ var reconBaseTime = time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC)
 // --- amount matching ---
 
 func TestRecon_MatchesGroupAmount_EqualsBoundaries(t *testing.T) {
-	b := &LedgerForge{}
+	b := &Service{}
 
 	// AllowableDrift is a FRACTION of the internal amount (0.25 => 25%); the
 	// validator and SQL prefilter use the same unit. These cases pin the
@@ -70,7 +70,7 @@ func TestRecon_MatchesGroupAmount_EqualsBoundaries(t *testing.T) {
 }
 
 func TestRecon_MatchesGroupAmount_GreaterAndLessThanAreStrict(t *testing.T) {
-	b := &LedgerForge{}
+	b := &Service{}
 
 	gt := model.MatchingCriteria{Field: "amount", Operator: "greater_than"}
 	assert.True(t, b.matchesGroupAmount(100.01, 100, gt))
@@ -84,7 +84,7 @@ func TestRecon_MatchesGroupAmount_GreaterAndLessThanAreStrict(t *testing.T) {
 }
 
 func TestRecon_MatchesGroupAmount_UnknownOperatorNeverMatches(t *testing.T) {
-	b := &LedgerForge{}
+	b := &Service{}
 	// "contains" passes rule validation for the amount field but has no
 	// implementation here: it must never match (fail closed).
 	assert.False(t, b.matchesGroupAmount(100, 100, model.MatchingCriteria{Field: "amount", Operator: "contains"}))
@@ -96,7 +96,7 @@ func TestRecon_AmountDriftFractionSemantics(t *testing.T) {
 	// treated AllowableDrift as a percentage while the matcher treated it as
 	// a fraction, a 100x mismatch. The canonical unit is now a FRACTION
 	// (0.01 = 1%) in all three places.
-	b := &LedgerForge{}
+	b := &Service{}
 	criteria := model.MatchingCriteria{Field: "amount", Operator: "equals", AllowableDrift: 0.01} // 1%
 	assert.False(t, b.matchesGroupAmount(150, 100, criteria), "a 50%% deviation must not satisfy a 1%% drift rule")
 	assert.True(t, b.matchesGroupAmount(100.5, 100, criteria), "a 0.5%% deviation must satisfy a 1%% drift rule")
@@ -108,7 +108,7 @@ func TestRecon_NegativeAmountsMatchWithinDrift(t *testing.T) {
 	// Regression: the matcher used to compute groupAmount*AllowableDrift
 	// without abs(), so negative internal amounts (refunds, debits) produced
 	// a negative tolerance and could never reconcile.
-	b := &LedgerForge{}
+	b := &Service{}
 	criteria := model.MatchingCriteria{Field: "amount", Operator: "equals", AllowableDrift: 0.01}
 	assert.True(t, b.matchesGroupAmount(-100, -100, criteria), "identical negative amounts must match")
 	assert.True(t, b.matchesGroupAmount(-100.5, -100, criteria), "negative amounts within drift must match")
@@ -118,7 +118,7 @@ func TestRecon_NegativeAmountsMatchWithinDrift(t *testing.T) {
 // --- date matching ---
 
 func TestRecon_MatchesGroupDate_EqualsBoundaries(t *testing.T) {
-	b := &LedgerForge{}
+	b := &Service{}
 
 	tests := []struct {
 		name     string
@@ -146,7 +146,7 @@ func TestRecon_MatchesGroupDate_EqualsBoundaries(t *testing.T) {
 }
 
 func TestRecon_MatchesGroupDate_AfterBefore(t *testing.T) {
-	b := &LedgerForge{}
+	b := &Service{}
 
 	after := model.MatchingCriteria{Field: "date", Operator: "after"}
 	assert.True(t, b.matchesGroupDate(reconBaseTime.Add(time.Nanosecond), reconBaseTime, after))
@@ -163,7 +163,7 @@ func TestRecon_MatchesGroupDate_AfterBefore(t *testing.T) {
 func TestRecon_DateDriftComparesFractionalSeconds(t *testing.T) {
 	// Regression: integer Duration division used to truncate the sub-second
 	// remainder, so a 60.9s difference passed a 60s drift rule.
-	b := &LedgerForge{}
+	b := &Service{}
 
 	drift60 := model.MatchingCriteria{Field: "date", Operator: "equals", AllowableDrift: 60}
 	assert.False(t, b.matchesGroupDate(reconBaseTime.Add(60*time.Second+900*time.Millisecond), reconBaseTime, drift60),
@@ -179,7 +179,7 @@ func TestRecon_DateOperatorsAlignedWithValidation(t *testing.T) {
 	// matcher only implemented after/before, so every validated date
 	// comparison rule silently evaluated to false. greater_than/less_than
 	// now alias after/before.
-	b := &LedgerForge{}
+	b := &Service{}
 
 	// greater_than is accepted by validation for the date field...
 	require.NoError(t, b.validateCriteria(model.MatchingCriteria{Field: "date", Operator: "greater_than"}))
@@ -193,7 +193,7 @@ func TestRecon_DateOperatorsAlignedWithValidation(t *testing.T) {
 // --- string / currency matching ---
 
 func TestRecon_MatchesString_Equals(t *testing.T) {
-	b := &LedgerForge{}
+	b := &Service{}
 	equals := model.MatchingCriteria{Operator: "equals"}
 
 	assert.True(t, b.matchesString("REF-1", "REF-1", equals))
@@ -210,7 +210,7 @@ func TestRecon_MatchesString_Equals(t *testing.T) {
 }
 
 func TestRecon_MatchesString_ContainsAndLevenshteinBoundary(t *testing.T) {
-	b := &LedgerForge{}
+	b := &Service{}
 
 	t.Run("substring containment matches regardless of drift", func(t *testing.T) {
 		c := model.MatchingCriteria{Operator: "contains", AllowableDrift: 0}
@@ -243,7 +243,7 @@ func TestRecon_MatchesString_ContainsAndLevenshteinBoundary(t *testing.T) {
 }
 
 func TestRecon_MatchesCurrency(t *testing.T) {
-	b := &LedgerForge{}
+	b := &Service{}
 	equals := model.MatchingCriteria{Operator: "equals"}
 
 	assert.True(t, b.matchesCurrency("USD", "USD", equals))
@@ -254,7 +254,7 @@ func TestRecon_MatchesCurrency(t *testing.T) {
 }
 
 func TestRecon_DominantCurrency(t *testing.T) {
-	b := &LedgerForge{}
+	b := &Service{}
 	assert.Equal(t, "USD", b.dominantCurrency(map[string]bool{"USD": true}))
 	assert.Equal(t, "MIXED", b.dominantCurrency(map[string]bool{"USD": true, "EUR": true}))
 	assert.Equal(t, "MIXED", b.dominantCurrency(map[string]bool{}))
@@ -263,7 +263,7 @@ func TestRecon_DominantCurrency(t *testing.T) {
 // --- matchesRules / matchesGroup ---
 
 func TestRecon_MatchesRules_EdgeCases(t *testing.T) {
-	b := &LedgerForge{}
+	b := &Service{}
 	external := &model.Transaction{TransactionID: "ext_1", Amount: 100, CreatedAt: reconBaseTime, Currency: "USD", Reference: "REF-1", Description: "salary"}
 	internal := model.Transaction{TransactionID: "int_1", Amount: 100, CreatedAt: reconBaseTime, Currency: "USD", Reference: "REF-1", Description: "salary"}
 
@@ -313,7 +313,7 @@ func TestRecon_MatchesRules_EdgeCases(t *testing.T) {
 }
 
 func TestRecon_MatchesGroup_SumAndEarliestDate(t *testing.T) {
-	b := &LedgerForge{}
+	b := &Service{}
 
 	group := []*model.Transaction{
 		{TransactionID: "int_1", Amount: 100.25, CreatedAt: reconBaseTime.Add(2 * time.Hour), Description: "Part A", Reference: "RA", Currency: "USD"},
@@ -365,7 +365,7 @@ func TestRecon_MatchesGroup_SumAndEarliestDate(t *testing.T) {
 // --- calculateMatchingBounds ---
 
 func TestRecon_CalculateMatchingBounds(t *testing.T) {
-	b := &LedgerForge{}
+	b := &Service{}
 	external := &model.Transaction{TransactionID: "ext_1", Amount: 200, CreatedAt: reconBaseTime, Currency: "USD"}
 
 	rule := func(criteria ...model.MatchingCriteria) model.MatchingRule {
@@ -443,7 +443,7 @@ func TestRecon_CalculateMatchingBounds(t *testing.T) {
 func TestRecon_OneToOne_ExactMatchAndQueryBounds(t *testing.T) {
 	storeReconEngineConfig()
 	mockDS := new(mocks.MockDataSource)
-	b := &LedgerForge{datasource: mockDS}
+	b := testService(mockDS)
 
 	external := &model.Transaction{TransactionID: "ext_1", Amount: 100, CreatedAt: reconBaseTime, Currency: "USD", Reference: "REF-1"}
 	internal := &model.Transaction{TransactionID: "int_1", Amount: 100, CreatedAt: reconBaseTime, Currency: "USD", Reference: "REF-1"}
@@ -474,7 +474,7 @@ func TestRecon_OneToOne_ExactMatchAndQueryBounds(t *testing.T) {
 func TestRecon_OneToOne_NoRulesNeverMatches(t *testing.T) {
 	storeReconEngineConfig()
 	mockDS := new(mocks.MockDataSource)
-	b := &LedgerForge{datasource: mockDS}
+	b := testService(mockDS)
 
 	external := &model.Transaction{TransactionID: "ext_1", Amount: 100, CreatedAt: reconBaseTime, Currency: "USD"}
 	identicalCandidate := &model.Transaction{TransactionID: "int_1", Amount: 100, CreatedAt: reconBaseTime, Currency: "USD"}
@@ -507,7 +507,7 @@ func TestRecon_OneToOne_DriftBoundary(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			mockDS := new(mocks.MockDataSource)
-			b := &LedgerForge{datasource: mockDS}
+			b := testService(mockDS)
 
 			external := &model.Transaction{TransactionID: "ext_1", Amount: 100, CreatedAt: reconBaseTime, Currency: "USD"}
 			internal := &model.Transaction{TransactionID: "int_1", Amount: tc.internalAmount, CreatedAt: reconBaseTime, Currency: "USD"}
@@ -535,7 +535,7 @@ func TestRecon_OneToOne_DriftBoundary(t *testing.T) {
 func TestRecon_OneToOne_DatasourceErrorLeavesTransactionUnmatched(t *testing.T) {
 	storeReconEngineConfig()
 	mockDS := new(mocks.MockDataSource)
-	b := &LedgerForge{datasource: mockDS}
+	b := testService(mockDS)
 
 	external := &model.Transaction{TransactionID: "ext_1", Amount: 100, CreatedAt: reconBaseTime, Currency: "USD"}
 	mockDS.On("GetTransactionsByCriteria", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, 100, int64(0)).
@@ -553,7 +553,7 @@ func TestRecon_OneToOne_DatasourceErrorLeavesTransactionUnmatched(t *testing.T) 
 // --- grouped strategies ---
 
 func TestRecon_BuildGroupMap(t *testing.T) {
-	b := &LedgerForge{}
+	b := &Service{}
 	groups := map[string][]*model.Transaction{
 		"g1": {{TransactionID: "a"}},
 		"g2": {{TransactionID: "b"}},
@@ -564,7 +564,7 @@ func TestRecon_BuildGroupMap(t *testing.T) {
 }
 
 func TestRecon_MatchSingleTransaction_ConsumesGroupAndOrientsIDs(t *testing.T) {
-	b := &LedgerForge{}
+	b := &Service{}
 
 	single := &model.Transaction{TransactionID: "single_1", Amount: 300, CreatedAt: reconBaseTime, Currency: "USD"}
 	grouped := map[string][]*model.Transaction{
@@ -627,7 +627,7 @@ func TestRecon_MatchSingleTransaction_ConsumesGroupAndOrientsIDs(t *testing.T) {
 // read+written concurrently. Run under -race to assert the claim-and-delete is
 // serialized by the supplied mutex.
 func TestRecon_MatchSingleTransaction_ConcurrentClaimIsRaceFree(t *testing.T) {
-	b := &LedgerForge{}
+	b := &Service{}
 
 	const groups = 25
 	const racersPerGroup = 4
@@ -693,7 +693,7 @@ func TestRecon_OneToManyReportsUnmatchedWhenNoGroupsExist(t *testing.T) {
 	// from the reconciliation results.
 	storeReconEngineConfig()
 	mockDS := new(mocks.MockDataSource)
-	b := &LedgerForge{datasource: mockDS}
+	b := testService(mockDS)
 
 	mockDS.On("GroupTransactions", mock.Anything, "reference", 100, int64(0)).
 		Return(map[string][]*model.Transaction{}, nil).Once()

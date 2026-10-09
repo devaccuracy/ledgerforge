@@ -290,3 +290,134 @@ func TestPolicyCoreTerminalCapacityReleaseIsAtomic(t *testing.T) {
 	_, err = ds.AdmitPolicy(agent, policy.FromContext(agent).APIKeyID, draft.Reference, []model.PolicyLeg{leg})
 	require.ErrorIs(t, err, policy.ErrDenied)
 }
+
+func TestPolicyCoreQueuedCommitPreservesCapacityAfterVoid(t *testing.T) {
+	l, ds, agent, master, source, destination := policyCoreSetup(t, "100", "100", "40")
+	held, err := l.QueueTransaction(agent, policyDraft(source, destination, 60))
+	require.NoError(t, err)
+	// PostgreSQL must reject a reservation even when the caller drops metadata.
+	unapproved := lifecycleIntent(held, 40)
+	unapproved.MetaData = nil
+	_, err = ds.RecordTransaction(context.Background(), unapproved)
+	require.Error(t, err)
+	consumed, err := ds.GetTotalCommittedTransactions(context.Background(), held.TransactionID)
+	require.NoError(t, err)
+	require.Zero(t, consumed.Sign())
+	_, err = ds.DecidePolicyApproval(master, held.MetaData["policy_admission_id"].(string), policy.FromContext(master), true)
+	require.NoError(t, err)
+	intent, err := l.CommitInflightTransactionWithQueue(agent, held.TransactionID, big.NewInt(40))
+	require.NoError(t, err)
+	persisted, err := ds.GetTransaction(context.Background(), intent.TransactionID)
+	require.NoError(t, err)
+	require.Equal(t, StatusCommit, persisted.QueueAction)
+	_, err = l.VoidInflightTransaction(agent, held.TransactionID)
+	require.NoError(t, err)
+	require.Equal(t, "40", policyUsed(t, l, agent))
+	// Recovery/worker settlement consumes the durable commit reservation without
+	// a principal or metadata, even though the remainder was already voided.
+	worker := createQueueCopy(persisted, persisted.Reference)
+	worker.MetaData = nil
+	settled, err := l.ProcessQueuedTransaction(context.Background(), worker, false)
+	require.NoError(t, err)
+	require.Equal(t, StatusApplied, settled.Status)
+	require.Equal(t, "40", policyUsed(t, l, agent))
+	balance, err := ds.GetBalanceByIDLite(destination.BalanceID)
+	require.NoError(t, err)
+	require.Equal(t, "40", balance.Balance.String())
+	require.Zero(t, balance.InflightCreditBalance.Sign())
+}
+
+func TestPolicyCoreRejectedQueuedCommitRetainsCapacity(t *testing.T) {
+	l, ds, agent, master, source, destination := policyCoreSetup(t, "100", "100", "40")
+	held, err := l.QueueTransaction(agent, policyDraft(source, destination, 60))
+	require.NoError(t, err)
+	_, err = ds.DecidePolicyApproval(master, held.MetaData["policy_admission_id"].(string), policy.FromContext(master), true)
+	require.NoError(t, err)
+	intent, err := l.CommitInflightTransactionWithQueue(agent, held.TransactionID, big.NewInt(20))
+	require.NoError(t, err)
+	_, err = l.RejectTransaction(context.Background(), createQueueCopy(intent, intent.Reference), "test failed commit")
+	require.NoError(t, err)
+	require.Equal(t, "60", policyUsed(t, l, agent))
+	// Failed settlement restores the lifecycle claim, while the daily hold
+	// reservation remains available for a retry.
+	_, err = l.CommitInflightTransaction(agent, held.TransactionID, big.NewInt(20))
+	require.NoError(t, err)
+	_, err = l.VoidInflightTransaction(agent, held.TransactionID)
+	require.NoError(t, err)
+	require.Equal(t, "20", policyUsed(t, l, agent))
+}
+
+func TestPolicyCoreParallelQueuedCommitReservations(t *testing.T) {
+	l, ds, agent, master, source, destination := policyCoreSetup(t, "100", "100", "40")
+	held, err := l.QueueTransaction(agent, policyDraft(source, destination, 60))
+	require.NoError(t, err)
+	_, err = ds.DecidePolicyApproval(master, held.MetaData["policy_admission_id"].(string), policy.FromContext(master), true)
+	require.NoError(t, err)
+	start := make(chan struct{})
+	accepted := make(chan *model.Transaction, 12)
+	var wg sync.WaitGroup
+	for i := 0; i < 12; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			intent := lifecycleIntent(held, 20)
+			intent.MetaData = nil
+			<-start
+			if _, err := ds.RecordTransaction(context.Background(), intent); err == nil {
+				accepted <- intent
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(accepted)
+	require.Len(t, accepted, 3)
+	require.Equal(t, "60", policyUsed(t, l, agent))
+	for intent := range accepted {
+		_, err = l.ProcessQueuedTransaction(context.Background(), createQueueCopy(intent, intent.Reference), false)
+		require.NoError(t, err)
+	}
+	balance, err := ds.GetBalanceByIDLite(destination.BalanceID)
+	require.NoError(t, err)
+	require.Equal(t, "60", balance.Balance.String())
+	require.Zero(t, balance.InflightCreditBalance.Sign())
+}
+
+func TestPolicyCoreRefundClaimPrecedesApproval(t *testing.T) {
+	l, ds, agent, master, source, destination := policyCoreSetup(t, "100", "200", "40")
+	originalHold, err := l.QueueTransaction(agent, policyDraft(source, destination, 60))
+	require.NoError(t, err)
+	_, err = ds.DecidePolicyApproval(master, originalHold.MetaData["policy_admission_id"].(string), policy.FromContext(master), true)
+	require.NoError(t, err)
+	original, err := l.CommitInflightTransaction(agent, originalHold.TransactionID, big.NewInt(0))
+	require.NoError(t, err)
+	held, err := l.RefundTransaction(agent, original.TransactionID, true)
+	require.NoError(t, err)
+	require.Equal(t, StatusInflight, held.Status)
+	require.Equal(t, "120", policyUsed(t, l, agent))
+	var claim string
+	require.NoError(t, ds.Conn.QueryRowContext(context.Background(), `SELECT reversal_transaction FROM ledgerforge.refund_claims WHERE original_transaction=$1`, original.TransactionID).Scan(&claim))
+	require.Equal(t, held.TransactionID, claim)
+	_, err = l.RefundTransaction(context.Background(), original.TransactionID, true)
+	require.True(t, isTransactionAlreadyRefundedError(err), err)
+	_, err = l.DecidePolicyApproval(master, held.MetaData["policy_admission_id"].(string), false)
+	require.NoError(t, err)
+	require.Equal(t, "60", policyUsed(t, l, agent))
+	balance, err := ds.GetBalanceByIDLite(destination.BalanceID)
+	require.NoError(t, err)
+	require.Equal(t, "60", balance.Balance.String())
+}
+
+func TestPolicyCoreValidatesBeforeAmountConversion(t *testing.T) {
+	l, _, agent, _, source, destination := policyCoreSetup(t, "100", "100", "")
+	// Conversion of precise_amount overwrites Amount; validation must run first.
+	direct := policyDraft(source, destination, 60)
+	direct.Amount = -1
+	_, err := l.RecordTransaction(agent, direct)
+	require.Error(t, err)
+	bulk := policyDraft(source, destination, 60)
+	bulk.Amount = -1
+	_, err = l.CreateBulkTransactions(agent, &model.BulkTransactionRequest{Transactions: []*model.Transaction{bulk}, SkipQueue: true})
+	require.Error(t, err)
+	require.Equal(t, "0", policyUsed(t, l, agent))
+}

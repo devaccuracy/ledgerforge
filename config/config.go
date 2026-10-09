@@ -166,6 +166,8 @@ type AccountNumberGenerationConfig struct {
 	HttpService          AccountGenerationHttpService `json:"http_service"`
 }
 
+// RateLimitConfig preserves the legacy defaults: 5,000,000 requests/second
+// and a 10,000,000 burst. Deployments should set explicit workload-based limits.
 type RateLimitConfig struct {
 	RequestsPerSecond  *float64 `json:"requests_per_second"  envconfig:"LEDGERFORGE_RATE_LIMIT_RPS"`
 	Burst              *int     `json:"burst"                envconfig:"LEDGERFORGE_RATE_LIMIT_BURST"`
@@ -177,8 +179,24 @@ type SlackWebhook struct {
 }
 
 type WebhookConfig struct {
-	Url     string            `json:"url"     envconfig:"LEDGERFORGE_WEBHOOK_URL"`
-	Headers map[string]string `json:"headers" envconfig:"LEDGERFORGE_WEBHOOK_HEADERS"`
+	// SigningSecret is shared by notifications and transaction hooks. When unset,
+	// Server.SecretKey is the legacy fallback. With neither set, delivery is unsigned.
+	SigningSecret string `json:"signing_secret" envconfig:"LEDGERFORGE_WEBHOOK_SIGNING_SECRET"`
+	// BlockPrivateDestinations rejects private, loopback and link-local addresses
+	// at registration and connection time. Default false preserves local receivers.
+	BlockPrivateDestinations bool `json:"block_private_destinations" envconfig:"LEDGERFORGE_WEBHOOK_BLOCK_PRIVATE_DESTINATIONS"`
+	// TimeoutSec defaults to 30 seconds and is capped at 120 seconds.
+	TimeoutSec int               `json:"timeout_sec" envconfig:"LEDGERFORGE_WEBHOOK_TIMEOUT_SEC"`
+	Url        string            `json:"url"     envconfig:"LEDGERFORGE_WEBHOOK_URL"`
+	Headers    map[string]string `json:"headers" envconfig:"LEDGERFORGE_WEBHOOK_HEADERS"`
+}
+
+// WebhookSigningSecret selects the dedicated secret before the legacy API secret.
+func (cnf *Configuration) WebhookSigningSecret() string {
+	if cnf.Notification.Webhook.SigningSecret != "" {
+		return cnf.Notification.Webhook.SigningSecret
+	}
+	return cnf.Server.SecretKey
 }
 
 type Notification struct {

@@ -28,7 +28,6 @@ import (
 	"github.com/devaccuracy/ledgerforge/internal/hotpairs"
 	redlock "github.com/devaccuracy/ledgerforge/internal/lock"
 	"github.com/devaccuracy/ledgerforge/internal/metrics"
-	"github.com/devaccuracy/ledgerforge/internal/notification"
 	"github.com/devaccuracy/ledgerforge/internal/search"
 	"github.com/devaccuracy/ledgerforge/model"
 	"github.com/lib/pq"
@@ -243,7 +242,7 @@ func (l *LedgerForge) postTransactionActions(ctx context.Context, transaction *m
 		err := l.queue.queueIndexBatch(batch)
 		if err != nil {
 			span.RecordError(err)
-			notification.NotifyError(err)
+			l.notifyError(err)
 		}
 
 		// Send webhook notification
@@ -253,7 +252,7 @@ func (l *LedgerForge) postTransactionActions(ctx context.Context, transaction *m
 		})
 		if err != nil {
 			span.RecordError(err)
-			notification.NotifyError(err)
+			l.notifyError(err)
 		}
 
 		span.AddEvent("Post-transaction actions completed")
@@ -322,6 +321,19 @@ func (l *LedgerForge) applyTransactionToBalances(ctx context.Context, balances [
 	defer span.End()
 
 	span.AddEvent("Calculating new balances")
+
+	// Check both reservations before mutating either leg.
+	if transaction.Status == StatusCommit || transaction.Status == StatusVoid {
+		amount := transaction.PreciseAmount
+		if amount == nil || amount.Sign() <= 0 {
+			return fmt.Errorf("inflight transition amount must be positive")
+		}
+		balances[0].InitializeBalanceFields()
+		balances[1].InitializeBalanceFields()
+		if balances[0].InflightDebitBalance.Cmp(amount) < 0 || balances[1].InflightCreditBalance.Cmp(amount) < 0 {
+			return fmt.Errorf("insufficient inflight reservation")
+		}
+	}
 
 	// Handle committed inflight transactions.
 	if transaction.Status == StatusCommit {

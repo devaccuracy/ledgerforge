@@ -105,6 +105,19 @@ func TestCreateAPIKeyHTTP(t *testing.T) {
 		resp := doJSONRequest(router, "POST", "/api-keys", apiKeyRequestBody(t, "owner_other", []string{"ledgers:read"}))
 		assert.Equal(t, http.StatusForbidden, resp.Code)
 	})
+	t.Run("Non-master expiry cannot outlive principal", func(t *testing.T) {
+		principal := &model.APIKey{OwnerID: "owner_principal", Scopes: []string{"ledgers:read"}, ExpiresAt: time.Now().Add(time.Hour)}
+		router, _ := setupAuthedRouter(t, false, principal)
+		resp := doJSONRequest(router, "POST", "/api-keys", apiKeyRequestBody(t, principal.OwnerID, []string{"ledgers:read"}))
+		assert.Equal(t, http.StatusForbidden, resp.Code)
+	})
+	t.Run("Non-master creates narrower key with bounded expiry", func(t *testing.T) {
+		principal := &model.APIKey{OwnerID: "owner_" + gofakeit.UUID(), Scopes: []string{"ledgers:*", "api-keys:write"}, ExpiresAt: time.Now().Add(48 * time.Hour)}
+		router, _ := setupAuthedRouter(t, false, principal)
+		resp := doJSONRequest(router, "POST", "/api-keys", apiKeyRequestBody(t, principal.OwnerID, []string{"ledgers:read"}))
+		assert.Equal(t, http.StatusCreated, resp.Code)
+	})
+
 }
 
 func TestListAPIKeysHTTP(t *testing.T) {
@@ -121,6 +134,7 @@ func TestListAPIKeysHTTP(t *testing.T) {
 		require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &keys))
 		assert.Equal(t, 1, len(keys))
 		assert.Equal(t, owner, keys[0].OwnerID)
+		assert.Empty(t, keys[0].Key)
 	})
 
 	t.Run("Master without owner is rejected", func(t *testing.T) {
@@ -145,11 +159,14 @@ func TestListAPIKeysHTTP(t *testing.T) {
 		assert.Equal(t, 1, len(keys))
 	})
 
-	t.Run("Non-master cannot list another owner", func(t *testing.T) {
+	t.Run("Non-master ignores owner query", func(t *testing.T) {
 		principal := &model.APIKey{APIKeyID: "api_key_test", OwnerID: "owner_principal", Scopes: []string{"ledgers:read"}}
-		router, _ := setupAuthedRouter(t, false, principal)
+		router, b := setupAuthedRouter(t, false, principal)
+		other, err := b.CreateAPIKey(t.Context(), "foreign key", "owner_other", []string{"ledgers:read"}, time.Now().Add(time.Hour))
+		require.NoError(t, err)
 		resp := doJSONRequest(router, "GET", "/api-keys?owner=owner_other", nil)
-		assert.Equal(t, http.StatusForbidden, resp.Code)
+		assert.NotContains(t, resp.Body.String(), other.APIKeyID)
+		assert.Equal(t, http.StatusOK, resp.Code)
 	})
 }
 
@@ -191,4 +208,18 @@ func TestRevokeAPIKeyHTTP(t *testing.T) {
 		require.Equal(t, 1, len(keys))
 		assert.False(t, keys[0].IsRevoked, "key must not be revoked by a different owner")
 	})
+	t.Run("Non-master ignores owner query when revoking own key", func(t *testing.T) {
+		owner := "owner_" + gofakeit.UUID()
+		principal := &model.APIKey{OwnerID: owner, Scopes: []string{"api-keys:delete"}}
+		router, b := setupAuthedRouter(t, false, principal)
+		key, err := b.CreateAPIKey(t.Context(), "own key", owner, []string{"ledgers:read"}, time.Now().Add(time.Hour))
+		require.NoError(t, err)
+		resp := doJSONRequest(router, "DELETE", fmt.Sprintf("/api-keys/%s?owner=owner_other", key.APIKeyID), nil)
+		require.Equal(t, http.StatusNoContent, resp.Code)
+		keys, err := b.ListAPIKeys(t.Context(), owner)
+		require.NoError(t, err)
+		require.Len(t, keys, 1)
+		require.True(t, keys[0].IsRevoked)
+	})
+
 }

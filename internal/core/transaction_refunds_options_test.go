@@ -79,7 +79,7 @@ func TestPrepareRefundMergesMetaData(t *testing.T) {
 
 	assert.Equal(t, "refund", refund.MetaData["type"], "caller keys win on conflict")
 	assert.Equal(t, "goodwill", refund.MetaData["reason"], "new keys are added")
-	assert.Equal(t, true, refund.MetaData["inflight"], "ledger-set keys are preserved")
+	assert.NotContains(t, refund.MetaData, "inflight", "a refund must not create a new hold")
 	assert.Equal(t, true, refund.MetaData["atomic"])
 }
 
@@ -102,11 +102,7 @@ func TestPrepareRefundDoesNotMutateOriginalMetaData(t *testing.T) {
 	assert.False(t, leaked, "the reversal must not share the original's metadata map")
 }
 
-// TestPrepareRefundCanOverrideInheritedInflight covers a practical use of
-// merge semantics: setTransactionMetadata only ever sets the inflight marker,
-// never clears it, so a reversal of an inflight transaction inherits it even
-// though the reversal itself is not inflight. An override lets a caller
-// correct that on their own row.
+// Refund metadata cannot reintroduce an inflight reservation marker.
 func TestPrepareRefundCanOverrideInheritedInflight(t *testing.T) {
 	original := originalForRefund()
 	require.Equal(t, true, original.MetaData["inflight"])
@@ -115,7 +111,7 @@ func TestPrepareRefundCanOverrideInheritedInflight(t *testing.T) {
 		MetaData: map[string]interface{}{"inflight": false},
 	})
 
-	assert.Equal(t, false, refund.MetaData["inflight"])
+	assert.NotContains(t, refund.MetaData, "inflight")
 }
 
 // TestPrepareRefundEmptyOverridesAreIgnored checks the overrides are opt-in:
@@ -141,10 +137,8 @@ func TestPrepareRefundKeepsSkipQueueBehaviour(t *testing.T) {
 	assert.False(t, prepareRefundTransaction(original, RefundOptions{SkipQueue: false}).SkipQueue)
 }
 
-// TestPrepareRefundVoidOriginalStaysInflight guards the existing status
-// handling: reversing a voided transaction must still process as an inflight
-// reversal, whatever the caller sets on metadata.
-func TestPrepareRefundVoidOriginalStaysInflight(t *testing.T) {
+// Preparation clears reservation flags; eligibility is checked separately.
+func TestPrepareRefundClearsInflightFlags(t *testing.T) {
 	original := originalForRefund()
 	original.Status = StatusVoid
 
@@ -152,6 +146,6 @@ func TestPrepareRefundVoidOriginalStaysInflight(t *testing.T) {
 		MetaData: map[string]interface{}{"type": "refund"},
 	})
 
-	assert.True(t, refund.Inflight)
+	assert.False(t, refund.Inflight)
 	assert.Empty(t, refund.Status, "status is reset so the queue can assign it")
 }

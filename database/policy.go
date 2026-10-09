@@ -260,7 +260,7 @@ func (d *Datasource) AdmitPolicy(ctx context.Context, key, identity string, legs
 const bindingByID = `WITH RECURSIVE ancestors AS (
  SELECT $1::text AS transaction_id,0 AS depth
  UNION ALL SELECT t.parent_transaction,a.depth+1 FROM ledgerforge.transactions t JOIN ancestors a ON t.transaction_id=a.transaction_id WHERE t.parent_transaction<>'' AND t.parent_transaction<>t.transaction_id AND a.depth<16
-) SELECT b.reference FROM ledgerforge.policy_bindings b JOIN ancestors a ON a.transaction_id=b.transaction_id LIMIT 1`
+) SELECT b.reference FROM ledgerforge.policy_bindings b JOIN ancestors a ON a.transaction_id=b.transaction_id ORDER BY a.depth LIMIT 1`
 
 func (d *Datasource) policyReference(ctx context.Context, id string) (string, error) {
 	var ref string
@@ -393,38 +393,25 @@ func (d *Datasource) ReleasePolicyLeg(ctx context.Context, id string) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	var key, currency, amount, released, admission string
+	var key, currency, released, admission string
 	var precision float64
 	var day time.Time
-	err = tx.QueryRowContext(ctx, `SELECT b.admission_id,a.api_key_id,b.currency,b.precision,a.day,b.amount::text,b.released::text FROM ledgerforge.policy_bindings b JOIN ledgerforge.policy_admissions a USING(admission_id) WHERE b.reference=$1 FOR UPDATE OF b`, ref).Scan(&admission, &key, &currency, &precision, &day, &amount, &released)
+	err = tx.QueryRowContext(ctx, `SELECT b.admission_id,a.api_key_id,b.currency,b.precision,a.day,b.released::text FROM ledgerforge.policy_bindings b JOIN ledgerforge.policy_admissions a USING(admission_id) WHERE b.reference=$1 FOR UPDATE OF b`, ref).Scan(&admission, &key, &currency, &precision, &day, &released)
 	if err != nil {
 		return err
 	}
-	// Only a durable void or rejection releases capacity. Partial commits
-	// retain the capacity already spent.
-	var spent string
-	var active bool
-	err = tx.QueryRowContext(ctx, `WITH RECURSIVE family AS (
- SELECT t.transaction_id,t.status,t.precise_amount FROM ledgerforge.transactions t WHERE t.reference=$1 OR t.reference=$1||'_q'
- UNION SELECT t.transaction_id,t.status,t.precise_amount FROM ledgerforge.transactions t JOIN family f ON t.parent_transaction=f.transaction_id
- ) SELECT COALESCE(sum(precise_amount) FILTER(WHERE status='APPLIED'),0)::text,
- NOT EXISTS(SELECT 1 FROM family WHERE status IN ('VOID','REJECTED')) FROM family`, ref).Scan(&spent, &active)
+	// The database trigger and fallback use the same lifecycle-aware amount.
+	// Failed commit attempts retain the original hold's daily reservation.
+	var releasable string
+	err = tx.QueryRowContext(ctx, `SELECT ledgerforge.policy_releasable_capacity($1)::text`, ref).Scan(&releasable)
 	if err != nil {
 		return err
 	}
-	if active {
-		return nil
+	unused, err := policy.Integer(releasable)
+	if err != nil {
+		return fmt.Errorf("invalid persisted policy release: %w", err)
 	}
-	total, _ := policy.Integer(amount)
-	paid, _ := policy.Integer(spent)
 	prior, _ := policy.Integer(released)
-	if paid == nil {
-		return fmt.Errorf("invalid persisted policy spend")
-	}
-	unused := new(big.Int).Sub(total, paid)
-	if unused.Sign() < 0 {
-		unused.SetInt64(0)
-	}
 	delta := new(big.Int).Sub(unused, prior)
 	if delta.Sign() <= 0 {
 		return nil

@@ -38,7 +38,7 @@ func validatePrecisionIsInteger(value interface{}) error {
 		return errors.New("invalid precision type")
 	}
 
-	if math.Trunc(precision) != precision {
+	if math.IsNaN(precision) || math.IsInf(precision, 0) || math.Trunc(precision) != precision {
 		return ErrPrecisionMustBeInteger
 	}
 
@@ -91,7 +91,7 @@ func validatePrecisionNotNegative(value interface{}) error {
 // A zero precise_amount is rejected in ValidateRecordTransaction.
 func validateAmountNotNegative(t *RecordTransaction) validation.RuleFunc {
 	return func(value interface{}) error {
-		if t.Amount < 0 {
+		if math.IsNaN(t.Amount) || math.IsInf(t.Amount, 0) || t.Amount < 0 {
 			return errors.New("amount cannot be negative")
 		}
 		if t.PreciseAmount != nil && t.PreciseAmount.Sign() < 0 {
@@ -267,7 +267,7 @@ func (c *MonitorCondition) ValidateMonitorCondition() error {
 }
 
 func (t *RecordTransaction) ValidateRecordTransaction() error {
-	return validation.ValidateStruct(t,
+	err := validation.ValidateStruct(t,
 		validation.Field(&t.Amount, validation.By(func(value interface{}) error {
 			if t.Amount != 0 && t.PreciseAmount != nil {
 				return errors.New("either amount or precise_amount should be provided, not both")
@@ -302,6 +302,18 @@ func (t *RecordTransaction) ValidateRecordTransaction() error {
 			return nil
 		}), validation.By(validateAmountNotNegative(t))),
 		validation.Field(&t.Precision, validation.By(validatePrecisionIsInteger), validation.By(validatePrecisionNotNegative)),
+		validation.Field(&t.Rate, validation.By(func(value interface{}) error {
+			if math.IsNaN(t.Rate) || math.IsInf(t.Rate, 0) || t.Rate < 0 {
+				return errors.New("rate must be finite and positive (or zero for the default)")
+			}
+			return nil
+		})),
+		validation.Field(&t.OverdraftLimit, validation.By(func(value interface{}) error {
+			if math.IsNaN(t.OverdraftLimit) || math.IsInf(t.OverdraftLimit, 0) || t.OverdraftLimit < 0 {
+				return errors.New("overdraft limit must be finite and non-negative")
+			}
+			return nil
+		})),
 		validation.Field(&t.Currency, validation.Required),
 		validation.Field(&t.Reference, validation.Required),
 		validation.Field(&t.Description, validation.Required),
@@ -332,6 +344,10 @@ func (t *RecordTransaction) ValidateRecordTransaction() error {
 		})),
 		),
 	)
+	if err != nil {
+		return err
+	}
+	return t.ToTransaction().ValidateAmount()
 }
 
 func (a *CreateAccount) ValidateCreateAccount() error {
@@ -414,5 +430,5 @@ func (t *RecordTransaction) ToTransaction() *model.Transaction {
 	}
 
 	return &model.Transaction{Currency: t.Currency, Source: t.Source, Description: t.Description, Reference: t.Reference, ScheduledFor: scheduledFor, Destination: t.Destination, Rate: t.Rate,
-		Amount: t.Amount, AllowOverdraft: t.AllowOverDraft, MetaData: t.MetaData, Sources: t.Sources, Destinations: t.Destinations, Inflight: t.Inflight, Precision: t.Precision, InflightExpiryDate: inflightExpiryDate, InflightCommitDate: inflightCommitDate, SkipQueue: t.SkipQueue, EffectiveDate: t.EffectiveDate, OverdraftLimit: t.OverdraftLimit, PreciseAmount: t.PreciseAmount, Atomic: t.Atomic}
+		Amount: t.Amount, AmountString: t.ExactAmount(), AllowOverdraft: t.AllowOverDraft, MetaData: t.MetaData, Sources: t.Sources, Destinations: t.Destinations, Inflight: t.Inflight, Precision: t.Precision, InflightExpiryDate: inflightExpiryDate, InflightCommitDate: inflightCommitDate, SkipQueue: t.SkipQueue, EffectiveDate: t.EffectiveDate, OverdraftLimit: t.OverdraftLimit, PreciseAmount: t.PreciseAmount, Atomic: t.Atomic}
 }

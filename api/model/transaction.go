@@ -23,8 +23,11 @@ import (
 )
 
 type RecordTransaction struct {
+	amountDecimal string
 	// Rate is retained for client compatibility; ledger arithmetic does not use it.
-	Rate               float64                `json:"rate"`
+	Rate float64 `json:"rate"`
+	// Amount rounds to the nearest minor unit, with halves away from zero.
+	// Positive amounts that round to zero are rejected; precise_amount is exact.
 	Amount             float64                `json:"amount"`
 	Precision          float64                `json:"precision"`
 	OverdraftLimit     float64                `json:"overdraft_limit"`
@@ -95,6 +98,7 @@ func (r *BulkTransactionRequest) ToBulkTransactionRequest() *model.BulkTransacti
 }
 
 type InflightUpdate struct {
+	amountDecimal string
 	Status        string   `json:"status"`
 	Amount        float64  `json:"amount"`
 	PreciseAmount *big.Int `json:"precise_amount,omitempty"`
@@ -151,6 +155,7 @@ type BulkInflightVoidRequest struct {
 // zero means commit the full remaining inflight amount; non-zero performs a
 // partial commit. PreciseAmount, when set, wins over Amount.
 type BulkInflightCommitItem struct {
+	amountDecimal string
 	TransactionID string   `json:"transaction_id"`
 	Amount        float64  `json:"amount,omitempty"`
 	PreciseAmount *big.Int `json:"precise_amount,omitempty"`

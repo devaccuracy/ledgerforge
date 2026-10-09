@@ -3,6 +3,8 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strings"
+	"time"
 
 	authz "github.com/devaccuracy/ledgerforge/api/middleware"
 	"github.com/devaccuracy/ledgerforge/api/model"
@@ -15,6 +17,7 @@ import (
 var (
 	errAPIKeyOwnerRequired    = errors.New("owner is required")
 	errAPIKeyCrossOwnerAccess = errors.New("cannot manage API keys for another owner")
+	errAPIKeyExpiryEscalation = errors.New("cannot grant an expiry later than caller")
 	errAPIKeyScopeEscalation  = errors.New("cannot grant scopes broader than caller")
 	errMissingAPIKeyPrincipal = errors.New("authenticated API key principal missing")
 )
@@ -63,10 +66,28 @@ func validateGrantedScopes(isMaster bool, principal *coremodel.APIKey, requested
 		return errMissingAPIKeyPrincipal
 	}
 
+	for _, scope := range requestedScopes {
+		if strings.Contains(scope, "*") {
+			return errAPIKeyScopeEscalation
+		}
+	}
 	if !authz.CanGrantScopes(principal.Scopes, requestedScopes) {
 		return errAPIKeyScopeEscalation
 	}
 
+	return nil
+}
+
+func validateGrantedExpiry(isMaster bool, principal *coremodel.APIKey, expiresAt time.Time) error {
+	if isMaster {
+		return nil
+	}
+	if principal == nil {
+		return errMissingAPIKeyPrincipal
+	}
+	if expiresAt.IsZero() || expiresAt.After(principal.ExpiresAt) {
+		return errAPIKeyExpiryEscalation
+	}
 	return nil
 }
 
@@ -82,7 +103,7 @@ func writeAPIKeyAuthorizationError(c *gin.Context, err error) bool {
 		respondCode(c, apierror.ErrAuthMissingPrincipal, err.Error(), nil)
 	case errAPIKeyCrossOwnerAccess:
 		respondCode(c, apierror.ErrAuthCrossOwnerAccess, err.Error(), nil)
-	case errAPIKeyScopeEscalation:
+	case errAPIKeyScopeEscalation, errAPIKeyExpiryEscalation:
 		respondCode(c, apierror.ErrAuthScopeEscalation, err.Error(), nil)
 	default:
 		respondError(c, err)
@@ -118,6 +139,10 @@ func (a Api) CreateAPIKey(c *gin.Context) {
 		return
 	}
 
+	if err := validateGrantedExpiry(isMaster, principal, req.ExpiresAt); writeAPIKeyAuthorizationError(c, err) {
+		return
+	}
+
 	apiKey, err := a.ledgerforge.CreateAPIKey(c.Request.Context(), req.Name, ownerID, req.Scopes, req.ExpiresAt)
 	if err != nil {
 		respondError(c, err)
@@ -139,7 +164,11 @@ func (a Api) ListAPIKeys(c *gin.Context) {
 	isMaster := isMasterKeyRequest(c)
 	principal, _ := currentAPIKeyPrincipal(c)
 
-	ownerID, err := resolveAPIKeyOwner(isMaster, principal, c.Query("owner"), isMaster)
+	requestedOwner := c.Query("owner")
+	if !isMaster {
+		requestedOwner = ""
+	}
+	ownerID, err := resolveAPIKeyOwner(isMaster, principal, requestedOwner, isMaster)
 	if writeAPIKeyAuthorizationError(c, err) {
 		return
 	}
@@ -167,7 +196,11 @@ func (a Api) RevokeAPIKey(c *gin.Context) {
 	isMaster := isMasterKeyRequest(c)
 	principal, _ := currentAPIKeyPrincipal(c)
 
-	ownerID, err := resolveAPIKeyOwner(isMaster, principal, c.Query("owner"), isMaster)
+	requestedOwner := c.Query("owner")
+	if !isMaster {
+		requestedOwner = ""
+	}
+	ownerID, err := resolveAPIKeyOwner(isMaster, principal, requestedOwner, isMaster)
 	if writeAPIKeyAuthorizationError(c, err) {
 		return
 	}

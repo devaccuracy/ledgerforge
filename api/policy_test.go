@@ -80,3 +80,40 @@ func TestPolicyHTTPIndependentApprovalAndEffectivePolicy(t *testing.T) {
 	response = send(http.MethodDelete, "/policies/"+agent.APIKeyID, "policy-test-master", nil)
 	require.Equal(t, http.StatusNoContent, response.Code)
 }
+
+func TestPolicyHTTPExactMinorUnitsThroughAuthentication(t *testing.T) {
+	router, service, _ := setupRouterWithConfig(t, func(c *config.Configuration) {
+		c.Server.Secure = true
+		c.Server.SecretKey = "policy-exact-master"
+		c.Transaction.LockDuration = 30 * time.Second
+	})
+	agent, err := service.CreateAPIKey(context.Background(), "policy-exact-agent", model.GenerateUUIDWithSuffix("owner"), []string{"transactions:write"}, time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	source, err := service.CreateBalance(context.Background(), model.Balance{Currency: "USD", LedgerID: "general_ledger_id"})
+	require.NoError(t, err)
+	destination, err := service.CreateBalance(context.Background(), model.Balance{Currency: "USD", LedgerID: "general_ledger_id"})
+	require.NoError(t, err)
+	send := func(method, path, key, raw string) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(method, path, bytes.NewBufferString(raw))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-LedgerForge-Key", key)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		return response
+	}
+	response := send(http.MethodPut, "/policies/"+agent.APIKeyID, "policy-exact-master", `{"rules":[{"currency":"USD","precision":100,"daily_limit":"9007199254740993","approval_above":"9007199254740992"}]}`)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	body := fmt.Sprintf(`{"description":"exact policy payment","source":%q,"destination":%q,"currency":"USD","precision":100,"precise_amount":9007199254740993,"reference":%q,"skip_queue":true,"allow_overdraft":true}`, source.BalanceID, destination.BalanceID, model.GenerateUUIDWithSuffix("policy_exact"))
+	response = send(http.MethodPost, "/transactions", agent.Key, body)
+	require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
+	var held model.Transaction
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &held))
+	require.Equal(t, "9007199254740993", held.PreciseAmount.String())
+	require.Equal(t, "INFLIGHT", held.Status)
+	require.Equal(t, "pending", held.MetaData["policy_approval"])
+	response = send(http.MethodGet, "/policies/effective", agent.Key, "")
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Contains(t, response.Body.String(), `"used_minor":"9007199254740993"`)
+	require.Contains(t, response.Body.String(), `"remaining_minor":"0"`)
+}

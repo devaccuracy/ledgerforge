@@ -237,7 +237,7 @@ func TestDryRunInflightRejectsOverLimitAmount(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.Code)
 	assert.False(t, preview.WouldApply, "committing above the original amount cannot apply")
 	require.NotNil(t, preview.Rejection)
-	assert.Contains(t, preview.Rejection.Message, "cannot commit more than the original transaction amount")
+	assert.Contains(t, preview.Rejection.Message, "cannot commit more than")
 }
 
 // TestDryRunInflightReportsStatusAndAmount pins the second defect reported on
