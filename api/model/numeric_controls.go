@@ -26,21 +26,25 @@ import (
 
 type numericControlTokens struct{ precision, overdraftLimit string }
 
+// Match scalar decoding: a later JSON null leaves the preceding value intact.
+type numericJSONToken string
+
+func (token *numericJSONToken) UnmarshalJSON(data []byte) error {
+	if string(data) != "null" {
+		*token = numericJSONToken(data)
+	}
+	return nil
+}
+
 func readNumericControlTokens(data []byte) (numericControlTokens, error) {
 	var fields struct {
-		Precision      json.RawMessage `json:"precision"`
-		OverdraftLimit json.RawMessage `json:"overdraft_limit"`
+		Precision      numericJSONToken `json:"precision"`
+		OverdraftLimit numericJSONToken `json:"overdraft_limit"`
 	}
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return numericControlTokens{}, err
 	}
-	token := func(raw json.RawMessage) string {
-		if string(raw) == "null" {
-			return ""
-		}
-		return string(raw)
-	}
-	return numericControlTokens{precision: token(fields.Precision), overdraftLimit: token(fields.OverdraftLimit)}, nil
+	return numericControlTokens{precision: string(fields.Precision), overdraftLimit: string(fields.OverdraftLimit)}, nil
 }
 
 // Controls must survive both decoding and ledger decimal arithmetic unchanged.

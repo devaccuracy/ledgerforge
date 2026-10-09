@@ -24,7 +24,7 @@ import (
 // fields remain available for existing Go clients.
 func exactJSONAmount(data []byte) (string, error) {
 	var payload struct {
-		Amount json.RawMessage `json:"amount"`
+		Amount numericJSONToken `json:"amount"`
 	}
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return "", err

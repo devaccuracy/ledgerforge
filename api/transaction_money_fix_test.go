@@ -18,6 +18,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"net/http"
 	"testing"
@@ -152,6 +153,33 @@ func TestBulkPartialCommitPreservesPerItemOutcomes(t *testing.T) {
 				require.Equal(t, "15000", src.InflightDebitBalance.String())
 				require.Equal(t, "15000", dst.InflightCreditBalance.String())
 			}
+		})
+	}
+}
+
+func TestBulkPartialCommitUnderflowIsPerItemFailure(t *testing.T) {
+	for _, amountFields := range []string{`"amount":1e-400`, `"amount":1e-400,"amount":null`} {
+		t.Run(amountFields, func(t *testing.T) {
+			router, b, err := setupRouter(t)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, b.Close()) })
+			source := createTestBalanceWithLedger(t, b, "USD", nil)
+			destination := createTestBalanceWithLedger(t, b, "USD", nil)
+			holdID := createInflightForBulk(t, router, source.BalanceID, destination.BalanceID, "USD", 100)
+			body := []byte(fmt.Sprintf(`{"skip_queue":true,"transactions":[{"transaction_id":%q,%s},{"transaction_id":%q,"amount":40}]}`, holdID, amountFields, holdID))
+			response := doJSONRequest(router, http.MethodPost, "/transactions/inflight/bulk/commit", body)
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			var result model2.BulkInflightResponse
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
+			require.Equal(t, 1, result.Succeeded)
+			require.Equal(t, 1, result.Failed)
+			require.Len(t, result.Results, 2)
+			require.Equal(t, "INVALID_AMOUNT", result.Results[0].Code)
+			require.Equal(t, "failed", result.Results[0].Status)
+			require.Equal(t, "succeeded", result.Results[1].Status)
+			total, err := b.GetDataSource().GetTotalCommittedTransactions(t.Context(), holdID)
+			require.NoError(t, err)
+			require.Equal(t, "4000", total.String(), "underflowing input must not commit the full hold")
 		})
 	}
 }

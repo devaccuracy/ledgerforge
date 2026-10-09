@@ -38,6 +38,8 @@ func TestNumericControlBoundaryHTTP(t *testing.T) {
 		{"precision at boundary", `"precision":9007199254740992`, true},
 		{"lossy precision above boundary", `"precision":9007199254740993`, false},
 		{"exact precision above boundary", `"precision":9007199254740994`, true},
+		{"lossy precision followed by null", `"precision":9007199254740993,"precision":null`, false},
+		{"normal precision followed by null", `"precision":100,"precision":null`, true},
 		{"precision binary rounding behind matching decimal text", `"precision":1000000000000000100`, false},
 		{"fractional precision rounded to integer", `"precision":100.000000000000000001`, false},
 		{"ordinary fractional overdraft", `"overdraft_limit":0.29`, true},
@@ -45,6 +47,8 @@ func TestNumericControlBoundaryHTTP(t *testing.T) {
 		{"lossy overdraft above boundary", `"overdraft_limit":9007199254740993`, false},
 		{"overdraft binary rounding behind matching decimal text", `"overdraft_limit":1000000000000000100`, false},
 		{"overdraft fraction rounded away", `"overdraft_limit":9007199254740992.5`, false},
+		{"lossy overdraft followed by null", `"overdraft_limit":9007199254740993,"overdraft_limit":null`, false},
+		{"overdraft underflow followed by null", `"overdraft_limit":1e-400,"overdraft_limit":null`, false},
 		{"overdraft underflow to unlimited", `"overdraft_limit":1e-400`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

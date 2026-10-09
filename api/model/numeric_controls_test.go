@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"testing"
 
+	ledgerModel "github.com/devaccuracy/ledgerforge/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -70,4 +71,28 @@ func TestBalanceAndMonitorPrecisionTokens(t *testing.T) {
 	require.Equal(t, float64(100), req.Precision)
 	require.Equal(t, 0.29, req.OverdraftLimit)
 	require.NoError(t, validateExactControl(req.controls.precision, req.Precision, true))
+}
+
+func TestNumericControlNullDoesNotEraseLossyToken(t *testing.T) {
+	for _, body := range []string{
+		`{"precision":9007199254740993,"precision":null}`,
+		`{"overdraft_limit":9007199254740993,"overdraft_limit":null}`,
+		`{"overdraft_limit":1e-400,"overdraft_limit":null}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			req := RecordTransaction{Amount: 1, Currency: "USD", Reference: "ref", Description: "test", Source: "source", Destination: "destination"}
+			require.NoError(t, json.Unmarshal([]byte(body), &req))
+			require.Error(t, req.ValidateRecordTransaction())
+		})
+	}
+}
+
+func TestJSONNullPreservesExactAmountToken(t *testing.T) {
+	var req RecordTransaction
+	const exact = "1.004999999999999999999"
+	require.NoError(t, json.Unmarshal([]byte(`{"amount":`+exact+`,"amount":null,"precision":100}`), &req))
+	require.Equal(t, exact, req.ExactAmount())
+	minor, err := ledgerModel.ApplyPrecisionChecked(req.ToTransaction())
+	require.NoError(t, err)
+	require.Equal(t, "100", minor.String())
 }

@@ -26,6 +26,7 @@ import (
 	model2 "github.com/devaccuracy/ledgerforge/api/model"
 	"github.com/devaccuracy/ledgerforge/internal/apierror"
 	"github.com/devaccuracy/ledgerforge/model"
+	"github.com/shopspring/decimal"
 )
 
 // inflightAmountError distinguishes invalid monetary inputs from lookup failures.
@@ -46,7 +47,17 @@ func (a Api) resolveInflightAmount(ctx context.Context, id string, amount float6
 		return nil, inflightAmountError{errors.New("amount must be finite and positive")}
 	}
 	if amount == 0 {
-		return big.NewInt(0), nil
+		if exact == "" {
+			return big.NewInt(0), nil
+		}
+		value, err := decimal.NewFromString(exact)
+		if err != nil {
+			return nil, inflightAmountError{errors.New("invalid decimal amount")}
+		}
+		if value.IsZero() {
+			return big.NewInt(0), nil
+		}
+		// An underflowing positive token is a partial amount, never the full-hold sentinel.
 	}
 	transaction, err := a.ledgerforge.GetTransaction(ctx, id)
 	if err != nil {
