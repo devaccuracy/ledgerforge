@@ -8,9 +8,12 @@ credentials or sensitive financial data in public issues.
 
 | Version | Security support |
 | --- | --- |
-| Latest stable LedgerForge release | Supported; fixes ship in a new patch release. |
+| 1.0.x | Supported; fixes ship in a new 1.0 patch release. |
 | `main` | Reports accepted; development builds have no stability commitment. |
-| Older releases and prereleases | Upgrade to the latest stable release; no routine backports. |
+| Prereleases and builds earlier than 1.0.0 | Not supported; upgrade to the latest 1.0.x release. |
+
+When a new minor or major release line ships, this table will name the lines
+that receive fixes.
 
 Use release binaries or images from this repository and keep the Go runtime and
 service dependencies current. Support covers the repository's code, published

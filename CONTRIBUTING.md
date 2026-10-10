@@ -2,8 +2,11 @@
 
 Keep changes focused, explain the behavior they address, and include evidence
 that the ledger remains correct. Follow the [Code of Conduct](CODE_OF_CONDUCT.md).
-Use GitHub issues for bugs and proposals; report vulnerabilities through the
-[private security channel](SECURITY.md).
+Use the [issue forms](https://github.com/devaccuracy/ledgerforge/issues/new/choose)
+for bugs and feature requests, and check the [roadmap](ROADMAP.md) before
+proposing larger work. [SUPPORT.md](SUPPORT.md) covers questions, and
+[GOVERNANCE.md](GOVERNANCE.md) explains how decisions are made. Report
+vulnerabilities through the [private security channel](SECURITY.md).
 
 ## Development setup
 
