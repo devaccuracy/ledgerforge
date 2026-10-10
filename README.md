@@ -184,8 +184,8 @@ open-source core for you.
 | --- | --- | --- | --- |
 | What it is | The software in this repository | Managed LedgerForge deployments, operated per customer | Contracted deployment, support and review services |
 | Ledger, verification, agent policies, MCP server | Included | Same open-source core | Same open-source core |
-| Who operates it | You | The LedgerForge team (dedicated infrastructure per customer) | Dedicated or in-VPC deployment assistance |
-| Upgrades, backups and monitoring | You | Operated for you | Migration and integration assistance |
+| Who operates it | You | The LedgerForge team (dedicated infrastructure per customer) | You or the LedgerForge team, per contract, including in-VPC deployments |
+| Upgrades, backups and monitoring | You | Operated for you | Agreed per contract, with migration and integration assistance |
 | Verification and audit checkpoints | You run `ledgerforge verify` and `audit export` | Scheduled `ledgerforge verify` runs with audit checkpoints exported and anchored for each deployment | Architecture and audit reviews |
 | Support | Community, through GitHub | Onboarding and support | SLA and support plan agreed per contract; priority security response |
 | Hosted multi-tenant service with a dashboard | — | Planned ([roadmap](ROADMAP.md)) | — |
