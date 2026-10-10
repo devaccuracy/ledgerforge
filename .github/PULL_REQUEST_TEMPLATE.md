@@ -16,14 +16,28 @@ limitations under the License.
 
 ## Problem and resulting behavior
 
-Describe the concrete trigger and the behavior this change produces.
+Describe the concrete trigger and the behavior this change produces. Link the
+related issue, for example `Closes #123`.
 
 ## Compatibility and operations
 
-List API/config changes, migrations and upgrade requirements, if any.
+List API, configuration, schema or monetary behavior changes, migrations and
+upgrade requirements, if any. Write "None" if there are none.
 
 ## Validation
 
 Provide exact commands and results. Include focused financial tests and real
 PostgreSQL concurrency tests when relevant, plus `make verify` and isolated
-integration validation. Update relevant docs/examples and preserve license notices.
+integration validation.
+
+## Checklist
+
+- [ ] `make verify` passes; `make test-integration` passes when persistence,
+      workers or concurrency are affected.
+- [ ] Financial changes have tests for exact amounts, balance conservation,
+      idempotency and failed operations.
+- [ ] Relevant docs, examples and the `[Unreleased]` section of `CHANGELOG.md`
+      are updated.
+- [ ] Existing license notices are preserved; new files carry the LedgerForge
+      Apache 2.0 header.
+- [ ] No secrets, API keys, or personal or financial data are included.

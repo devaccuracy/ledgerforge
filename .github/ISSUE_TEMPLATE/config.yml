@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/devaccuracy/ledgerforge/blob/main/SECURITY.md
+    about: Report vulnerabilities privately as described in SECURITY.md, never in a public issue.
+  - name: Ask a question
+    url: https://github.com/devaccuracy/ledgerforge/blob/main/docs/README.md
+    about: Start with the documentation index for concepts, deployment, verification, agent safety and the MCP server.
+  - name: Online documentation
+    url: https://ledgerforge.io/docs
+    about: The LedgerForge guides on ledgerforge.io.
+  - name: Commercial support, LedgerForge Cloud and Enterprise
+    url: https://github.com/devaccuracy/ledgerforge/blob/main/SUPPORT.md
+    about: Community and commercial support options, LedgerForge Cloud access and Enterprise contact.

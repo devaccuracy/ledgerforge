@@ -1,0 +1,96 @@
+name: Bug report
+description: Report incorrect behavior in LedgerForge.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. **Do not report security vulnerabilities here**;
+        follow the [security policy](https://github.com/devaccuracy/ledgerforge/blob/main/SECURITY.md)
+        instead. Redact API keys, secrets and personal or financial data before posting.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `ledgerforge version`, an image tag or digest, or a commit SHA.
+      placeholder: "1.0.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - HTTP API
+        - Go library
+        - MCP server
+        - Workers, queues or scheduled transactions
+        - Verification or audit chain
+        - Spending policies or approvals
+        - Webhooks or notifications
+        - Reconciliation or search
+        - Migrations or upgrades
+        - Deployment, images or release artifacts
+        - Documentation or examples
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installation
+      options:
+        - Release binary
+        - Container image
+        - Built from source
+        - Quickstart example
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Describe the behavior you observed, including error messages and status codes.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: Describe what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal requests, commands or code. Include amounts, precision and references for monetary issues.
+      placeholder: |
+        1. Create balances ...
+        2. POST /transactions with ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: dropdown
+    id: money
+    attributes:
+      label: Does this affect balances or recorded money movement?
+      description: For example unbalanced postings, wrong amounts, duplicate application or lost reservations.
+      options:
+        - "No"
+        - "Yes"
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS and architecture, PostgreSQL and Redis versions, and relevant non-secret configuration.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or verification output
+      description: Relevant log lines or `ledgerforge verify --json` output, with secrets redacted.
+      render: text
