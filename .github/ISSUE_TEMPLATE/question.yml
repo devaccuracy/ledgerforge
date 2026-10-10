@@ -1,0 +1,38 @@
+name: Question
+description: Ask how to use, deploy or operate LedgerForge when the documentation does not answer it.
+title: "question: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the [documentation index](https://github.com/devaccuracy/ledgerforge/blob/main/docs/README.md)
+        and [existing issues](https://github.com/devaccuracy/ledgerforge/issues?q=is%3Aissue) first.
+        **Do not report security vulnerabilities here**; follow the
+        [security policy](https://github.com/devaccuracy/ledgerforge/blob/main/SECURITY.md).
+        Redact API keys, secrets and personal or financial data before posting.
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What are you trying to do, and what do you want to know?
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What you have tried
+      description: Guides you read, requests or commands you ran, and what happened.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `ledgerforge version`, an image tag or a commit SHA, if relevant.
+      placeholder: "1.0.0"
+  - type: checkboxes
+    id: searched
+    attributes:
+      label: Before asking
+      options:
+        - label: I searched the documentation and existing issues.
+          required: true

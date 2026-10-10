@@ -27,10 +27,11 @@ LedgerForge is open source and community supported on a best-effort basis.
   with your version, steps to reproduce and redacted logs.
 - **Feature requests:** check the [roadmap](ROADMAP.md), then open a
   [feature request](https://github.com/devaccuracy/ledgerforge/issues/new?template=feature_request.yml).
-- **Questions:** if the documentation does not answer it, open an issue that
-  describes what you tried. Search
+- **Questions:** check the documentation and
   [existing issues](https://github.com/devaccuracy/ledgerforge/issues?q=is%3Aissue)
-  first.
+  first. If they do not answer it, open a
+  [question](https://github.com/devaccuracy/ledgerforge/issues/new?template=question.yml)
+  that describes what you tried.
 
 Never post API keys, secrets, or personal or financial data in a public issue.
 
@@ -42,10 +43,13 @@ report privately to [security@ledgerforge.io](mailto:security@ledgerforge.io).
 ## Commercial support and LedgerForge Cloud
 
 - **LedgerForge Cloud:** managed LedgerForge deployments, operated per customer,
-  with upgrades, backups, monitoring, scheduled verification and checkpoint
-  anchoring, and support.
+  on dedicated infrastructure, with upgrades, backups, monitoring, scheduled
+  `ledgerforge verify` runs with audit checkpoints exported and anchored for
+  each deployment, and support.
   [Request access](https://ledgerforge.io/cloud).
-- **Enterprise:** support and deployment terms agreed per contract.
+- **Enterprise:** dedicated or in-VPC deployment assistance, an SLA and
+  support plan agreed per contract, priority security response, migration and
+  integration assistance, and architecture and audit reviews.
   [Contact sales](https://ledgerforge.io/contact/us?interest=enterprise).
 - **Other enquiries:** [support@ledgerforge.io](mailto:support@ledgerforge.io).
 

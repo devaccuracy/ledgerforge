@@ -30,6 +30,12 @@
   <a href="ROADMAP.md"><strong>Roadmap</strong></a>
 </p>
 
+<p align="center">
+  <a href="#open-source-and-ledgerforge-cloud">Open-source core (Apache 2.0)</a> ·
+  Managed with <a href="https://ledgerforge.io/cloud">LedgerForge Cloud</a> ·
+  <a href="https://ledgerforge.io/contact/us?interest=enterprise">Enterprise</a>
+</p>
+
 LedgerForge is an open-source double-entry ledger. It records wallet transfers,
 payouts, billing activity, reservations and refunds in exact integer units,
 backs that history with a verifiable audit chain, and enforces spending
@@ -58,9 +64,8 @@ remain application responsibilities.
 
 ## Why LedgerForge
 
-- **Exact money:** integer postings and balance counters, preserved decimal
-  request tokens, explicit precision and deterministic split allocation.
-  Invalid monetary input is rejected before posting.
+- **Exact money:** integer postings, explicit precision and deterministic
+  splits; see the [accounting guarantees](#accounting-guarantees).
 - **A verifiable ledger:** read-only `ledgerforge verify` replays accounting
   evidence. Versioned audit chains and exportable checkpoints support
   `audit verify --anchor` against independently retained roots. See the
@@ -177,12 +182,12 @@ open-source core for you.
 
 | | Open source | LedgerForge Cloud | Enterprise |
 | --- | --- | --- | --- |
-| What it is | The software in this repository | Managed LedgerForge deployments, operated per customer | Deployment and support terms agreed per contract |
+| What it is | The software in this repository | Managed LedgerForge deployments, operated per customer | Contracted deployment, support and review services |
 | Ledger, verification, agent policies, MCP server | Included | Same open-source core | Same open-source core |
-| Who operates it | You | LedgerForge Cloud | Agreed per contract |
-| Upgrades, backups and monitoring | You | Operated for you | Agreed per contract |
-| Scheduled verification and checkpoint anchoring | You run `ledgerforge verify` and `audit export` | Operated for you | Agreed per contract |
-| Support | Community, through GitHub | Included | Agreed per contract |
+| Who operates it | You | The LedgerForge team (dedicated infrastructure per customer) | Dedicated or in-VPC deployment assistance |
+| Upgrades, backups and monitoring | You | Operated for you | Migration and integration assistance |
+| Verification and audit checkpoints | You run `ledgerforge verify` and `audit export` | Scheduled `ledgerforge verify` runs with audit checkpoints exported and anchored for each deployment | Architecture and audit reviews |
+| Support | Community, through GitHub | Onboarding and support | SLA and support plan agreed per contract; priority security response |
 | Hosted multi-tenant service with a dashboard | — | Planned ([roadmap](ROADMAP.md)) | — |
 | Price | Free | Request access | Contact sales |
 | Get started | [Quickstart](#quickstart-a-balanced-transfer) | [Request access](https://ledgerforge.io/cloud) | [Contact sales](https://ledgerforge.io/contact/us?interest=enterprise) |
@@ -219,8 +224,10 @@ tests and pull request expectations.
 
 - **Bugs and proposals:** use the
   [issue forms](https://github.com/devaccuracy/ledgerforge/issues/new/choose).
-- **Questions and support:** start with the [documentation](docs/README.md);
-  [SUPPORT.md](SUPPORT.md) covers community and commercial support.
+- **Questions:** start with the [documentation](docs/README.md), then open a
+  [question](https://github.com/devaccuracy/ledgerforge/issues/new?template=question.yml)
+  if it does not help. [SUPPORT.md](SUPPORT.md) covers community and
+  commercial support.
 - **Contributing:** read [CONTRIBUTING.md](CONTRIBUTING.md) and follow the
   [Code of Conduct](CODE_OF_CONDUCT.md). [GOVERNANCE.md](GOVERNANCE.md) explains
   how decisions are made.

@@ -28,8 +28,8 @@ semantic versions.
   comparison and links to the website, documentation, changelog and roadmap.
 - Added `ROADMAP.md`, `SUPPORT.md`, `GOVERNANCE.md` and a documentation index
   at `docs/README.md`.
-- Replaced the Markdown issue templates with bug report and feature request
-  forms, added contact links for security reports, documentation and support,
+- Replaced the Markdown issue templates with bug report, feature request and
+  question forms, added contact links for security reports, documentation and support,
   and added `CODEOWNERS`.
 - `SECURITY.md` now names 1.0.x as the supported release line.
 - Added a pull request checklist, a README wordmark and a repository social

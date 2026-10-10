@@ -64,5 +64,5 @@ Planned further out, in no particular order.
 
 - **SSO/SAML and role-based access for Cloud.**
 - **Multi-currency policy budgets.**
-- **Managed audit-checkpoint anchoring.**
+- **Managed audit-checkpoint anchoring as a built-in, self-serve Cloud service.**
 - **Regional data residency options for Cloud.**
