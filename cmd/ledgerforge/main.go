@@ -111,10 +111,12 @@ func NewCLI() *LedgerForge {
 
 	// Define the root command with usage and description.
 	rootCmd := &cobra.Command{
-		Use:   "ledgerforge",
-		Short: "Open source ledger",                       // Brief description for the CLI tool
-		Run:   func(cmd *cobra.Command, args []string) {}, // Main function for the root command
+		Use:     "ledgerforge",
+		Short:   "Open source ledger",                       // Brief description for the CLI tool
+		Version: versionString(),                            // Printed by --version
+		Run:     func(cmd *cobra.Command, args []string) {}, // Main function for the root command
 	}
+	rootCmd.SetVersionTemplate("{{.Version}}\n")
 
 	// Add a persistent flag to the root command for specifying the config file.
 	rootCmd.PersistentFlags().StringVar(&configFile, "config", "./ledgerforge.json", "Configuration file for LedgerForge")
@@ -130,6 +132,7 @@ func NewCLI() *LedgerForge {
 
 	rootCmd.AddCommand(verifyCommands(b))
 	rootCmd.AddCommand(auditCommands(b))
+	rootCmd.AddCommand(versionCommand())
 
 	return &LedgerForge{cmd: rootCmd}
 }

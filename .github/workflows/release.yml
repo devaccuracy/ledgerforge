@@ -49,8 +49,11 @@ jobs:
           mkdir -p "$directory" dist
           suffix=''
           if [ "$GOOS" = windows ]; then suffix='.exe'; fi
-          go build -trimpath -o "$directory/ledgerforge$suffix" ./cmd/ledgerforge
-          go build -trimpath -o "$directory/ledgerforge-mcp$suffix" ./cmd/ledgerforge-mcp
+          version="${GITHUB_REF_NAME#v}"
+          build_date="$(git log -1 --format=%cI)"
+          ldflags="-s -w -X main.version=${version} -X main.commit=${GITHUB_SHA::7} -X main.date=${build_date}"
+          go build -trimpath -ldflags "$ldflags" -o "$directory/ledgerforge$suffix" ./cmd/ledgerforge
+          go build -trimpath -ldflags "-s -w -X main.version=${version}" -o "$directory/ledgerforge-mcp$suffix" ./cmd/ledgerforge-mcp
           cp LICENSE.md NOTICE.md "$directory/"
           if [ "$GOOS" = windows ]; then
             zip -r "dist/$directory.zip" "$directory"
@@ -80,6 +83,14 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build metadata
+        id: version
+        run: |
+          {
+            echo "version=${GITHUB_REF_NAME#v}"
+            echo "commit=${GITHUB_SHA::7}"
+            echo "date=$(git log -1 --format=%cI)"
+          } >> "$GITHUB_OUTPUT"
       - uses: docker/metadata-action@v5
         id: meta
         with:
@@ -95,6 +106,10 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            COMMIT=${{ steps.version.outputs.commit }}
+            BUILD_DATE=${{ steps.version.outputs.date }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           sbom: true
@@ -144,10 +159,11 @@ jobs:
           set -euo pipefail
           printf 'ghcr.io/devaccuracy/ledgerforge@%s\n' "$IMAGE_DIGEST" > dist/container-digest.txt
           (cd dist && sha256sum -- * > checksums.txt)
+          .github/scripts/release-notes.sh "${GITHUB_REF_NAME#v}" CHANGELOG.md > release-notes.md
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" dist/* --clobber
           else
             options=()
             if [[ "$GITHUB_REF_NAME" == *-* ]]; then options+=(--prerelease); fi
-            gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes "${options[@]}"
+            gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "LedgerForge $GITHUB_REF_NAME" --notes-file release-notes.md "${options[@]}"
           fi

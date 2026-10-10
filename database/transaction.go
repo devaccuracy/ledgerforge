@@ -21,6 +21,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/devaccuracy/ledgerforge/internal/apierror"
@@ -147,6 +148,17 @@ func recordTransactionInTx(ctx context.Context, tx *sql.Tx, txn *model.Transacti
 	return nil
 }
 
+// copyInStatement builds a quoted `COPY schema.table (columns) FROM STDIN`
+// statement for the pq COPY protocol.
+func copyInStatement(schema, table string, columns ...string) string {
+	quoted := make([]string, len(columns))
+	for i, column := range columns {
+		quoted[i] = pq.QuoteIdentifier(column)
+	}
+	return "COPY " + pq.QuoteIdentifier(schema) + "." + pq.QuoteIdentifier(table) +
+		" (" + strings.Join(quoted, ", ") + ") FROM STDIN"
+}
+
 // recordTransactionsInTx inserts multiple transaction records within an existing database
 // transaction using PostgreSQL's COPY protocol to reduce SQL parsing and roundtrips.
 func recordTransactionsInTx(ctx context.Context, tx *sql.Tx, txns []*model.Transaction) error {
@@ -157,7 +169,7 @@ func recordTransactionsInTx(ctx context.Context, tx *sql.Tx, txns []*model.Trans
 		return nil
 	}
 
-	stmt, err := tx.PrepareContext(ctx, pq.CopyInSchema(
+	stmt, err := tx.PrepareContext(ctx, copyInStatement(
 		"ledgerforge",
 		"transactions",
 		"transaction_id",

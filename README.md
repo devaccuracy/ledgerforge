@@ -86,6 +86,20 @@ use. Read the [deployment guide](docs/deployment.md) before exposing a service.
   metrics and OpenTelemetry. PostgreSQL retains financial truth while workers
   handle asynchronous execution and delivery.
 
+## Install
+
+- **Release binaries:** download `ledgerforge` and `ledgerforge-mcp` for Linux,
+  macOS or Windows from [GitHub Releases](https://github.com/devaccuracy/ledgerforge/releases),
+  then check the archive against `checksums.txt` (`sha256sum -c checksums.txt --ignore-missing`).
+- **Container image:** `docker pull ghcr.io/devaccuracy/ledgerforge:1.0.0`. The
+  image contains both binaries; the release lists its digest and SBOMs.
+- **From source:** `go install github.com/devaccuracy/ledgerforge/cmd/ledgerforge@v1.0.0`
+  (Go 1.26.9 or later).
+
+Run `ledgerforge version` to confirm what you installed, then follow the
+[deployment guide](docs/deployment.md) and run `ledgerforge migrate up` before
+starting the server.
+
 ## Run the published image locally
 
 ```sh

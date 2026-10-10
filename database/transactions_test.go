@@ -32,7 +32,6 @@ import (
 	"github.com/devaccuracy/ledgerforge/internal/apierror"
 	"github.com/devaccuracy/ledgerforge/internal/filter"
 	"github.com/devaccuracy/ledgerforge/model"
-	"github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
@@ -2315,7 +2314,7 @@ func TestRecordTransactionsWithBalancesAndOutboxes_UsesCopyIn(t *testing.T) {
 		Version:               1,
 	}
 
-	copySQL := pq.CopyInSchema(
+	copySQL := copyInStatement(
 		"ledgerforge",
 		"transactions",
 		"transaction_id",
@@ -2425,7 +2424,7 @@ func TestRecordTransactionsWithBalancesAndOutboxes_BatchesLineageOutboxes(t *tes
 		MaxAttempts:          5,
 	}
 
-	copySQL := pq.CopyInSchema(
+	copySQL := copyInStatement(
 		"ledgerforge",
 		"transactions",
 		"transaction_id",

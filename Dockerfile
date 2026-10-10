@@ -10,8 +10,15 @@ COPY . .
 
 ARG TARGETOS=linux
 ARG TARGETARCH
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=${TARGETARCH:-$(go env GOARCH)} go build -trimpath -o /ledgerforge ./cmd/ledgerforge
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=${TARGETARCH:-$(go env GOARCH)} go build -trimpath -o /ledgerforge-mcp ./cmd/ledgerforge-mcp
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_DATE=unknown
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=${TARGETARCH:-$(go env GOARCH)} go build -trimpath \
+    -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${BUILD_DATE}" \
+    -o /ledgerforge ./cmd/ledgerforge
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=${TARGETARCH:-$(go env GOARCH)} go build -trimpath \
+    -ldflags "-s -w -X main.version=${VERSION}" \
+    -o /ledgerforge-mcp ./cmd/ledgerforge-mcp
 
 FROM postgres:16-bookworm
 

@@ -22,7 +22,18 @@ semantic versions.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-10
+
+The first LedgerForge release: a double-entry ledger with exact integer money
+handling, durable transaction lifecycles, read-only replay verification and a
+versioned audit chain, server-enforced spending policies and approval holds for
+API keys and AI agents, and a hardened HTTP API. Upgrades are supported from
+fresh installs and from the previous `main` schema; see the upgrade notes.
+
 ### Added
+
+- `ledgerforge version` and `--version` report the release version, commit and
+  build date stamped into release binaries and container images.
 
 - `model.ParseAmount` and checked exact amount conversion, raw decimal-token
   preservation for HTTP transaction/inflight requests, and amount/distribution
@@ -142,7 +153,11 @@ semantic versions.
   shared/internal special-purpose ranges at registration and connection time.
 - Non-2xx notification/hook responses remain retryable instead of being acknowledged
   as successful delivery; signing uses the timestamp and exact raw JSON bytes.
-- Upgraded `golang.org/x/net` to 0.60.0, OTel logging API/SDK/stdout exporter to
-  0.21.0, and aligned stable OTel APIs/SDK/OTLP exporters at 1.45.0 with Prometheus
-  exporter 0.67.0. Go 1.26.9 and these modules remove the reviewed reachable
-  vulnerability findings; `make vuln` remains a publication gate.
+- Built with Go 1.26.9 and `golang.org/x/net` 0.60.0. OpenTelemetry modules are
+  aligned on 1.47, including the now-stable log API and SDK, with the Prometheus
+  exporter at 0.69.0. Also updated: gin 1.12 (via otelgin 0.72), lib/pq 1.12.3,
+  go-sqlite3 1.14.52 and ozzo-validation 4.4.1. `make vuln` reports no known
+  vulnerabilities and remains a publication gate.
+
+[Unreleased]: https://github.com/devaccuracy/ledgerforge/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/devaccuracy/ledgerforge/releases/tag/v1.0.0
