@@ -91,7 +91,7 @@ jobs:
             echo "commit=${GITHUB_SHA::7}"
             echo "date=$(git log -1 --format=%cI)"
           } >> "$GITHUB_OUTPUT"
-      - uses: docker/metadata-action@v5
+      - uses: docker/metadata-action@v6
         id: meta
         with:
           images: ghcr.io/devaccuracy/ledgerforge
