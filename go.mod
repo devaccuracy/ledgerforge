@@ -6,7 +6,7 @@ toolchain go1.26.9
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
-	github.com/alicebob/miniredis/v2 v2.34.0
+	github.com/alicebob/miniredis/v2 v2.40.0
 	github.com/aws/aws-sdk-go v1.55.6
 	github.com/brianvoe/gofakeit/v6 v6.28.0
 	github.com/caddyserver/certmagic v0.22.0
@@ -52,7 +52,6 @@ require (
 
 require (
 	filippo.io/edwards25519 v1.1.1 // indirect
-	github.com/alicebob/gopher-json v0.0.0-20230218143504-906a9b012302 // indirect
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bytedance/gopkg v0.1.4 // indirect
